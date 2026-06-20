@@ -1,22 +1,10 @@
 import Link from "next/link";
 import { FileText, Palette, Settings, Sparkles } from "lucide-react";
 import { prisma } from "@/lib/db";
-import { formatDate, STATUS_LABEL } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { NewArticleButton } from "@/components/articles/NewArticleButton";
-
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "success"> = {
-  draft: "secondary",
-  ready: "default",
-  pushed: "success",
-};
+import { ArticleCard } from "@/components/articles/ArticleCard";
 
 export const dynamic = "force-dynamic";
 
@@ -79,33 +67,17 @@ export default async function HomePage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {articles.map((article) => (
-              <Link key={article.id} href={`/editor/${article.id}`}>
-                <Card className="h-full hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <CardTitle className="text-base line-clamp-2 group-hover:text-primary transition-colors">
-                        {article.title || "无标题文章"}
-                      </CardTitle>
-                      <Badge
-                        variant={STATUS_VARIANT[article.status] ?? "secondary"}
-                      >
-                        {STATUS_LABEL[article.status] ?? article.status}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-xs text-muted-foreground line-clamp-2 min-h-[2rem]">
-                      {article.contentMd
-                        .slice(0, 80)
-                        .replace(/[#*`>\-]/g, "") || "（空白文档）"}
-                    </p>
-                    <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
-                      <span>{article.theme?.name ?? "默认主题"}</span>
-                      <span>{formatDate(article.updatedAt)}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+              <ArticleCard
+                key={article.id}
+                article={{
+                  id: article.id,
+                  title: article.title,
+                  contentMd: article.contentMd,
+                  status: article.status,
+                  theme: article.theme,
+                  updatedAt: article.updatedAt.toISOString(),
+                }}
+              />
             ))}
           </div>
         )}
