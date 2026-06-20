@@ -1,0 +1,52 @@
+// AI 驱动的公众号文章编写与发布系统 — 数据模型
+// SQLite 零运维，未来可平滑迁移至 Postgres
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Article {
+  id           String   @id @default(cuid())
+  title        String   @default("") // 标题
+  contentMd    String   @default("") // markdown 源（source of truth）
+  digest       String? // 摘要（≤120 字）
+  coverMediaId String? // 微信封面 media_id（add_material 返回）
+  themeId      String? // 关联 Theme
+  status       String   @default("draft") // draft | ready | pushed
+  wxMediaId    String? // draft/add 返回的 media_id（= 草稿箱 id）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  theme Theme? @relation(fields: [themeId], references: [id])
+
+  @@index([themeId])
+}
+
+model Theme {
+  id           String    @id @default(cuid())
+  name         String // 显示名，如「优雅蓝」
+  cssContent   String // markdown 主题 CSS（裸选择器）
+  codeTheme    String    @default("atom-one-dark") // 代码高亮主题名
+  primaryColor String?   @default("#3f51b5") // 用于解析 var()
+  isBuiltIn    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  articles Article[]
+}
+
+model Material {
+  // 图片缓存：外链 URL → wx_src 映射，避免重复上传
+  id         String   @id @default(cuid())
+  sourceUrl  String // 原始外链
+  sourceHash String   @unique // sha1(sourceUrl)
+  wxUrl      String? // uploadimg 返回的正文图 URL
+  wxMediaId  String? // add_material 返回（封面用）
+  kind       String // "body" | "cover"
+  createdAt  DateTime @default(now())
+}
