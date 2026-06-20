@@ -5,6 +5,7 @@ import { Sparkles, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TiptapEditor } from "./TiptapEditor";
+import { AIPanel } from "./AIPanel";
 import { WeChatPreview } from "@/components/preview/WeChatPreview";
 import { PublishDialog } from "@/components/publish/PublishDialog";
 
@@ -84,7 +85,7 @@ export function EditorWorkspace({
             填写主题、要求与素材，生成公众号文章
           </p>
         </div>
-        <AIPanelStub onApply={setMarkdown} />
+        <AIPanel onApply={setMarkdown} currentMarkdown={markdown} />
       </aside>
 
       {/* 中栏：编辑器 */}
@@ -134,42 +135,6 @@ export function EditorWorkspace({
         themes={themes}
         defaultThemeId={themeId}
       />
-    </div>
-  );
-}
-
-/** 临时 AI 面板占位（Phase 6 替换为完整流式生成） */
-function AIPanelStub({ onApply }: { onApply: (md: string) => void }) {
-  "use client";
-  return (
-    <div className="p-4 flex-1 overflow-y-auto text-sm">
-      <textarea
-        placeholder="输入文章主题，如：2025 年大模型发展趋势"
-        className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-xs mb-2 resize-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      />
-      <textarea
-        placeholder="写作要求，如：面向技术读者，分三点，口语化"
-        className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-xs mb-2 resize-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      />
-      <textarea
-        placeholder="参考素材（可粘贴原文/链接）"
-        className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-xs mb-3 resize-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      />
-      <Button
-        size="sm"
-        className="w-full"
-        disabled
-        title="AI 生成将在 Phase 6 接入"
-      >
-        <Sparkles className="h-4 w-4" />
-        生成文章（即将开放）
-      </Button>
-      <button
-        onClick={() => onApply("# 示例标题\n\n这是一段示例内容。")}
-        className="mt-2 w-full text-xs text-muted-foreground hover:text-foreground"
-      >
-        （测试）填入示例内容
-      </button>
     </div>
   );
 }
