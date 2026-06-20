@@ -35,7 +35,7 @@ const CODE_THEMES = [
   "xcode",
 ];
 
-const SAMPLE_MD = `# 欢迎使用墨笔
+const SAMPLE_MD = `# 欢迎使用 InkPress
 
 这是一段**示例文字**，用于预览主题效果。
 

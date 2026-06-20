@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
       title: article.title || "无标题文章",
       content: html,
       thumb_media_id: thumbMediaId,
-      author: author || "墨笔",
+      author: author || "InkPress",
       digest: finalDigest,
     });
 

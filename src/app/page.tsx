@@ -21,7 +21,7 @@ export default async function HomePage() {
         <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-lg">墨笔</span>
+            <span className="font-semibold text-lg">InkPress</span>
             <span className="text-xs text-muted-foreground ml-1">
               AI 公众号写作台
             </span>
