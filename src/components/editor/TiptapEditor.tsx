@@ -10,6 +10,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import { Markdown } from "tiptap-markdown";
 import { useEffect } from "react";
 import { EditorToolbar } from "./EditorToolbar";
+import { createImageUploadExtension } from "./extensions/ImageUpload";
 
 export function TiptapEditor({
   value,
@@ -40,6 +41,7 @@ export function TiptapEditor({
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      createImageUploadExtension(),
     ],
     content: value,
     immediatelyRender: false,

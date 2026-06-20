@@ -40,10 +40,9 @@ export async function convertToWeChat(
   options: { uploadImage?: ImageUploader } = {}
 ): Promise<ConvertResult> {
   // 1. 剥 front-matter
-  const fm = matter(markdown);
-  const body = (fm.body as string) || markdown;
-  const fmTitle =
-    typeof fm.attributes?.title === "string" ? (fm.attributes.title as string) : "";
+  const fm = matter<{ title?: string }>(markdown);
+  const body = fm.body || markdown;
+  const fmTitle = typeof fm.attributes?.title === "string" ? fm.attributes.title : "";
 
   // 2. 图片 URL 预处理
   let processedMd = body;
@@ -132,10 +131,10 @@ function cleanForWeChat(html: string): string {
   const root = doc.getElementById("nice") ?? doc.body;
 
   // 删除残留 <script> / <style>
-  root.querySelectorAll("script, style").forEach((el) => el.remove());
+  root.querySelectorAll("script, style").forEach((el: Element) => el.remove());
 
   // 锚点链接去 href（公众号正文锚点无效）
-  root.querySelectorAll("a").forEach((a) => {
+  root.querySelectorAll("a").forEach((a: Element) => {
     const href = a.getAttribute("href") ?? "";
     if (href.startsWith("#")) {
       a.removeAttribute("href");
@@ -144,7 +143,7 @@ function cleanForWeChat(html: string): string {
   });
 
   // img 的 width/height 属性 → 内联 style（公众号认 style 不认属性）
-  root.querySelectorAll("img").forEach((img) => {
+  root.querySelectorAll("img").forEach((img: Element) => {
     const w = img.getAttribute("width");
     const h = img.getAttribute("height");
     const existing = img.getAttribute("style") ?? "";
@@ -158,9 +157,9 @@ function cleanForWeChat(html: string): string {
   });
 
   // 嵌套列表：<li> 内的 ul/ol 移到 li 之后（公众号渲染异常）
-  root.querySelectorAll("li").forEach((li) => {
+  root.querySelectorAll("li").forEach((li: Element) => {
     const nested = li.querySelectorAll(":scope > ul, :scope > ol");
-    nested.forEach((list) => {
+    nested.forEach((list: Element) => {
       li.after(list);
     });
   });

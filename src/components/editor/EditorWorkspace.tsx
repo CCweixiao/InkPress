@@ -130,6 +130,7 @@ export function EditorWorkspace({
         articleId={article.id}
         title={title}
         digest={article.digest}
+        coverMediaId={article.coverMediaId}
         themes={themes}
         defaultThemeId={themeId}
       />
