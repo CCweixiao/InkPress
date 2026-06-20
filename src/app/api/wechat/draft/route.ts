@@ -41,11 +41,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "未找到排版主题" }, { status: 400 });
   }
 
-  // 服务端 fetcher（用于下载外链图片上传到微信）
+  // 服务端 fetcher（下载外链图片，带超时与大小限制，避免卡死或超大文件）
   const fetcher = async (url: string): Promise<ArrayBuffer> => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`下载图片失败：${url}`);
-    return res.arrayBuffer();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { "user-agent": "Mozilla/5.0 (compatible; WePaperBot/1.0)" },
+      });
+      if (!res.ok) throw new Error(`下载图片失败：${url}（${res.status}）`);
+      const buf = await res.arrayBuffer();
+      // 限制 10MB（微信单图上限约 10MB）
+      if (buf.byteLength > 10 * 1024 * 1024) {
+        throw new Error(`图片过大（${(buf.byteLength / 1024 / 1024).toFixed(1)}MB）：${url}`);
+      }
+      return buf;
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   try {

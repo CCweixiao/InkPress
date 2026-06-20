@@ -81,7 +81,7 @@ export async function convertToWeChat(
   return { html: cleaned, title: fmTitle };
 }
 
-/** 提取所有 ![](url) 并替换为微信素材 URL */
+/** 提取所有 ![](url) 并替换为微信素材 URL（并发上传，带限流） */
 async function replaceImageUrls(
   md: string,
   upload: ImageUploader
@@ -90,13 +90,23 @@ async function replaceImageUrls(
   const matches = [...md.matchAll(pattern)];
   if (matches.length === 0) return md;
 
-  // 去重，避免同一张图重复上传
+  // 去重 URL
+  const uniqueUrls = [...new Set(matches.map((m) => m[1]))];
+
+  // 并发上传（最多 3 个同时），避免长文几十张图串行等待
+  const CONCURRENCY = 3;
   const urlMap = new Map<string, string>();
-  for (const m of matches) {
-    const original = m[1];
-    if (urlMap.has(original)) continue;
-    const wx = await upload(original).catch(() => null);
-    if (wx) urlMap.set(original, wx);
+  for (let i = 0; i < uniqueUrls.length; i += CONCURRENCY) {
+    const batch = uniqueUrls.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (url) => {
+        const wx = await upload(url).catch(() => null);
+        return [url, wx] as const;
+      })
+    );
+    for (const [url, wx] of results) {
+      if (wx) urlMap.set(url, wx);
+    }
   }
 
   return md.replace(pattern, (full, url: string) => {
