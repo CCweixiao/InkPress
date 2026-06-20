@@ -1,26 +1,131 @@
 @import "tailwindcss";
 
+/* 简洁大气的主题色板（shadcn slate 风格） */
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --accent: #eff6ff;
+  --accent-foreground: #1d4ed8;
+  --ring: #2563eb;
+  --radius: 0.625rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--ring);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+/* Tiptap 编辑区基础排版 */
+.tiptap {
+  outline: none;
+  min-height: 60vh;
+}
+.tiptap p {
+  margin: 0.75em 0;
+  line-height: 1.75;
+}
+.tiptap h1 {
+  font-size: 1.6em;
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+}
+.tiptap h2 {
+  font-size: 1.35em;
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+}
+.tiptap h3 {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+}
+.tiptap ul,
+.tiptap ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.tiptap blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+  margin: 0.8em 0;
+}
+.tiptap pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: var(--radius);
+  padding: 1em;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.tiptap code {
+  background: var(--muted);
+  padding: 0.15em 0.4em;
+  border-radius: 0.3em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.tiptap img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}
+.tiptap .is-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--muted-foreground);
+  pointer-events: none;
+  height: 0;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
 }

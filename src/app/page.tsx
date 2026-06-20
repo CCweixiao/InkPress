@@ -1,64 +1,114 @@
-import Image from "next/image";
+import Link from "next/link";
+import { FileText, Palette, Settings, Sparkles } from "lucide-react";
+import { prisma } from "@/lib/db";
+import { formatDate, STATUS_LABEL } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { NewArticleButton } from "@/components/articles/NewArticleButton";
 
-export default function Home() {
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "success"> = {
+  draft: "secondary",
+  ready: "default",
+  pushed: "success",
+};
+
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const articles = await prisma.article.findMany({
+    orderBy: { updatedAt: "desc" },
+    include: { theme: { select: { name: true } } },
+  });
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen">
+      {/* 顶栏 */}
+      <header className="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-40">
+        <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <span className="font-semibold text-lg">墨笔</span>
+            <span className="text-xs text-muted-foreground ml-1">
+              AI 公众号写作台
+            </span>
+          </div>
+          <nav className="flex items-center gap-1">
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/themes">
+                <Palette className="h-4 w-4" />
+                主题
+              </Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/settings">
+                <Settings className="h-4 w-4" />
+                设置
+              </Link>
+            </Button>
+          </nav>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-6 py-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">我的文章</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              AI 生成、实时预览、一键推送到公众号草稿箱
+            </p>
+          </div>
+          <NewArticleButton />
         </div>
+
+        {articles.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-20 text-center">
+              <FileText className="h-12 w-12 text-muted-foreground/40 mb-4" />
+              <p className="text-muted-foreground mb-4">
+                还没有文章，新建一篇开始创作吧
+              </p>
+              <NewArticleButton />
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {articles.map((article) => (
+              <Link key={article.id} href={`/editor/${article.id}`}>
+                <Card className="h-full hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base line-clamp-2 group-hover:text-primary transition-colors">
+                        {article.title || "无标题文章"}
+                      </CardTitle>
+                      <Badge
+                        variant={STATUS_VARIANT[article.status] ?? "secondary"}
+                      >
+                        {STATUS_LABEL[article.status] ?? article.status}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-xs text-muted-foreground line-clamp-2 min-h-[2rem]">
+                      {article.contentMd
+                        .slice(0, 80)
+                        .replace(/[#*`>\-]/g, "") || "（空白文档）"}
+                    </p>
+                    <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
+                      <span>{article.theme?.name ?? "默认主题"}</span>
+                      <span>{formatDate(article.updatedAt)}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
