@@ -1,5 +1,5 @@
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import { PrismaClient } from "@/generated/prisma";
+import { PrismaClient } from "@/generated/prisma/client";
 
 // Prisma 7：通过 driver adapter 连接 SQLite（零运维单文件）
 function createPrismaClient() {
