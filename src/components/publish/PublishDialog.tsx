@@ -21,6 +21,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import type { ThemeOption } from "@/components/editor/EditorWorkspace";
+import { PublishPreview } from "./PublishPreview";
 
 export function PublishDialog({
   open,
@@ -198,6 +199,10 @@ export function PublishDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* 发布前公众号效果预览（服务端 juice 全量转换） */}
+            <PublishPreview articleId={articleId} themeId={themeId} />
+
             {error && (
               <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
                 {error}

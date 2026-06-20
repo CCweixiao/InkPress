@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send } from "lucide-react";
+import { Sparkles, Send, Palette } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { TiptapEditor } from "./TiptapEditor";
 import { AIPanel } from "./AIPanel";
 import { WeChatPreview } from "@/components/preview/WeChatPreview";
@@ -72,6 +79,11 @@ export function EditorWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markdown]);
 
+  useEffect(() => {
+    save({ themeId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeId]);
+
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* 左栏：AI 生成面板 */}
@@ -118,6 +130,21 @@ export function EditorWorkspace({
 
       {/* 右栏：公众号实时预览 */}
       <aside className="w-[380px] border-l border-border bg-muted/30 overflow-y-auto shrink-0">
+        <div className="px-4 py-2 border-b border-border flex items-center gap-2 bg-background/60">
+          <Palette className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <Select value={themeId ?? undefined} onValueChange={setThemeId}>
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue placeholder="选择主题" />
+            </SelectTrigger>
+            <SelectContent>
+              {themes.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <WeChatPreview
           markdown={markdown}
           title={title}
