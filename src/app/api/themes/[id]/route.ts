@@ -3,10 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 
 const updateSchema = z.object({
-  name: z.string().min(1).max(50).optional(),
-  cssContent: z.string().optional(),
+  name: z.string().min(1).max(20).optional(),
+  cssContent: z.string().min(1).optional(),
   codeTheme: z.string().optional(),
   primaryColor: z.string().optional(),
+  isDefault: z.boolean().optional(),
 });
 
 type Params = { params: Promise<{ id: string }> };
@@ -18,7 +19,35 @@ export async function PUT(req: NextRequest, { params }: Params) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const theme = await prisma.theme.update({ where: { id }, data: parsed.data });
+
+  const { isDefault, ...rest } = parsed.data;
+
+  // 设为默认：事务内先把其他主题的 isDefault 置 false，再把目标置 true（保证至多一个默认）
+  if (isDefault) {
+    const theme = await prisma.$transaction(async (tx) => {
+      await tx.theme.updateMany({ data: { isDefault: false } });
+      return tx.theme.update({ where: { id }, data: { ...rest, isDefault: true } });
+    });
+    return NextResponse.json({ theme });
+  }
+
+  // 取消默认：拒绝取消当前唯一的默认主题（保证至少一个默认）
+  if (isDefault === false) {
+    const current = await prisma.theme.findUnique({ where: { id } });
+    if (current?.isDefault) {
+      const otherDefaults = await prisma.theme.count({
+        where: { isDefault: true, NOT: { id } },
+      });
+      if (otherDefaults === 0) {
+        return NextResponse.json(
+          { error: "至少需要保留一个默认主题" },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  const theme = await prisma.theme.update({ where: { id }, data: rest });
   return NextResponse.json({ theme });
 }
 
@@ -31,6 +60,30 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       { status: 400 }
     );
   }
-  await prisma.theme.delete({ where: { id } });
+  // 防御：被文章引用的主题不可删除（避免外键悬空）
+  const refCount = await prisma.article.count({
+    where: { themeId: id, trashed: false },
+  });
+  if (refCount > 0) {
+    return NextResponse.json(
+      { error: `该主题被 ${refCount} 篇文章使用，无法删除` },
+      { status: 400 }
+    );
+  }
+  // 删除的是默认主题时，把默认转移给第一个内置主题
+  if (theme?.isDefault) {
+    await prisma.$transaction(async (tx) => {
+      await tx.theme.delete({ where: { id } });
+      const fallback = await tx.theme.findFirst({
+        where: { isBuiltIn: true },
+        orderBy: { createdAt: "asc" },
+      });
+      if (fallback) {
+        await tx.theme.update({ where: { id: fallback.id }, data: { isDefault: true } });
+      }
+    });
+  } else {
+    await prisma.theme.delete({ where: { id } });
+  }
   return NextResponse.json({ ok: true });
 }
