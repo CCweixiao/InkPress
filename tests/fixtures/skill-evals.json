@@ -1,0 +1,9 @@
+[
+  {"prompt":"写一篇面向开发者的公众号文章","intent":"create-article","skills":["wechat-writing"]},
+  {"prompt":"保留事实，把文章润色得更像真人","intent":"polish","skills":["de-ai-writing"]},
+  {"prompt":"检查这篇文章的事实、逻辑和列表排版","intent":"review","skills":["editorial-review"]},
+  {"prompt":"联网查证最新版本和官方来源","intent":"research","skills":["web-research"]},
+  {"prompt":"只读分析 Datastoria 的登录调用链","intent":"project-explore","skills":["codebase-exploration"]},
+  {"prompt":"把刚才的代码证据写成调用链技术文档","intent":"write-technical-doc","skills":["technical-documentation"]},
+  {"prompt":"把项目实现写成公众号文章","intent":"project-to-article","skills":["codebase-exploration","project-to-article","wechat-writing"]}
+]

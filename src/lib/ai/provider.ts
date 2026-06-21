@@ -1,30 +1,35 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import type { LanguageModel } from "ai";
+import { chooseLlmConfig, type SelectedLlmConfig } from "@/lib/ai/llm-config";
 
 /**
- * 根据 AI_MODEL 环境变量解析 provider + model。
- * 格式："<provider>:<model>"，如 "anthropic:claude-3-5-sonnet-latest"、"openai:gpt-4o"
+ * 从数据库的「模型配置」加载 LanguageModel（统一走 openai-compatible 协议，
+ * 覆盖 OpenAI / 智谱 GLM / DeepSeek 等兼容厂商）。
+ *
+ * 所有密钥与模型配置统一由 SystemConfig 表（inkpress.llm）管理，不再读取环境变量。
+ * 未配置任何供应商时抛出清晰错误，引导用户到设置页配置。
  */
-export function getModel() {
-  const spec = process.env.AI_MODEL ?? "anthropic:claude-3-5-sonnet-latest";
-  const [provider, ...modelParts] = spec.split(":");
-  const model = modelParts.join(":") || "claude-3-5-sonnet-latest";
-
-  if (provider === "anthropic") {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("未配置 ANTHROPIC_API_KEY（在 .env 或设置页填写）");
-    }
-    const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return anthropic(model);
+export async function getModel(
+  providerId?: string | null,
+  modelId?: string | null
+): Promise<{ model: LanguageModel; config: SelectedLlmConfig | null }> {
+  const selected = await chooseLlmConfig(providerId, modelId);
+  if (selected) {
+    return { model: createModel(selected), config: selected };
   }
+  throw new Error(
+    "尚未配置 AI 模型，请先在「设置 → 系统配置 → AI 模型」中添加至少一个供应商并填入 API Key。"
+  );
+}
 
-  if (provider === "openai") {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("未配置 OPENAI_API_KEY（在 .env 或设置页填写）");
-    }
-    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    return openai(model);
+function createModel(config: SelectedLlmConfig): LanguageModel {
+  if (config.apiProvider.toLowerCase() !== "openai-compatible") {
+    throw new Error(`暂不支持 LLM API Provider：${config.apiProvider}。`);
   }
-
-  throw new Error(`不支持的 AI provider：${provider}（仅支持 anthropic / openai）`);
+  const provider = createOpenAICompatible({
+    name: config.id,
+    baseURL: config.baseUrl,
+    apiKey: config.apiKey,
+  });
+  return provider(config.model.id);
 }

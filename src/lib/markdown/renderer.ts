@@ -19,25 +19,78 @@ export function getRenderer(): MarkdownIt {
     html: false,
     linkify: true,
     breaks: false,
-    highlight(code, lang) {
-      const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
-      try {
-        const result = hljs.highlight(code, { language, ignoreIllegals: true });
-        return `<pre class="hljs"><code>${result.value}</code></pre>`;
-      } catch {
-        return `<pre class="hljs"><code>${escapeHtml(code)}</code></pre>`;
-      }
-    },
   });
   md.use(footnote);
   md.use(taskLists, { enabled: true });
   md.use(katexPlugin as never);
 
-  // 微信适配：外链 a 标签转为脚注式（保留文字，去掉可点击外链）
-  // 这里先保留，由 to-wechat.ts 的清洗步骤统一处理链接
+  md.renderer.rules.code_inline = (tokens, idx) =>
+    `<code class="codespan">${escapeHtml(tokens[idx].content)}</code>`;
+
+  md.renderer.rules.fence = (tokens, idx) => {
+    const token = tokens[idx];
+    const info = token.info.trim();
+    const requestedLanguage = info.split(/\s+/)[0] || "text";
+    const language = hljs.getLanguage(requestedLanguage)
+      ? requestedLanguage
+      : "plaintext";
+    const languageLabel = getLanguageLabel(requestedLanguage);
+    let highlighted = escapeHtml(token.content);
+
+    try {
+      highlighted = hljs.highlight(token.content, {
+        language,
+        ignoreIllegals: true,
+      }).value;
+    } catch {
+      // 保留已转义的纯文本，代码内容始终可读。
+    }
+
+    return [
+      '<section class="code-block">',
+      '<div class="code__header">',
+      '<span class="code__dots"><i></i><i></i><i></i></span>',
+      `<span class="code__lang">${escapeHtml(languageLabel)}</span>`,
+      "</div>",
+      `<pre class="hljs code__pre"><code class="language-${escapeHtml(language)}">${highlighted}</code></pre>`,
+      "</section>\n",
+    ].join("");
+  };
 
   _md = md;
   return md;
+}
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  text: "TEXT",
+  plaintext: "TEXT",
+  shell: "SHELL",
+  bash: "BASH",
+  sh: "SHELL",
+  js: "JAVASCRIPT",
+  javascript: "JAVASCRIPT",
+  ts: "TYPESCRIPT",
+  typescript: "TYPESCRIPT",
+  jsx: "JSX",
+  tsx: "TSX",
+  py: "PYTHON",
+  python: "PYTHON",
+  java: "JAVA",
+  go: "GO",
+  rust: "RUST",
+  sql: "SQL",
+  json: "JSON",
+  yaml: "YAML",
+  yml: "YAML",
+  html: "HTML",
+  css: "CSS",
+  xml: "XML",
+  markdown: "MARKDOWN",
+  md: "MARKDOWN",
+};
+
+function getLanguageLabel(language: string): string {
+  return LANGUAGE_LABELS[language.toLowerCase()] ?? language.toUpperCase();
 }
 
 function escapeHtml(s: string): string {

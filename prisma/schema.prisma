@@ -11,31 +11,195 @@ datasource db {
 }
 
 model Article {
-  id           String   @id @default(cuid())
-  title        String   @default("") // 标题
-  contentMd    String   @default("") // markdown 源（source of truth）
+  id           String    @id @default(cuid())
+  title        String    @default("") // 标题
+  contentMd    String    @default("") // 已迁移到文件存储，此列保留作兼容（实际正文读 contentPath）
+  contentPath  String? // 正文文件相对路径（相对 storage 根，如 articles/<id>.md）
   digest       String? // 摘要（≤120 字）
   coverMediaId String? // 微信封面 media_id（add_material 返回）
+  coverAssetId String? // OSS 封面 Asset id（素材库封面，区别于微信）
+  coverUrl     String? // 封面可访问 URL（直接读，列表展示用，与 coverAssetId 并存冗余）
   themeId      String? // 关联 Theme
-  status       String   @default("draft") // draft | ready | pushed
+  spaceId      String? // 关联 Space（可为空=未分类）
+  status       String    @default("draft") // draft | ready | pushed
   wxMediaId    String? // draft/add 返回的 media_id（= 草稿箱 id）
+  // 软删除 / 回收站
+  trashed      Boolean   @default(false)
+  trashedAt    DateTime?
+  expiresAt    DateTime? // 回收站过期时间（trashedAt + 30d）
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  theme Theme? @relation(fields: [themeId], references: [id])
+  space Space? @relation(fields: [spaceId], references: [id])
+
+  assets           Asset[]
+  agentChatSession AgentChatSession?
+  agentProposals   AgentArticleProposal[]
+
+  @@index([themeId])
+  @@index([spaceId])
+  @@index([trashed])
+}
+
+model AgentChatSession {
+  id                  String   @id @default(cuid())
+  articleId           String?  @unique
+  technicalDocumentId String?  @unique
+  targetKind          String   @default("article") // article | technical-document
+  summary             String   @default("")
+  summaryUpToPosition Int      @default(-1)
+  selectedProjectId   String?
+  providerId          String?
+  modelId             String?
+  lastInputTokens     Int      @default(0)
+  lastOutputTokens    Int      @default(0)
+  lastReasoningTokens Int      @default(0)
+  lastTotalTokens     Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  article           Article?           @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  technicalDocument TechnicalDocument? @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
+  messages          AgentChatMessage[]
+
+  @@index([articleId])
+  @@index([technicalDocumentId])
+}
+
+model AgentChatMessage {
+  id           String   @id
+  sessionId    String
+  role         String
+  partsJson    String
+  metadataJson String?
+  position     Int
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  theme Theme? @relation(fields: [themeId], references: [id])
+  session AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  @@index([themeId])
+  @@unique([sessionId, position])
+  @@index([sessionId])
+}
+
+model AgentArticleProposal {
+  id              String    @id @default(cuid())
+  articleId       String
+  sessionId       String?
+  baseVersionHash String
+  baseTitle       String    @default("")
+  baseMarkdown    String    @default("")
+  baseDigest      String    @default("")
+  title           String?
+  markdown        String
+  digest          String?
+  summary         String    @default("")
+  status          String    @default("pending") // pending | applying | applied | rejected | superseded
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  appliedAt       DateTime?
+  decidedAt       DateTime?
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@index([sessionId])
+  @@index([status])
+}
+
+model TechnicalDocument {
+  id           String   @id @default(cuid())
+  title        String   @default("")
+  documentType String   @default("architecture") // architecture | implementation | call-chain | module-reference | dependency
+  projectId    String
+  contentPath  String?
+  snapshotHash String   @default("")
+  status       String   @default("draft")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  chatSession AgentChatSession?
+  versions    TechnicalDocumentVersion[]
+  proposals   AgentTechnicalDocumentProposal[]
+
+  @@index([projectId])
+  @@index([updatedAt])
+}
+
+model TechnicalDocumentVersion {
+  id                  String   @id @default(cuid())
+  technicalDocumentId String
+  version             Int
+  title               String
+  markdown            String
+  snapshotHash        String   @default("")
+  sourceSnapshotJson  String   @default("{}")
+  createdAt           DateTime @default(now())
+
+  technicalDocument TechnicalDocument @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
+
+  @@unique([technicalDocumentId, version])
+  @@index([technicalDocumentId])
+}
+
+model AgentTechnicalDocumentProposal {
+  id                  String    @id @default(cuid())
+  technicalDocumentId String
+  sessionId           String?
+  baseVersionHash     String
+  baseTitle           String    @default("")
+  baseMarkdown        String    @default("")
+  baseSnapshotHash    String    @default("")
+  title               String?
+  markdown            String
+  snapshotHash        String?
+  sourceSnapshotJson  String    @default("{}")
+  summary             String    @default("")
+  status              String    @default("pending")
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  appliedAt           DateTime?
+  decidedAt           DateTime?
+
+  technicalDocument TechnicalDocument @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
+
+  @@index([technicalDocumentId])
+  @@index([sessionId])
+  @@index([status])
+}
+
+model Space {
+  id          String    @id @default(cuid())
+  name        String // 空间名称
+  description String    @default("") // 空间描述
+  tagsJson    String    @default("[]") // 标签 JSON 数组
+  sortOrder   Int       @default(0)
+  isDefault   Boolean   @default(false) // 是否为默认空间（不可编辑/删除，至多一个）
+  pinned      Boolean   @default(false) // 是否置顶（排序优先级：默认 > 置顶 > createdAt 倒序）
+  // 软删除 / 回收站
+  trashed     Boolean   @default(false)
+  trashedAt   DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  articles Article[]
+  assets   Asset[]
+
+  @@index([trashed])
 }
 
 model Theme {
-  id           String    @id @default(cuid())
+  id           String   @id @default(cuid())
   name         String // 显示名，如「优雅蓝」
   cssContent   String // markdown 主题 CSS（裸选择器）
-  codeTheme    String    @default("atom-one-dark") // 代码高亮主题名
-  primaryColor String?   @default("#3f51b5") // 用于解析 var()
-  isBuiltIn    Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  codeTheme    String   @default("atom-one-dark") // 代码高亮主题名
+  primaryColor String?  @default("#3f51b5") // 用于解析 var()
+  isBuiltIn    Boolean  @default(false)
+  isDefault    Boolean  @default(false) // 是否为默认主题（DB 层至多一个为 true，由应用保证）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   articles Article[]
 }
@@ -49,4 +213,65 @@ model Material {
   wxMediaId  String? // add_material 返回（封面用）
   kind       String // "body" | "cover"
   createdAt  DateTime @default(now())
+}
+
+/// 技能仓库（用户级 skill）
+/// 通过界面新增/AI 生成的 skill 均落此表，同时镜像写入 resources/skills/<key>/SKILL.md
+/// 使写作 agent 的 listSkills() 自动识别。resources/skills 下无 DB 记录的目录视为系统 skill（只读）。
+model Skill {
+  id           String   @id @default(cuid())
+  skillKey     String   @unique // resources/skills 下的目录名（slugged）
+  name         String // 显示名（取自 frontmatter）
+  description  String   @default("")
+  manual       String   @default("") // SKILL.md 正文（frontmatter 之后）
+  promptHint   String? // AI 生成时记录的用途描述；手动新建为 null
+  manifest     String? // 资源清单 JSON（压缩包上传时扫描得到，如 {"scripts":[...],"references":[...]}）
+  hasResources Boolean  @default(false) // 是否含非 SKILL.md 的额外资源（references/scripts/agents 等）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+/// 系统级配置（key/value，value 为 JSON 字符串）
+/// inkpress.llm = AI 模型配置数组，inkpress.oss = OSS 配置对象
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String // JSON 字符串
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// 素材库（OSS 上传的图片 / 视频 / 文件）
+/// 双重归属：可绑定到 Space（spaceId）和/或 Article（articleId）
+model Asset {
+  id          String    @id @default(cuid())
+  name        String // 展示名（自动生成的短 UUID，如 a1b2c3d4.png）
+  ossKey      String // OSS 对象 key（删除用）
+  url         String // 可访问 URL（CDN / OSS 默认域名）
+  kind        String // "image" | "video" | "file"
+  size        Int       @default(0) // 字节
+  contentType String    @default("") // mime
+  // 元数据（供 AI 自动插图判断相关性）
+  description String    @default("") // 素材描述
+  tagsJson    String    @default("[]") // 标签（JSON 字符串数组）
+  // 归属
+  spaceId     String? // 所属空间（可空）
+  articleId   String? // 所属文章（可空，编辑器内上传的素材）
+  // 软删除 / 回收站
+  trashed     Boolean   @default(false)
+  trashedAt   DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  space   Space?   @relation(fields: [spaceId], references: [id])
+  article Article? @relation(fields: [articleId], references: [id])
+
+  @@index([kind])
+  @@index([createdAt])
+  @@index([spaceId])
+  @@index([articleId])
+  @@index([trashed])
 }

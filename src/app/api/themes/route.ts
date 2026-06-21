@@ -3,8 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 
 const upsertSchema = z.object({
-  name: z.string().min(1).max(50),
-  cssContent: z.string(),
+  name: z.string().min(1).max(20),
+  cssContent: z.string().min(1),
   codeTheme: z.string().default("atom-one-dark"),
   primaryColor: z.string().default("#3f51b5"),
 });

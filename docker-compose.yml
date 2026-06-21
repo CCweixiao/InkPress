@@ -1,0 +1,26 @@
+# InkPress 服务端部署（Docker Compose）
+# 用法：docker compose up -d
+# 数据持久化：./inkpress-data 挂载到容器 /data（= INKPRESS_HOME）
+
+services:
+  inkpress:
+    build: .
+    image: inkpress:latest
+    container_name: inkpress
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # 用户数据卷：数据库 / 文章 / skill / 日志 全部持久化到宿主机
+      - ./inkpress-data:/data
+    environment:
+      - NODE_ENV=production
+      - INKPRESS_HOME=/data
+      # 可选：自定义日志级别（trace/debug/info/warn/error）
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/settings/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

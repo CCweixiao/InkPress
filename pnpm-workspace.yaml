@@ -1,6 +1,8 @@
 allowBuilds:
   '@prisma/engines': true
   better-sqlite3: true
+  electron: true
+  electron-winstaller: true
   esbuild: true
   prisma: true
   sharp: true
@@ -11,3 +13,5 @@ onlyBuiltDependencies:
   - prisma
   - sharp
   - unrs-resolver
+overrides:
+  'ali-oss>urllib': 4.9.0

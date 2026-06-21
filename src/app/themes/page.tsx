@@ -47,6 +47,7 @@ export default async function ThemesPage() {
             codeTheme: t.codeTheme,
             primaryColor: t.primaryColor ?? "#3f51b5",
             isBuiltIn: t.isBuiltIn,
+            isDefault: t.isDefault,
           }))}
         />
       </main>

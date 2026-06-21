@@ -19,7 +19,6 @@
   --ring: #2563eb;
   --radius: 0.625rem;
 }
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -54,60 +53,175 @@ body {
     "Microsoft YaHei", sans-serif;
 }
 
-/* Tiptap 编辑区基础排版 */
+/* Tiptap 编辑区：接近成稿的舒适写作纸张 */
+.editor-canvas {
+  background:
+    radial-gradient(circle at 50% 0, rgba(37, 99, 235, 0.035), transparent 30rem),
+    #f8fafc;
+}
+
+.editor-canvas > div {
+  min-height: 100%;
+  background: #fff;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+}
+
 .tiptap {
   outline: none;
   min-height: 60vh;
+  color: #263244;
+  font-size: 16.5px;
+  line-height: 1.76;
+  letter-spacing: 0.012em;
 }
 .tiptap p {
-  margin: 0.75em 0;
-  line-height: 1.75;
+  margin: 0.72em 0;
+  line-height: 1.76;
 }
 .tiptap h1 {
-  font-size: 1.6em;
-  font-weight: 700;
-  margin: 1em 0 0.5em;
+  margin: 1.35em 0 0.62em;
+  color: #0f172a;
+  font-size: 1.92em;
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: -0.035em;
+}
+.tiptap > h1:first-child {
+  margin-top: 0.15em;
 }
 .tiptap h2 {
-  font-size: 1.35em;
-  font-weight: 700;
-  margin: 1em 0 0.5em;
+  margin: 1.85em 0 0.58em;
+  padding-bottom: 0.34em;
+  border-bottom: 1px solid #e2e8f0;
+  color: #172033;
+  font-size: 1.4em;
+  font-weight: 720;
+  line-height: 1.38;
+  letter-spacing: -0.02em;
 }
 .tiptap h3 {
-  font-size: 1.15em;
-  font-weight: 600;
-  margin: 0.8em 0 0.4em;
+  position: relative;
+  margin: 1.38em 0 0.46em;
+  padding-left: 0.72em;
+  color: #1e293b;
+  font-size: 1.16em;
+  font-weight: 680;
+  line-height: 1.45;
+}
+.tiptap h3::before {
+  position: absolute;
+  top: 0.18em;
+  bottom: 0.18em;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  content: "";
 }
 .tiptap ul,
 .tiptap ol {
-  padding-left: 1.5em;
-  margin: 0.5em 0;
+  padding-left: 1.65em;
+  margin: 0.68em 0;
+}
+.tiptap ul {
+  list-style-type: disc;
+}
+.tiptap ol {
+  list-style-type: decimal;
+}
+.tiptap ul ul {
+  list-style-type: circle;
+}
+.tiptap ol ol {
+  list-style-type: lower-alpha;
+}
+.tiptap li {
+  margin: 0.26em 0;
+  padding-left: 0.15em;
+  line-height: 1.7;
+}
+.tiptap li > p {
+  margin: 0.22em 0;
+}
+.tiptap li::marker {
+  color: #2563eb;
+  font-weight: 650;
 }
 .tiptap blockquote {
-  border-left: 3px solid var(--primary);
-  padding-left: 1em;
-  color: var(--muted-foreground);
-  margin: 0.8em 0;
+  margin: 1em 0;
+  padding: 0.68em 1em;
+  border: 1px solid #dbeafe;
+  border-left: 4px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+  background: linear-gradient(135deg, #f8fbff, #eff6ff);
+  color: #526078;
+}
+.tiptap blockquote p {
+  margin: 0;
 }
 .tiptap pre {
-  background: #0f172a;
-  color: #e2e8f0;
-  border-radius: var(--radius);
-  padding: 1em;
+  position: relative;
+  margin: 1.12em 0;
+  padding: 2.6em 1.2em 1.08em;
   overflow-x: auto;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  background: #0d1424;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.15);
+  color: #d9e2f1;
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.82em;
+  line-height: 1.62;
+  letter-spacing: 0;
 }
-.tiptap code {
+.tiptap pre::before {
+  position: absolute;
+  top: 13px;
+  left: 15px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: 14px 0 #febc2e, 28px 0 #28c840;
+  content: "";
+}
+.tiptap pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+}
+.tiptap :not(pre) > code {
   background: var(--muted);
-  padding: 0.15em 0.4em;
-  border-radius: 0.3em;
+  padding: 0.18em 0.42em;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.35em;
+  color: #d94660;
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.86em;
 }
 .tiptap img {
+  display: block;
   max-width: 100%;
-  border-radius: var(--radius);
+  margin: 1.18em auto;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+}
+.tiptap hr {
+  width: 32%;
+  margin: 1.85em auto;
+  border: 0;
+  border-top: 1px solid #cbd5e1;
+}
+.tiptap a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-decoration-color: #bfdbfe;
+  text-underline-offset: 3px;
+}
+.tiptap strong {
+  color: #111827;
+  font-weight: 720;
 }
 .tiptap .is-empty:first-child::before {
   content: attr(data-placeholder);
@@ -128,4 +242,29 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
+}
+
+/* 技能表单：清晰聚焦边框（替代默认的模糊 ring） */
+/* 同时美化对话框表单的输入框、文本域、下拉触发器，统一聚焦态 */
+.skill-form input,
+.skill-form textarea,
+.skill-form [role="combobox"],
+.skill-form button[aria-haspopup="listbox"] {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+/* 覆盖 Input/Textarea/SelectTrigger 的 focus:ring-2 ring-ring（模糊边缘） */
+/* 用高特异性确保覆盖 Tailwind 的 ring 工具类 */
+.skill-form input:focus,
+.skill-form input:focus-visible,
+.skill-form textarea:focus,
+.skill-form textarea:focus-visible,
+.skill-form [role="combobox"]:focus,
+.skill-form [role="combobox"]:focus-visible,
+.skill-form button[aria-haspopup="listbox"]:focus,
+.skill-form button[aria-haspopup="listbox"]:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  /* 清晰的实心边框 + 内侧浅色光晕（非外发光），边缘锐利不模糊 */
+  box-shadow: inset 0 0 0 1px var(--primary), 0 0 0 3px rgba(37, 99, 235, 0.1);
+  background-color: #fff;
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "文章审校"
+  short_description: "检查文章事实、逻辑、语言、Markdown 与公众号发布排版质量"
+  default_prompt: "使用 $editorial-review 审校这篇文章，并按严重程度列出问题。"

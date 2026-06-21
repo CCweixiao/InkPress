@@ -1,0 +1,28 @@
+# 排除无需进入构建上下文的文件，加速构建、避免泄露本地数据
+node_modules
+.next
+dist
+dist-electron
+.git
+.idea
+.vscode
+
+# 本地数据库与用户数据（绝不打入镜像）
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+
+# 日志与临时文件
+logs
+storage
+.inkpress
+inkpress-data
+
+# 测试与文档
+coverage
+playwright-report
+test-results
+*.md
+!README.md
