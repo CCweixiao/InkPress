@@ -1,0 +1,4 @@
+interface:
+  display_name: "只读代码探索"
+  short_description: "追踪源码入口、模块依赖、符号引用与可核验的完整调用链路"
+  default_prompt: "使用 $codebase-exploration 只读探索这个项目，并用文件与行号说明实现链路。"

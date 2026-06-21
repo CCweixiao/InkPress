@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
 
 # next.js
 /.next/
@@ -46,3 +48,26 @@ next-env.d.ts
 # sqlite database
 *.db
 *.db-journal
+
+# 开发模式数据库目录（含 dev.db、备份、迁移脚本留档）
+/dev.database/
+
+# 文件存储（文章正文 / 上传临时分片）
+/storage/
+
+# 用户 skill 目录（运行时写入：用户创建/AI 生成/上传的 skill）
+# 系统 skill 在 resources/skills/system/（随包发布，入库）
+/resources/skills/user/
+
+# Electron 桌面应用打包产物
+/dist/
+/dist-electron/
+
+# 用户数据目录（桌面应用运行时生成，不入库）
+/.inkpress/
+
+# 日志目录（运行时生成）
+/logs/
+
+# Docker 数据卷（持久化数据，不入库）
+/inkpress-data/

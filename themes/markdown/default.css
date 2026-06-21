@@ -1,563 +1,141 @@
 /**
- * MD 默认主题（经典主题）
- * 按 Alt/Option + Shift + F 可格式化
- * 如需使用主题色，请使用 var(--md-primary-color) 代替颜色值
+ * 专业主题：清晰、可靠，适合科技、商业与知识类公众号。
  */
 
-/* ==================== 一级标题 ==================== */
 h1 {
-  display: table;
-  padding: 0 1em;
+  display: block;
+  margin: 2.4em 0 1.4em;
+  padding: 0 0 0.72em;
   border-bottom: 2px solid var(--md-primary-color);
-  margin: 2em auto 1em;
-  color: hsl(var(--foreground));
-  font-size: calc(var(--md-font-size) * 1.2);
-  font-weight: bold;
-  text-align: center;
+  color: #111827;
+  font-size: calc(var(--md-font-size) * 1.45);
+  font-weight: 750;
+  line-height: 1.42;
+  text-align: left;
+  letter-spacing: 0.01em;
 }
 
-/* ==================== 二级标题 ==================== */
 h2 {
-  display: table;
-  padding: 0 0.2em;
-  margin: 4em auto 2em;
-  color: #fff;
-  background: var(--md-primary-color);
-  font-size: calc(var(--md-font-size) * 1.2);
-  font-weight: bold;
-  text-align: center;
-}
-
-/* ==================== 三级标题 ==================== */
-h3 {
-  padding-left: 8px;
-  border-left: 3px solid var(--md-primary-color);
-  margin: 2em 8px 0.75em 0;
-  color: hsl(var(--foreground));
-  font-size: calc(var(--md-font-size) * 1.1);
-  font-weight: bold;
-  line-height: 1.2;
-}
-
-/* ==================== 四级标题 ==================== */
-h4 {
-  margin: 2em 8px 0.5em;
-  color: var(--md-primary-color);
-  font-size: calc(var(--md-font-size) * 1);
-  font-weight: bold;
-}
-
-/* ==================== 五级标题 ==================== */
-h5 {
-  margin: 1.5em 8px 0.5em;
-  color: var(--md-primary-color);
-  font-size: calc(var(--md-font-size) * 1);
-  font-weight: bold;
-}
-
-/* ==================== 六级标题 ==================== */
-h6 {
-  margin: 1.5em 8px 0.5em;
-  font-size: calc(var(--md-font-size) * 1);
-  color: var(--md-primary-color);
-}
-
-/* ==================== 段落 ==================== */
-p {
-  margin: 1.5em 8px;
-  letter-spacing: 0.1em;
-  color: hsl(var(--foreground));
-}
-
-/* ==================== 引用块 ==================== */
-blockquote {
-  font-style: normal;
-  padding: 1em;
-  border-left: 4px solid var(--md-primary-color);
-  border-radius: 6px;
-  color: hsl(var(--foreground));
-  background: var(--blockquote-background);
-  margin-bottom: 1em;
-}
-
-blockquote > p {
   display: block;
-  font-size: 1em;
-  letter-spacing: 0.1em;
-  color: hsl(var(--foreground));
-  margin: 0;
-}
-
-/* ==================== GFM 警告块 ==================== */
-.alert-title-note,
-.alert-title-tip,
-.alert-title-info,
-.alert-title-important,
-.alert-title-warning,
-.alert-title-caution,
-.alert-title-abstract,
-.alert-title-summary,
-.alert-title-tldr,
-.alert-title-todo,
-.alert-title-success,
-.alert-title-done,
-.alert-title-question,
-.alert-title-help,
-.alert-title-faq,
-.alert-title-failure,
-.alert-title-fail,
-.alert-title-missing,
-.alert-title-danger,
-.alert-title-error,
-.alert-title-bug,
-.alert-title-example,
-.alert-title-quote,
-.alert-title-cite,
-.alert-title-theorem,
-.alert-title-lemma,
-.alert-title-corollary,
-.alert-title-proposition,
-.alert-title-definition,
-.alert-title-axiom,
-.alert-title-postulate,
-.alert-title-assumption,
-.alert-title-proof,
-.alert-title-remark,
-.alert-title-custom {
-  display: flex;
-  align-items: center;
-  gap: 0.5em;
-  margin-bottom: 0.5em;
-}
-
-.alert-title-note {
-  color: #478be6;
-}
-
-.alert-title-tip {
-  color: #57ab5a;
-}
-
-.alert-title-info {
-  color: #93c5fd;
-}
-
-.alert-title-important {
-  color: #986ee2;
-}
-
-.alert-title-warning {
-  color: #c69026;
-}
-
-.alert-title-caution {
-  color: #e5534b;
-}
-
-/* Obsidian-style callout colors */
-.alert-title-abstract,
-.alert-title-summary,
-.alert-title-tldr {
-  color: #00bfff;
-}
-
-.alert-title-todo {
-  color: #478be6;
-}
-
-.alert-title-success,
-.alert-title-done {
-  color: #57ab5a;
-}
-
-.alert-title-question,
-.alert-title-help,
-.alert-title-faq {
-  color: #c69026;
-}
-
-.alert-title-failure,
-.alert-title-fail,
-.alert-title-missing {
-  color: #e5534b;
-}
-
-.alert-title-danger,
-.alert-title-error {
-  color: #e5534b;
-}
-
-.alert-title-bug {
-  color: #e5534b;
-}
-
-.alert-title-example {
-  color: #986ee2;
-}
-
-.alert-title-quote,
-.alert-title-cite {
-  color: #9ca3af;
-}
-
-/* GFM Alert SVG 图标颜色 */
-.alert-icon-note {
-  fill: #478be6;
-}
-
-.alert-icon-tip {
-  fill: #57ab5a;
-}
-
-.alert-icon-info {
-  fill: #93c5fd;
-}
-
-.alert-icon-important {
-  fill: #986ee2;
-}
-
-.alert-icon-warning {
-  fill: #c69026;
-}
-
-.alert-icon-caution {
-  fill: #e5534b;
-}
-
-/* Obsidian-style callout icon colors */
-.alert-icon-abstract,
-.alert-icon-summary,
-.alert-icon-tldr {
-  fill: #00bfff;
-}
-
-.alert-icon-todo {
-  fill: #478be6;
-}
-
-.alert-icon-success,
-.alert-icon-done {
-  fill: #57ab5a;
-}
-
-.alert-icon-question,
-.alert-icon-help,
-.alert-icon-faq {
-  fill: #c69026;
-}
-
-.alert-icon-failure,
-.alert-icon-fail,
-.alert-icon-missing {
-  fill: #e5534b;
-}
-
-.alert-icon-danger,
-.alert-icon-error {
-  fill: #e5534b;
-}
-
-.alert-icon-bug {
-  fill: #e5534b;
-}
-
-.alert-icon-example {
-  fill: #986ee2;
-}
-
-.alert-icon-quote,
-.alert-icon-cite {
-  fill: #9ca3af;
-}
-
-/* ==================== 学术环境（定理、引理、定义等） ==================== */
-/* 标题颜色 */
-.alert-title-theorem,
-.alert-title-lemma,
-.alert-title-corollary,
-.alert-title-proposition {
-  color: #986ee2;
-}
-
-.alert-title-definition {
-  color: #57ab5a;
-}
-
-.alert-title-axiom,
-.alert-title-postulate,
-.alert-title-assumption {
-  color: #478be6;
-}
-
-.alert-title-proof {
-  color: #9ca3af;
-}
-
-.alert-title-remark {
-  color: #c69026;
-}
-
-/* 图标颜色 */
-.alert-icon-theorem,
-.alert-icon-lemma,
-.alert-icon-corollary,
-.alert-icon-proposition {
-  fill: #986ee2;
-}
-
-.alert-icon-definition {
-  fill: #57ab5a;
-}
-
-.alert-icon-axiom,
-.alert-icon-postulate,
-.alert-icon-assumption {
-  fill: #478be6;
-}
-
-.alert-icon-proof {
-  fill: #9ca3af;
-}
-
-.alert-icon-remark {
-  fill: #c69026;
-}
-
-/* 盒子描边：学术环境使用完整边框，更接近定理环境的视觉效果 */
-.markdown-alert-theorem,
-.markdown-alert-lemma,
-.markdown-alert-corollary,
-.markdown-alert-proposition {
-  border: 1px solid rgba(152, 110, 226, 0.35);
-  border-left: 4px solid #986ee2;
-}
-
-.markdown-alert-definition {
-  border: 1px solid rgba(87, 171, 90, 0.35);
-  border-left: 4px solid #57ab5a;
-}
-
-.markdown-alert-axiom,
-.markdown-alert-postulate,
-.markdown-alert-assumption {
-  border: 1px solid rgba(71, 139, 230, 0.35);
-  border-left: 4px solid #478be6;
-}
-
-.markdown-alert-proof {
-  border: 1px solid rgba(156, 163, 175, 0.35);
-  border-left: 4px solid #9ca3af;
-}
-
-.markdown-alert-remark {
-  border: 1px solid rgba(198, 144, 38, 0.35);
-  border-left: 4px solid #c69026;
-}
-
-/* 自定义/未知名称的兜底样式：无图标，使用主题主色 */
-.alert-title-custom {
-  color: var(--md-primary-color);
-}
-
-.markdown-alert-custom {
-  border-left: 4px solid var(--md-primary-color);
-}
-
-/* 学术环境正文使用斜体，符合数学写作惯例 */
-.markdown-alert-theorem > :not(.markdown-alert-title),
-.markdown-alert-lemma > :not(.markdown-alert-title),
-.markdown-alert-corollary > :not(.markdown-alert-title),
-.markdown-alert-proposition > :not(.markdown-alert-title),
-.markdown-alert-definition > :not(.markdown-alert-title),
-.markdown-alert-axiom > :not(.markdown-alert-title),
-.markdown-alert-postulate > :not(.markdown-alert-title),
-.markdown-alert-assumption > :not(.markdown-alert-title) {
-  font-style: italic;
-}
-
-/* ==================== 代码块 ==================== */
-pre.code__pre,
-.hljs.code__pre {
-  font-size: 90%;
-  overflow-x: auto;
-  border-radius: 8px;
-  padding: 0 !important;
+  margin: 2.8em 0 1.25em;
+  padding: 0.58em 0.82em;
+  border-left: 5px solid var(--md-primary-color);
+  border-radius: 0 7px 7px 0;
+  color: #172033;
+  background: var(--md-primary-color-bg);
+  font-size: calc(var(--md-font-size) * 1.22);
+  font-weight: 720;
   line-height: 1.5;
-  margin: 10px 8px;
+  letter-spacing: 0.025em;
 }
 
-/* ==================== 图片 ==================== */
-img {
-  display: block;
-  max-width: 100%;
-  margin: 0.1em auto 0.5em;
-  border-radius: 4px;
+h3 {
+  margin: 2.1em 0 0.85em;
+  padding-bottom: 0.38em;
+  border-bottom: 1px solid #e7eaf0;
+  color: #1f2937;
+  font-size: calc(var(--md-font-size) * 1.1);
+  font-weight: 700;
+  line-height: 1.55;
 }
 
-/* ==================== 列表 ==================== */
-ol {
-  padding-left: 1em;
-  margin-left: 0;
-  color: hsl(var(--foreground));
+h4, h5, h6 {
+  margin: 1.8em 0 0.7em;
+  color: var(--md-primary-color-dark);
+  font-size: var(--md-font-size);
+  font-weight: 700;
 }
 
-ul {
-  list-style: circle;
-  padding-left: 1em;
-  margin-left: 0;
-  color: hsl(var(--foreground));
+p {
+  margin: 1.08em 0;
+  color: #303744;
+  line-height: 1.86;
+  letter-spacing: 0.04em;
+}
+
+strong {
+  color: var(--md-primary-color-dark);
+  font-weight: 720;
+}
+
+blockquote {
+  margin: 1.55em 0;
+  padding: 1em 1.15em;
+  border: 1px solid #dfe7f3;
+  border-left: 4px solid var(--md-primary-color);
+  border-radius: 0 8px 8px 0;
+  color: #566173;
+  background: #f7f9fc;
+}
+
+blockquote p {
+  margin: 0;
+  color: #566173;
+}
+
+ul, ol {
+  margin: 1.1em 0;
+  padding-left: 1.45em;
+  color: #303744;
 }
 
 li {
-  display: block;
-  margin: 0.2em 8px;
-  color: hsl(var(--foreground));
+  margin: 0.52em 0;
+  padding-left: 0.12em;
+  line-height: 1.76;
 }
 
-/* ==================== 脚注 ==================== */
-/* footnotes 在 buildFootnotes() 中渲染为 <p> 标签 */
-p.footnotes {
-  margin: 0.5em 8px;
-  font-size: 80%;
-  color: hsl(var(--foreground));
-}
-
-/* ==================== 图表 ==================== */
-figure {
-  margin: 1.5em 8px;
-  color: hsl(var(--foreground));
-}
-
-figcaption,
-.md-figcaption {
-  text-align: center;
-  color: color-mix(in srgb, hsl(var(--foreground)) 50%, transparent);
-  font-size: 0.8em;
-}
-
-/* ==================== 分隔线 ==================== */
 hr {
-  border-style: solid;
-  border-width: 2px 0 0;
-  border-color: rgba(0, 0, 0, 0.1);
-  -webkit-transform-origin: 0 0;
-  -webkit-transform: scale(1, 0.5);
-  transform-origin: 0 0;
-  transform: scale(1, 0.5);
-  height: 0.4em;
-  margin: 1.5em 0;
+  width: 42%;
+  height: 1px;
+  margin: 2.6em auto;
+  border: 0;
+  background: #d9dee8;
 }
 
-/* ==================== 行内代码 ==================== */
 .codespan {
-  font-size: 90%;
-  color: var(--md-primary-color);
-  background: color-mix(in srgb, var(--md-primary-color) 8%, transparent);
-  padding: 3px 5px;
+  padding: 0.16em 0.42em;
+  border: 1px solid #dce5f3;
   border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--md-primary-color) 20%, transparent);
+  color: var(--md-primary-color-dark);
+  background: #f3f6fb;
+  font-size: 88%;
 }
 
-/* 代码块内的 code 标签需要特殊处理（覆盖行内 code 样式） */
-pre.code__pre > code,
-.hljs.code__pre > code {
-  display: -webkit-box;
-  padding: 0.5em 1em 1em;
-  overflow-x: auto;
-  text-indent: 0;
-  color: inherit;
-  background: none;
-  white-space: nowrap;
-  margin: 0;
+.code-block {
+  border: 1px solid #202b3d;
 }
 
-/* ==================== 强调 ==================== */
-em {
-  font-style: italic;
-  font-size: inherit;
+img {
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.1);
 }
 
-/* ==================== 链接 ==================== */
-a {
-  color: #576b95;
-  text-decoration: none;
-}
-
-/* ==================== 粗体 ==================== */
-strong {
-  color: var(--md-primary-color);
-  font-weight: bold;
-  font-size: inherit;
-}
-
-/* ==================== 表格 ==================== */
 table {
-  color: hsl(var(--foreground));
-}
-
-thead {
-  font-weight: bold;
-  color: hsl(var(--foreground));
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.05);
 }
 
 th {
-  border: 1px solid color-mix(in srgb, hsl(var(--foreground)) 15%, transparent);
-  padding: 0.25em 0.5em;
-  color: hsl(var(--foreground));
-  word-break: keep-all;
-  background: color-mix(in srgb, hsl(var(--foreground)) 5%, transparent);
+  color: #263244;
+  background: #f4f7fb;
+  font-weight: 700;
 }
 
-td {
-  border: 1px solid color-mix(in srgb, hsl(var(--foreground)) 15%, transparent);
-  padding: 0.25em 0.5em;
-  color: hsl(var(--foreground));
-  word-break: keep-all;
+tr:nth-child(even) td {
+  background: #fafbfd;
 }
 
-/* ==================== KaTeX 公式 ==================== */
-.katex-inline {
-  max-width: 100%;
-  overflow-x: auto;
+a {
+  color: #576b95;
+  text-decoration: none;
+  border-bottom: 1px solid #c8d0e0;
 }
 
-.katex-block {
-  max-width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: 0.5em 0;
+figcaption, .md-figcaption {
+  margin-top: 0.6em;
+  color: #8a93a3;
+  font-size: 0.78em;
   text-align: center;
-}
-
-.katex-pending {
-  color: hsl(var(--muted-foreground, 0 0% 45%));
-  font-size: 0.875em;
-}
-
-.katex-block.katex-pending {
-  padding: 0.75em 0;
-}
-
-.katex-inline.katex-pending {
-  opacity: 0.75;
-}
-
-/* ==================== 标记高亮 ==================== */
-.markup-highlight {
-  background-color: var(--md-primary-color);
-  padding: 2px 4px;
-  border-radius: 2px;
-  color: #fff;
-}
-
-.markup-underline {
-  text-decoration: underline;
-  text-decoration-color: var(--md-primary-color);
-}
-
-.markup-wavyline {
-  text-decoration: underline wavy;
-  text-decoration-color: var(--md-primary-color);
-  text-decoration-thickness: 2px;
 }

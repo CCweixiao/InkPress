@@ -1,0 +1,4 @@
+interface:
+  display_name: "联网研究与核查"
+  short_description: "检索权威来源、核验时效事实并整理完整可追溯的引用证据"
+  default_prompt: "使用 $web-research 调研这个主题，交叉核验关键结论并保留来源。"
