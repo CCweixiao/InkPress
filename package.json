@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist-electron/electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CCweixiao/InkPress.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,6 +16,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "eval:skills": "tsx scripts/eval-skills.ts",
+    "release": "node scripts/release.mjs",
     "postinstall": "prisma generate",
     "lint": "next lint",
     "db:migrate": "prisma migrate dev",
