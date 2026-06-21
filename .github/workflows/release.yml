@@ -14,10 +14,10 @@ on:
         required: true
         default: "v0.1.0"
 
-# 同一 tag 并发时取消旧运行
+# 同一 tag 重新触发时取消旧的运行（避免旧代码构建阻塞新构建）
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
