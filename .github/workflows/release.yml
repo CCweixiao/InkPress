@@ -76,9 +76,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # 禁用 electron-builder 自带的隐式发布（v26 在检测到 git tag 时会尝试自动发布，
-          # 与下方 release job 的 softprops/action-gh-release 冲突且会报 "not a file"）。
-          # 发布统一由 release job 负责。
+          # 未配置签名凭证时禁用 macOS 证书自动发现（否则 hardenedRuntime/签名路径
+          # 会触发 "not a file" 报错）。配置了 CSC_LINK 时自动启用签名+公证。
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK && 'true' || 'false' }}
         run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload build artifact
