@@ -1,0 +1,225 @@
+import { generateObject, type LanguageModel } from "ai";
+import { z } from "zod";
+import type {
+  AgentConfig,
+  AgentProjectConfig,
+} from "@/lib/ai/agent-config";
+import type { SkillCatalogItem } from "@/lib/ai/skills";
+
+export const agentIntentSchema = z.enum([
+  "question",
+  "create-article",
+  "polish",
+  "review",
+  "research",
+  "project-explore",
+  "write-technical-doc",
+  "project-to-article",
+]);
+export type AgentIntent = z.infer<typeof agentIntentSchema>;
+
+const routeSchema = z.object({
+  intent: agentIntentSchema,
+  skillIds: z.array(z.string()).max(4),
+  needsWeb: z.boolean(),
+  needsAssets: z.boolean(),
+  needsProject: z.boolean(),
+  needsProposal: z.boolean(),
+  projectId: z.string().nullable(),
+  rationale: z.string().max(300),
+});
+
+export type AgentRoute = z.infer<typeof routeSchema> & {
+  project?: AgentProjectConfig;
+  ambiguityQuestion?: string;
+  activeTools: string[];
+};
+
+function fallbackRoute(message: string): z.infer<typeof routeSchema> {
+  const text = message.toLowerCase();
+  const project = /项目|代码|源码|仓库|repo|repository|模块|架构/.test(text);
+  const technicalDoc =
+    /(技术文档|架构文档|调用链文档|模块文档|依赖分析文档|实现说明)/.test(text);
+  const projectArticle =
+    project && /(公众号|文章|博客|写成文章|技术文章)/.test(text);
+  const research = /搜索|查找|联网|资料|最新|事实|调研|来源/.test(text);
+  const review = /审校|校对|检查|错别字|逻辑问题|事实核查/.test(text);
+  const polish =
+    /润色|改写|优化|精简|扩写|调整文章|修改文章|去\s*ai\s*味|去除ai|机器味|机器人味|像真人|人味/.test(
+      text
+    );
+  const create = /写一篇|生成文章|创作|撰写|写成文章/.test(text);
+  const intent: AgentIntent = projectArticle
+    ? "project-to-article"
+    : technicalDoc
+      ? "write-technical-doc"
+      : project
+        ? "project-explore"
+        : research
+          ? "research"
+          : review
+            ? "review"
+            : polish
+              ? "polish"
+              : create
+                ? "create-article"
+                : "question";
+  const needsProposal =
+    create ||
+    polish ||
+    technicalDoc ||
+    projectArticle ||
+    /修改|重写|写成|生成文章|撰写/.test(text);
+  return {
+    intent,
+    skillIds: [],
+    needsWeb: research,
+    needsAssets: create || polish || needsProposal,
+    needsProject: project || technicalDoc,
+    needsProposal,
+    projectId: null,
+    rationale: "使用规则路由完成意图识别。",
+  };
+}
+
+function matchProjectFromText(
+  message: string,
+  projects: AgentProjectConfig[]
+) {
+  const lower = message.toLowerCase();
+  return projects.filter((project) => {
+    const basename = project.root.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+    return [project.id, project.name, basename].some(
+      (value) => value && lower.includes(value.toLowerCase())
+    );
+  });
+}
+
+function defaultSkillsForIntent(intent: AgentIntent) {
+  switch (intent) {
+    case "create-article":
+      return ["wechat-writing"];
+    case "polish":
+      return ["de-ai-writing"];
+    case "review":
+      return ["editorial-review"];
+    case "research":
+      return ["web-research"];
+    case "project-explore":
+      return ["codebase-exploration"];
+    case "write-technical-doc":
+      return ["codebase-exploration", "technical-documentation"];
+    case "project-to-article":
+      return ["codebase-exploration", "project-to-article", "wechat-writing"];
+    default:
+      return [];
+  }
+}
+
+export async function routeAgentRequest(input: {
+  model: LanguageModel;
+  message: string;
+  skills: SkillCatalogItem[];
+  config: AgentConfig;
+  previousProjectId?: string | null;
+  targetKind?: "article" | "technical-document";
+}): Promise<AgentRoute> {
+  const skillCatalog = input.skills
+    .map((skill) => `${skill.id} | ${skill.skillKey} | ${skill.description}`)
+    .join("\n");
+  const projectCatalog = input.config.projects
+    .map((project) => `${project.id} | ${project.name} | ${project.root}`)
+    .join("\n");
+
+  let routed: z.infer<typeof routeSchema>;
+  try {
+    const result = await generateObject({
+      model: input.model,
+      schema: routeSchema,
+      system: `你是写作 Agent 的轻量意图路由器，只做任务分类和能力选择。
+不得回答用户问题。只选择确实需要的 Skill 与工具。
+项目只有在用户明确要求分析本地项目、源码、模块或仓库时才需要。
+创作、扩写、润色需要扫描文章素材；普通问答和纯审校不强制扫描。
+只有用户要求创建或修改文章正文时才启用文章提案。
+技术文档与公众号文章是不同目标：代码证据整理成内部文档属于 write-technical-doc；面向公众号读者写文章属于 project-to-article。
+
+可用 Skill：
+${skillCatalog || "（无）"}
+
+项目白名单：
+${projectCatalog || "（无）"}`,
+      prompt: input.message,
+      temperature: 0,
+    });
+    routed = result.object;
+  } catch {
+    routed = fallbackRoute(input.message);
+  }
+
+  const availableSkillIds = new Set(
+    input.skills.flatMap((skill) => [skill.id, skill.skillKey])
+  );
+  const requestedSkills = [
+    ...routed.skillIds,
+    ...defaultSkillsForIntent(routed.intent),
+  ].filter((id, index, list) => availableSkillIds.has(id) && list.indexOf(id) === index);
+
+  const directMatches = matchProjectFromText(
+    input.message,
+    input.config.projects
+  );
+  let project: AgentProjectConfig | undefined;
+  if (directMatches.length === 1) {
+    project = directMatches[0];
+  } else if (routed.projectId) {
+    project = input.config.projects.find(
+      (candidate) => candidate.id === routed.projectId
+    );
+  } else if (routed.needsProject && input.previousProjectId) {
+    project = input.config.projects.find(
+      (candidate) => candidate.id === input.previousProjectId
+    );
+  } else if (routed.needsProject && input.config.projects.length === 1) {
+    project = input.config.projects[0];
+  }
+
+  let ambiguityQuestion: string | undefined;
+  if (routed.needsProject && !project) {
+    if (input.config.projects.length === 0) {
+      ambiguityQuestion =
+        "当前没有配置可读取的本地项目。请先在设置页添加项目白名单，或告诉我改为只基于现有文章和素材处理。";
+    } else {
+      ambiguityQuestion = `你希望我分析哪个项目？可用项目：${input.config.projects
+        .map((item) => item.name)
+        .join("、")}。`;
+    }
+  }
+
+  const needsAssets =
+    input.targetKind !== "technical-document" &&
+    (routed.needsAssets || routed.needsProposal);
+  const activeTools = [
+    "set_task_plan",
+    "load_skill",
+    "read_skill_resource",
+    ...(routed.needsProposal
+      ? [
+          input.targetKind === "technical-document"
+            ? "propose_technical_document_revision"
+            : "propose_article_revision",
+        ]
+      : []),
+    ...(routed.needsWeb ? ["web_search", "web_extract"] : []),
+    ...(needsAssets ? ["article_assets"] : []),
+    ...(project ? ["explore_project"] : []),
+  ];
+
+  return {
+    ...routed,
+    needsAssets,
+    skillIds: requestedSkills.slice(0, 4),
+    project,
+    ambiguityQuestion,
+    activeTools,
+  };
+}

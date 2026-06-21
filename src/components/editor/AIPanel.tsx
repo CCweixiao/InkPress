@@ -1,357 +1,176 @@
 "use client";
 
-import { useCompletion } from "@ai-sdk/react";
-import { Sparkles, Loader2, Check, SquarePen, ListTree, Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { Bot, FolderOpen } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { ArticleMaterialsPanel } from "./ArticleMaterialsPanel";
+import { WritingAssistant } from "./WritingAssistant";
 
-type Mode = "fast" | "sections";
+export type AIPanelMode = "chat" | "materials";
 
-type OutlineSection = { heading: string; summary: string };
+type Model = { id: string; name: string; isDefault: boolean };
+type Provider = {
+  id: string;
+  name: string;
+  models: Model[];
+  isDefault: boolean;
+};
 
 export function AIPanel({
   onApply,
+  onApplyArticle,
   currentMarkdown,
+  articleId,
+  spaceId,
+  onModeChange,
+  onFlushArticle,
 }: {
   onApply: (md: string) => void;
-  currentMarkdown: string;
-}) {
-  const [mode, setMode] = useState<Mode>("fast");
-  const [topic, setTopic] = useState("");
-  const [requirements, setRequirements] = useState("");
-  const [materials, setMaterials] = useState("");
-  const [applied, setApplied] = useState(false);
-
-  // 分节模式状态
-  const [outline, setOutline] = useState<{
+  onApplyArticle: (article: {
     title: string;
-    sections: OutlineSection[];
-  } | null>(null);
-  const [sectionProgress, setSectionProgress] = useState<{
-    current: number;
-    total: number;
-    heading: string;
-  } | null>(null);
-  const [sectionText, setSectionText] = useState("");
-  const [outlining, setOutlining] = useState(false);
+    contentMd: string;
+    digest: string | null;
+  }) => void;
+  currentMarkdown: string;
+  articleId: string;
+  spaceId?: string | null;
+  onModeChange?: (mode: AIPanelMode) => void;
+  onFlushArticle: (patch?: {
+    title?: string;
+    contentMd?: string;
+    digest?: string;
+  }) => Promise<void>;
+}) {
+  const [mode, setModeState] = useState<AIPanelMode>("chat");
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerId, setProviderId] = useState("");
+  const [modelId, setModelId] = useState("");
 
-  // 快速模式：单次流式
-  const { completion, input, handleSubmit, isLoading, error, stop, setInput } =
-    useCompletion({
-      api: "/api/ai/generate",
-      body: { topic, requirements, materials },
-      onFinish: () => setApplied(false),
-    });
-
-  function apply(md: string) {
-    if (md.trim()) {
-      onApply(md);
-      setApplied(true);
-    }
+  function setMode(next: AIPanelMode) {
+    setModeState(next);
+    onModeChange?.(next);
   }
 
-  async function generateSections() {
-    if (!topic.trim()) return;
-    setOutlining(true);
-    setError(null);
-    setOutline(null);
-    setSectionText("");
-    setSectionProgress(null);
-    try {
-      const res = await fetch("/api/ai/outline", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ topic, requirements, materials }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "大纲生成失败");
-      setOutline(data.outline);
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "大纲生成失败");
-    } finally {
-      setOutlining(false);
-    }
-  }
+  useEffect(() => {
+    fetch("/api/ai/providers")
+      .then((response) => response.json())
+      .then((data: { providers: Provider[] }) => {
+        const list = data.providers ?? [];
+        setProviders(list);
+        const provider = list.find((item) => item.isDefault) ?? list[0];
+        if (!provider) return;
+        setProviderId(provider.id);
+        setModelId(
+          (provider.models.find((model) => model.isDefault) ?? provider.models[0])
+            ?.id ?? ""
+        );
+      })
+      .catch(() => {});
+  }, []);
 
-  async function startSectionGeneration() {
-    if (!outline) return;
-    setError(null);
-    setApplied(false);
-    setSectionText("");
-    setSectionProgress({ current: 0, total: outline.sections.length, heading: "" });
-
-    try {
-      const res = await fetch("/api/ai/generate-sections", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          outline,
-          requirements,
-          materials,
-        }),
-      });
-      if (!res.ok || !res.body) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || "生成失败");
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let full = `# ${outline.title}\n\n`;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        // 按行处理哨兵
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const m = line.match(
-            /^<section index="(\d+)" total="(\d+)" heading="([^"]*)".*\/>$/
-          );
-          if (m) {
-            setSectionProgress({
-              current: Number(m[1]),
-              total: Number(m[2]),
-              heading: decodeAttr(m[3]),
-            });
-          } else if (line.trim()) {
-            full += line + "\n";
-            setSectionText(full);
-          }
-        }
-      }
-      if (buffer.trim()) {
-        full += buffer + "\n";
-        setSectionText(full);
-      }
-      setSectionProgress(null);
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "生成失败");
-      setSectionProgress(null);
-    }
-  }
-
-  // error 状态统一管理（useCompletion 的 error + 本地）
-  const [localError, setError] = useState<string | null>(null);
-  function setErrorMsg(s: string | null) {
-    setError(s);
-  }
-  const displayError = error?.message || localError;
-  const busy =
-    isLoading ||
-    outlining ||
-    sectionProgress !== null;
-
-  // 当前可应用的内容
-  const applyable = mode === "fast" ? completion : sectionText;
+  const activeProvider = providers.find((provider) => provider.id === providerId);
 
   return (
-    <div className="p-4 flex-1 overflow-y-auto flex flex-col">
-      {/* 模式切换 */}
-      <div className="flex gap-1 mb-3 rounded-md bg-muted p-1">
-        <button
-          onClick={() => setMode("fast")}
-          className={cn(
-            "flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-xs font-medium transition-colors",
-            mode === "fast" ? "bg-background shadow-sm" : "text-muted-foreground"
-          )}
-        >
-          <Zap className="h-3.5 w-3.5" />
-          快速生成
-        </button>
-        <button
-          onClick={() => setMode("sections")}
-          className={cn(
-            "flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-xs font-medium transition-colors",
-            mode === "sections"
-              ? "bg-background shadow-sm"
-              : "text-muted-foreground"
-          )}
-        >
-          <ListTree className="h-3.5 w-3.5" />
-          分节生成
-        </button>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="p-3 pb-0">
+        <div className="flex gap-1 rounded-md bg-muted p-1">
+          <button
+            onClick={() => setMode("chat")}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-colors",
+              mode === "chat" ? "bg-background shadow-sm" : "text-muted-foreground"
+            )}
+          >
+            <Bot className="h-3.5 w-3.5" />
+            写作助手
+          </button>
+          <button
+            onClick={() => setMode("materials")}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-colors",
+              mode === "materials" ? "bg-background shadow-sm" : "text-muted-foreground"
+            )}
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+            素材
+          </button>
+        </div>
       </div>
 
-      <label className="text-xs font-medium text-muted-foreground mb-1">
-        文章主题 *
-      </label>
-      <textarea
-        value={topic}
-        onChange={(e) => setTopic(e.target.value)}
-        placeholder="如：2025 年大模型发展趋势"
-        className="w-full min-h-[48px] rounded-md border border-input bg-background px-3 py-2 text-xs mb-2 resize-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      />
-
-      <label className="text-xs font-medium text-muted-foreground mb-1">
-        写作要求
-      </label>
-      <textarea
-        value={requirements}
-        onChange={(e) => setRequirements(e.target.value)}
-        placeholder="面向技术读者，分三点，口语化…"
-        className="w-full min-h-[48px] rounded-md border border-input bg-background px-3 py-2 text-xs mb-2 resize-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      />
-
-      <label className="text-xs font-medium text-muted-foreground mb-1">
-        参考素材
-      </label>
-      <textarea
-        value={materials}
-        onChange={(e) => setMaterials(e.target.value)}
-        placeholder="粘贴原文/要点/链接"
-        className="w-full min-h-[64px] rounded-md border border-input bg-background px-3 py-2 text-xs mb-3 resize-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      />
-
-      {/* 隐藏 input 触发 useCompletion */}
-      <input type="hidden" value={input} onChange={(e) => setInput(e.target.value)} />
-
-      {/* 操作按钮 */}
-      {mode === "fast" ? (
-        busy ? (
-          <Button type="button" size="sm" variant="outline" className="w-full" onClick={stop}>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            生成中…点击停止
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            className="w-full"
-            disabled={!topic.trim()}
-            onClick={() => {
-              setApplied(false);
-              const evt = new Event("submit", { bubbles: true, cancelable: true });
-              handleSubmit(evt as unknown as React.FormEvent<HTMLFormElement>);
+      {mode !== "materials" && providers.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 px-3 pt-3">
+          <Select
+            value={providerId}
+            onValueChange={(value) => {
+              setProviderId(value);
+              const provider = providers.find((item) => item.id === value);
+              setModelId(
+                (provider?.models.find((model) => model.isDefault) ??
+                  provider?.models[0])
+                  ?.id ?? ""
+              );
             }}
           >
-            <Sparkles className="h-4 w-4" />
-            生成整篇文章
-          </Button>
-        )
-      ) : (
-        <div className="space-y-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="w-full"
-            disabled={!topic.trim() || busy}
-            onClick={generateSections}
-          >
-            {outlining ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ListTree className="h-4 w-4" />
-            )}
-            {outline ? "重新生成大纲" : "生成大纲"}
-          </Button>
-          {outline && !sectionProgress && (
-            <Button
-              type="button"
-              size="sm"
-              className="w-full"
-              disabled={busy}
-              onClick={startSectionGeneration}
-            >
-              <Sparkles className="h-4 w-4" />
-              按大纲逐节生成
-            </Button>
-          )}
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="供应商" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {providers.map((provider) => (
+                  <SelectItem key={provider.id} value={provider.id}>
+                    {provider.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Select value={modelId} onValueChange={setModelId}>
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="模型" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {activeProvider?.models.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
       )}
 
-      {displayError && (
-        <div className="mt-3 rounded-md bg-red-50 border border-red-200 p-2 text-xs text-red-700">
-          {displayError}
-        </div>
+      {mode === "chat" && (
+        <WritingAssistant
+          articleId={articleId}
+          currentMarkdown={currentMarkdown}
+          providerId={providerId}
+          modelId={modelId}
+          onApplyArticle={onApplyArticle}
+          onFlushArticle={onFlushArticle}
+        />
       )}
 
-      {/* 分节进度 */}
-      {mode === "sections" && outline && (
-        <div className="mt-3 rounded-md border border-border bg-muted/30 p-2">
-          <div className="text-xs font-medium mb-1 truncate">
-            {outline.title}
-          </div>
-          <ol className="text-xs text-muted-foreground space-y-0.5 list-decimal list-inside">
-            {outline.sections.map((s, i) => (
-              <li
-                key={i}
-                className={cn(
-                  "truncate",
-                  sectionProgress &&
-                    sectionProgress.current === i + 1 &&
-                    "text-primary font-medium"
-                )}
-              >
-                {s.heading}
-              </li>
-            ))}
-          </ol>
-          {sectionProgress && (
-            <div className="mt-2 flex items-center gap-2 text-xs">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>
-                第 {sectionProgress.current}/{sectionProgress.total} 节：
-                {sectionProgress.heading || "生成中…"}
-              </span>
-            </div>
-          )}
+      {mode === "materials" && (
+        <div className="flex-1 overflow-y-auto p-3">
+          <ArticleMaterialsPanel
+            articleId={articleId}
+            spaceId={spaceId}
+            onInsert={(markdown) =>
+              onApply((currentMarkdown ? `${currentMarkdown}\n` : "") + markdown)
+            }
+          />
         </div>
-      )}
-
-      {/* 流式预览 */}
-      {(isLoading || applyable) && (
-        <div className="mt-3 flex-1 min-h-0 flex flex-col">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-medium text-muted-foreground">
-              生成预览
-            </span>
-            {applyable.trim() && !busy && (
-              <button
-                onClick={() => apply(applyable)}
-                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                {applied ? (
-                  <>
-                    <Check className="h-3 w-3" />
-                    已应用
-                  </>
-                ) : (
-                  <>
-                    <SquarePen className="h-3 w-3" />
-                    应用到编辑器
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto rounded-md border border-border bg-background p-2 text-xs leading-relaxed whitespace-pre-wrap">
-            {applyable || "等待生成…"}
-          </div>
-        </div>
-      )}
-
-      {currentMarkdown && !applyable && !busy && mode === "fast" && (
-        <button
-          onClick={() => onApply(currentMarkdown)}
-          className="mt-2 w-full text-xs text-muted-foreground hover:text-foreground text-left"
-        >
-          （编辑器已有内容）
-        </button>
       )}
     </div>
   );
-}
-
-function decodeAttr(s: string): string {
-  return s
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
 }
