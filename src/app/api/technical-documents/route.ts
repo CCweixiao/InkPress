@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   }
   const config = await getAgentConfig();
   if (!config.projects.some((project) => project.id === parsed.data.projectId)) {
-    return NextResponse.json({ error: "项目不在只读白名单中。" }, { status: 400 });
+    return NextResponse.json({ error: "项目不在长期信任列表中。" }, { status: 400 });
   }
   const document = await prisma.technicalDocument.create({
     data: parsed.data,
