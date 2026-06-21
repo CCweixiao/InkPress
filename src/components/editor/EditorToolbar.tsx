@@ -120,7 +120,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
   ];
 
   return (
-    <div className="editor-toolbar sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-1 rounded-xl border border-slate-200/80 bg-white/95 p-1.5 shadow-sm backdrop-blur">
+    <div className="editor-toolbar sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-1 rounded-xl border border-border bg-background/95 p-1.5 shadow-sm backdrop-blur">
       {items.map((item, i) => (
         <button
           key={i}
@@ -129,8 +129,8 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
           title={item.label}
           disabled={item.disabled}
           className={cn(
-            "rounded-lg p-2 text-slate-500 transition-all hover:bg-blue-50 hover:text-blue-700 disabled:pointer-events-none disabled:opacity-30",
-            item.active && "bg-blue-50 text-blue-700 shadow-inner"
+            "rounded-lg p-2 text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30",
+            item.active && "bg-accent text-accent-foreground shadow-inner"
           )}
         >
           <item.icon className="h-4 w-4" />
