@@ -1,0 +1,4 @@
+interface:
+  display_name: "技术文档编写"
+  short_description: "根据代码证据编写可维护的架构、调用链与模块技术文档"
+  default_prompt: "使用 $technical-documentation 将代码探索证据整理为可维护的技术文档。"
