@@ -7,6 +7,7 @@
     {"id":"web-research","version":"2.0.0","license":"Proprietary","references":["OpenAI notion-research-documentation"],"evalSet":"research"},
     {"id":"project-to-article","version":"2.0.0","license":"Proprietary","references":["OpenCode explore agent"],"evalSet":"project-article"},
     {"id":"codebase-exploration","version":"1.0.0","license":"Proprietary","references":["OpenCode explore agent","OpenAI Codex"],"evalSet":"code-explore"},
-    {"id":"technical-documentation","version":"1.0.0","license":"Proprietary","references":["Anthropic doc-coauthoring","Mermaid"],"evalSet":"technical-doc"}
+    {"id":"technical-documentation","version":"1.0.0","license":"Proprietary","references":["Anthropic doc-coauthoring","Mermaid"],"evalSet":"technical-doc"},
+    {"id":"code-change-analysis","version":"1.0.0","license":"Proprietary","references":["Git documentation","GitHub REST API"],"evalSet":"code-change"}
   ]
 }
