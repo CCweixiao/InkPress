@@ -57,28 +57,29 @@ jobs:
       - name: Prepare standalone bundle（next build → prepare-standalone → tsc electron）
         run: pnpm electron:prepare
 
-      - name: Check code-signing secrets
+      - name: Configure code signing
         id: sign
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
         run: |
-          if [ -n "${{ secrets.CSC_LINK }}" ]; then
+          if [ -n "$CSC_LINK" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "代码签名 secrets 已配置，将签名 + 公证"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "未配置签名 secrets，产出未签名 dmg（用户需右键「打开」绕过 Gatekeeper）"
+            echo "未配置签名 secrets，显式禁用签名（macos runner keychain 有默认证书会触发自动签名并报错）"
+            # 在 build.mac 写入 identity:null，比 CSC_IDENTITY_AUTO_DISCOVERY env 更可靠
+            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
           fi
 
       - name: Build DMG（${{ matrix.arch }}）
         env:
-          # 透传签名 env 给 electron-builder。secrets 缺失时为空字符串 → electron-builder 跳过签名/公证
+          # 透传签名 env 给 electron-builder。未签名时 CSC_LINK 为空 + identity:null 已禁用签名
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # 未配置签名凭证时禁用 macOS 证书自动发现（否则 hardenedRuntime/签名路径
-          # 会触发 "not a file" 报错）。配置了 CSC_LINK 时自动启用签名+公证。
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK && 'true' || 'false' }}
         run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload build artifact
