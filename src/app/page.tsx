@@ -73,7 +73,7 @@ export default async function HomePage() {
             <Sparkles className="h-5 w-5 text-primary" />
             <span className="font-semibold text-lg">InkPress</span>
             <span className="text-xs text-muted-foreground ml-1 hidden sm:inline">
-              AI 公众号写作台
+              数字文刊工坊
             </span>
           </div>
           {/* 全局搜索 */}
