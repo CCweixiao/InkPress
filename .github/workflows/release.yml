@@ -1,0 +1,147 @@
+name: Release
+
+# 触发：
+# 1. 推送 v* 形式的 tag（如 v0.1.0）→ 自动构建并发布 Release
+# 2. 手动触发（workflow_dispatch）→ 输入 tag 名后构建并发布
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag 名（如 v0.1.0，无需前缀也行）"
+        required: true
+        default: "v0.1.0"
+
+# 同一 tag 并发时取消旧运行
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # 双 runner 并行：每个 runner 的原生模块(better-sqlite3)prebuilt 天然匹配其 CPU 架构，
+        # 无需 cross-arch rebuild，最稳定。
+        include:
+          - runner: macos-latest # Apple Silicon
+            arch: arm64
+          - runner: macos-13 # Intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "11.8.0"
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          # 允许 better-sqlite3 / electron / sharp 等原生包构建
+          pnpm_allow_build: "true"
+
+      - name: Prepare standalone bundle（next build → prepare-standalone → tsc electron）
+        run: pnpm electron:prepare
+
+      - name: Check code-signing secrets
+        id: sign
+        run: |
+          if [ -n "${{ secrets.CSC_LINK }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "代码签名 secrets 已配置，将签名 + 公证"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "未配置签名 secrets，产出未签名 dmg（用户需右键「打开」绕过 Gatekeeper）"
+          fi
+
+      - name: Build DMG（${{ matrix.arch }}）
+        env:
+          # 透传签名 env 给 electron-builder。secrets 缺失时为空字符串 → electron-builder 跳过签名/公证
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm exec electron-builder --mac --${{ matrix.arch }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 Release 所需
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          # 规范化：确保以 v 开头
+          case "$TAG" in
+            v*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
+            *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          files: artifacts/*.dmg
+          body: |
+            ## 安装包
+
+            | 文件 | 适用平台 |
+            | --- | --- |
+            | `*-arm64.dmg` | Apple Silicon（M1/M2/M3/M4） |
+            | `*-x64.dmg` | Intel Mac |
+
+            ## 安装说明
+
+            1. 下载对应架构的 `.dmg`（Apple Silicon 选 arm64，Intel 选 x64）
+            2. 双击打开，将 InkPress 拖入 Applications
+            3. 首次打开若提示「无法验证开发者」：右键点击应用 → 选择「打开」即可绕过 Gatekeeper（未签名构建）
+            4. 启动后数据存放在 `~/.inkpress`（数据库、文章、技能、日志）
+
+            ---
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
