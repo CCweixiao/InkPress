@@ -76,8 +76,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec electron-builder --mac --${{ matrix.arch }}
+          # 禁用 electron-builder 自带的隐式发布（v26 在检测到 git tag 时会尝试自动发布，
+          # 与下方 release job 的 softprops/action-gh-release 冲突且会报 "not a file"）。
+          # 发布统一由 release job 负责。
+        run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
