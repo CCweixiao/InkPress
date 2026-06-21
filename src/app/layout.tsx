@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "InkPress · AI 公众号写作台",
+  title: "InkPress · 数字文刊工坊",
   description: "AI 驱动的公众号文章编写与发布系统：生成、排版、一键推送草稿箱",
 };
 
