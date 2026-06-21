@@ -10,6 +10,7 @@ let refreshPromise: Promise<string> | null = null;
 /**
  * 获取 access_token（带缓存，TTL 内不重复请求）
  * 使用 stable_token 接口（force_refresh:false），与历史 getAccessToken 路径隔离。
+ * 凭证来源：SystemConfig 表（inkpress.wechat），由设置页管理。
  */
 export async function getAccessToken(forceRefresh = false): Promise<string> {
   if (!forceRefresh && cached && Date.now() < cached.expiresAt) {
@@ -19,12 +20,10 @@ export async function getAccessToken(forceRefresh = false): Promise<string> {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const appid = process.env.WX_APPID;
-    const secret = process.env.WX_SECRET;
+    const { getWechatConfig } = await import("./config");
+    const { appId: appid, secret } = await getWechatConfig();
     if (!appid || !secret) {
-      throw new Error(
-        "未配置 WX_APPID / WX_SECRET，请在 .env 或设置页填写公众号凭证"
-      );
+      throw new Error("未配置微信公众号凭证，请在设置页填写 appId 与 secret");
     }
     const res = await fetch(TOKEN_URL, {
       method: "POST",

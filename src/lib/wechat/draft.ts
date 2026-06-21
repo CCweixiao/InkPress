@@ -23,3 +23,21 @@ export async function addDraft(article: DraftArticle): Promise<string> {
   if (!mediaId) throw new Error("新增草稿失败：未返回 media_id");
   return mediaId;
 }
+
+/**
+ * 更新草稿（cgi-bin/draft/update）
+ * 用已存在的草稿 media_id 覆盖更新其中某一条图文（index，单图文恒为 0）。
+ * 这样修改文章后再次发布，会更新公众号草稿箱里对应那条，而不是新增。
+ */
+export async function updateDraft(
+  mediaId: string,
+  index: number,
+  article: DraftArticle
+): Promise<void> {
+  const data = await wxJson("/draft/update", {
+    media_id: mediaId,
+    index,
+    articles: article,
+  });
+  ensureOk(data, "更新草稿");
+}

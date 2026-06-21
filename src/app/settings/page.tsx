@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Settings } from "lucide-react";
+import { ArrowLeft, Settings, Sparkles, ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -8,7 +8,8 @@ import {
   CardDescription,
   CardContent,
 } from "@/components/ui/card";
-import { SettingsForm } from "@/components/settings/SettingsForm";
+import { SystemConfigManager } from "@/components/settings/SystemConfigManager";
+import { LogsViewer } from "@/components/settings/LogsViewer";
 
 export const dynamic = "force-dynamic";
 
@@ -38,17 +39,36 @@ export default function SettingsPage() {
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-8 space-y-6">
+        {/* 统一配置：AI 模型 / 写作 Agent / OSS / 微信公众号 */}
         <Card>
           <CardHeader>
-            <CardTitle>配置说明</CardTitle>
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <CardTitle>系统配置</CardTitle>
+            </div>
             <CardDescription>
-              密钥以环境变量方式管理，请编辑项目根目录的{" "}
-              <code className="px-1 py-0.5 rounded bg-muted text-xs">.env</code>{" "}
-              文件后重启服务。下方实时显示当前配置状态（只读）。
+              在此可视化配置 AI 模型供应商、写作 Agent、OSS 对象存储与微信公众号凭证。
+              所有配置存储于本地数据库（仅本机可读），AI / 发布接口将自动加载，无需编辑环境变量。
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <SettingsForm />
+            <SystemConfigManager />
+          </CardContent>
+        </Card>
+
+        {/* 系统日志 */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <ScrollText className="h-5 w-5 text-primary" />
+              <CardTitle>系统日志</CardTitle>
+            </div>
+            <CardDescription>
+              实时查看系统运行日志，支持按级别筛选、关键词搜索与实时刷新。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LogsViewer />
           </CardContent>
         </Card>
       </main>
