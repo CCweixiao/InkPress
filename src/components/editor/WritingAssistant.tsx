@@ -464,8 +464,10 @@ export function WritingAssistant({
   }) => void;
   onFlushArticle?: () => Promise<void>;
   onFlushTarget?: () => Promise<void>;
-  /** Agent 正文实时预览（不写回正文，仅镜像到预览面板）。 */
-  onDraftPreview?: (draft: { markdown: string; title?: string } | null) => void;
+  /** Agent 正文实时预览（后续修改模式，镜像到预览面板）。首次直写不走此回调。 */
+  onDraftPreview?: (
+    draft: { markdown: string; title?: string; mode: "direct" | "diff" } | null
+  ) => void;
 }) {
   const resolvedTargetId = targetId ?? articleId ?? "";
   const [input, setInput] = useState("");
@@ -551,18 +553,22 @@ export function WritingAssistant({
 
   const busy = status === "streaming" || status === "submitted";
 
-  // 扫描最近的 data-article-draft part，把 Agent 正文实时镜像到预览面板。
-  // 流式期间持续更新；会话结束后清空预览（交回正文控制权）。
-  const latestDraft = useMemo(() => {
+  // 扫描最近的 data-article-draft part（用于 diff 模式的实时预览）。
+  const latestDraftPreview = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       for (let j = messages[i].parts.length - 1; j >= 0; j--) {
         const p = messages[i].parts[j] as unknown as Record<string, unknown>;
         if (p.type === "data-article-draft" && p.data && typeof p.data === "object") {
-          const d = p.data as { markdown?: unknown; title?: unknown };
+          const d = p.data as {
+            markdown?: unknown;
+            title?: unknown;
+            mode?: unknown;
+          };
           if (typeof d.markdown === "string") {
             return {
               markdown: d.markdown,
               title: typeof d.title === "string" ? d.title : undefined,
+              mode: d.mode === "direct" ? "direct" : ("diff" as "direct" | "diff"),
             };
           }
         }
@@ -571,12 +577,60 @@ export function WritingAssistant({
     return null;
   }, [messages]);
 
-  // 仅在流式期间把草稿镜像到预览面板；历史会话加载时不重新触发预览。
+  // 扫描已完成的 propose_article_revision 工具结果，取最新的 direct 模式输出。
+  // 工具 output 是可靠来源（part.state 为 output/output-streaming 即已就绪），
+  // 不依赖 data-article-draft 流式 part 的时序。
+  const latestDirectArticle = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
+        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
+        const name = toolNameFromPart(p);
+        if (name !== "propose_article_revision") continue;
+        const out = p.output as
+          | { mode?: unknown; markdown?: unknown; title?: unknown; digest?: unknown }
+          | undefined;
+        if (out?.mode === "direct" && typeof out.markdown === "string") {
+          return {
+            markdown: out.markdown,
+            title: typeof out.title === "string" ? out.title : null,
+            digest: typeof out.digest === "string" ? out.digest : null,
+          };
+        }
+      }
+    }
+    return null;
+  }, [messages]);
+
+  // 记录已应用过的 direct 文章 markdown，避免重复写入（流式期间多次 messages 更新）。
+  const appliedDirectRef = useRef<string | null>(null);
+
+  // direct 模式：工具结果就绪后直接写入编辑器（首次生成，无需确认）。
+  // 仅在流式期间应用，避免历史会话加载时覆盖用户已编辑的内容。
   useEffect(() => {
-    if (busy) onDraftPreview?.(latestDraft);
-    if (!busy && !latestDraft) onDraftPreview?.(null);
+    if (!busy || !latestDirectArticle || !onApplyArticle) return;
+    if (appliedDirectRef.current === latestDirectArticle.markdown) return;
+    appliedDirectRef.current = latestDirectArticle.markdown;
+    onApplyArticle({
+      title: latestDirectArticle.title ?? "",
+      contentMd: latestDirectArticle.markdown,
+      digest: latestDirectArticle.digest ?? null,
+    });
+    // 写入后清空预览面板（内容已在编辑器）
+    onDraftPreview?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestDraft, busy]);
+  }, [latestDirectArticle, busy]);
+
+  // diff 模式：流式期间把草稿镜像到预览面板。
+  useEffect(() => {
+    if (!busy) {
+      if (latestDraftPreview?.mode === "diff") onDraftPreview?.(latestDraftPreview);
+      return;
+    }
+    if (latestDraftPreview?.mode === "diff") {
+      onDraftPreview?.(latestDraftPreview);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestDraftPreview, busy]);
 
   const proposalIdsInMessages = new Set(
     messages.flatMap((message) =>
@@ -888,6 +942,11 @@ export function WritingAssistant({
                   }
                   const toolName = toolNameFromPart(part);
                   if (!toolName) return null;
+                  // 首次生成（direct 模式）：正文已直接写入编辑器，不渲染提案卡片
+                  const draftMode = (part.output as { mode?: unknown } | undefined)?.mode;
+                  if (toolName === "propose_article_revision" && draftMode === "direct") {
+                    return null;
+                  }
                   const proposalId =
                     (toolName === "propose_article_revision" ||
                       toolName === "propose_technical_document_revision")
@@ -962,7 +1021,7 @@ export function WritingAssistant({
           </div>
         )}
         {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700">
+          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
             <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="break-words">{error.message || "请求失败，请稍后重试。"}</span>
           </div>

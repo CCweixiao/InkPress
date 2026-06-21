@@ -277,15 +277,15 @@ ${projectCatalog || "（无）"}`,
     "set_task_plan",
     "load_skill",
     "read_skill_resource",
-    ...(routed.needsProposal
-      ? [
-          input.targetKind === "technical-document"
-            ? "propose_technical_document_revision"
-            : "propose_article_revision",
-        ]
-      : []),
+    // 文章/技术文档的提案工具始终可用：意图路由可能把写作请求误判为 question，
+    // 但只要目标是文章，模型就应能调用提交工具，避免正文以纯文本形式输出而无法落盘。
+    input.targetKind === "technical-document"
+      ? "propose_technical_document_revision"
+      : "propose_article_revision",
+    // 文章目标的素材工具始终可用：让模型能查看并按需插图，
+    // 不再受 needsAssets 门控（避免写作请求误判为 question 时素材缺失）。
+    ...(input.targetKind === "article" ? ["article_assets"] : []),
     ...(routed.needsWeb ? ["web_search", "web_extract"] : []),
-    ...(needsAssets ? ["article_assets"] : []),
     ...(project ? ["explore_project"] : []),
     ...(routed.needsGitHistory && project ? ["analyze_code_changes"] : []),
   ];

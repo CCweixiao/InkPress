@@ -57,10 +57,11 @@ export function EditorWorkspace({
   );
   const [publishOpen, setPublishOpen] = useState(false);
   const [aiMode, setAiMode] = useState<AIPanelMode>("chat");
-  // Agent 正文实时预览（不写回正文，仅镜像展示）
+  // Agent 正文实时预览（后续修改模式，镜像展示；首次直写已直接写入 markdown）
   const [liveDraft, setLiveDraft] = useState<{
     markdown: string;
     title?: string;
+    mode: "direct" | "diff";
   } | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
     "idle"
@@ -252,8 +253,8 @@ export function EditorWorkspace({
             发布
           </Button>
         </div>
-        {/* Agent 正文实时预览（不写回正文，仅镜像展示；应用需在对话区点「应用修改」） */}
-        {liveDraft && (
+        {/* Agent 正文实时预览：仅后续修改（diff）模式显示；首次直写已直接写入正文 */}
+        {liveDraft && liveDraft.mode === "diff" && (
           <LiveDraftPreview
             draft={liveDraft}
             onClose={() => setLiveDraft(null)}
