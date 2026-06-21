@@ -219,7 +219,7 @@ export async function resolveProjectFile(
   const candidate = path.resolve(root, relativePath);
   const real = await fs.realpath(candidate);
   if (real !== root && !real.startsWith(`${root}${path.sep}`)) {
-    throw new Error("拒绝读取项目白名单之外的路径。");
+    throw new Error("拒绝读取已授权代码源根目录之外的路径。");
   }
   const relative = path.relative(root, real);
   if (isBlockedRelativePath(relative)) throw new Error("该文件属于敏感或排除路径。");
