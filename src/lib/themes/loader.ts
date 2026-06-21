@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db";
+import { themesDir } from "@/lib/paths";
 
-const THEMES_DIR = path.join(process.cwd(), "themes");
+// 只读内置主题资源：开发=项目根/themes，打包=app 资源区/themes
+const THEMES_DIR = themesDir();
 const CODE_DIR = path.join(THEMES_DIR, "code");
 
 /** 内置主题清单（对应 themes/markdown/*.css） */
@@ -11,16 +13,25 @@ export const BUILTIN_THEMES = [
     name: "默认主题",
     file: "default.css",
     primaryColor: "#3f51b5",
+    codeTheme: "atom-one-dark",
   },
   {
     name: "优雅主题",
     file: "grace.css",
     primaryColor: "#3f51b5",
+    codeTheme: "atom-one-dark",
   },
   {
     name: "简洁主题",
     file: "simple.css",
     primaryColor: "#3f51b5",
+    codeTheme: "atom-one-dark",
+  },
+  {
+    name: "云原生技术主题",
+    file: "cloud-native.css",
+    primaryColor: "#f2622e",
+    codeTheme: "github",
   },
 ] as const;
 
@@ -55,22 +66,47 @@ export async function seedBuiltInThemes() {
     const existing = await prisma.theme.findFirst({
       where: { name: t.name, isBuiltIn: true },
     });
-    if (existing) continue;
     let cssContent = "";
     try {
       cssContent = await readThemeCss(t.file);
     } catch {
       continue;
     }
+    if (existing) {
+      await prisma.theme.update({
+        where: { id: existing.id },
+        data: {
+          cssContent,
+          primaryColor: t.primaryColor,
+          codeTheme: t.codeTheme,
+        },
+      });
+      continue;
+    }
     await prisma.theme.create({
       data: {
         name: t.name,
         cssContent,
-        codeTheme: "atom-one-dark",
+        codeTheme: t.codeTheme,
         primaryColor: t.primaryColor,
         isBuiltIn: true,
       },
     });
+  }
+
+  // 兼容升级：若没有任何默认主题（旧库升级到 isDefault 字段后），把第一个内置主题标为默认
+  const hasDefault = await prisma.theme.findFirst({ where: { isDefault: true } });
+  if (!hasDefault) {
+    const firstBuiltIn = await prisma.theme.findFirst({
+      where: { isBuiltIn: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (firstBuiltIn) {
+      await prisma.theme.update({
+        where: { id: firstBuiltIn.id },
+        data: { isDefault: true },
+      });
+    }
   }
 }
 

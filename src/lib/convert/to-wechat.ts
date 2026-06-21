@@ -32,7 +32,7 @@ export type ImageUploader = (
  * 4. 拼装：<div id="nice"> + 4 段 <style>（基础/主题/代码/字体）
  * 5. 解析 CSS 变量 var(--md-*)
  * 6. juice 内联全部 CSS 到 style 属性
- * 7. 微信专项清洗（script/style 残留、锚点链接、嵌套列表、img 尺寸、首尾空 p）
+ * 7. 微信专项清洗（script/style 残留、锚点链接、列表兼容、img 尺寸、首尾空 p）
  */
 export async function convertToWeChat(
   markdown: string,
@@ -76,7 +76,7 @@ export async function convertToWeChat(
   });
 
   // 7. 微信专项清洗（基于 jsdom）
-  const cleaned = cleanForWeChat(inlined);
+  const cleaned = cleanForWeChat(inlined, theme.primaryColor);
 
   return { html: cleaned, title: fmTitle };
 }
@@ -117,25 +117,34 @@ async function replaceImageUrls(
 
 /** 微信公众号基础排版下限样式（与 doocs base 类似） */
 const BASE_CSS = `
-#nice{font-size:16px;color:#3f3f3f;line-height:1.75;letter-spacing:0.05em;word-break:break-word;}
-#nice p{margin:1.12em 0;}
+#nice{font-size:16px;color:#2b2f36;line-height:1.82;letter-spacing:0.035em;word-break:break-word;text-align:left;}
+#nice p{margin:1.05em 0;}
 #nice a{color:#576b95;text-decoration:none;border-bottom:1px solid #576b95;}
 #nice strong{font-weight:bold;}
-#nice hr{border:none;border-top:1px solid #ddd;margin:1.5em 0;}
-#nice ul,#nice ol{padding-left:1.5em;margin:1em 0;}
-#nice li{margin:0.3em 0;}
-#nice blockquote{margin:1em 0;padding:0.5em 1em;border-left:3px solid #dfdfdf;color:#888;background:#fafafa;}
-#nice table{border-collapse:collapse;width:100%;margin:1em 0;display:table;}
-#nice th,#nice td{border:1px solid #ddd;padding:0.5em 0.75em;}
-#nice th{background:#f5f5f5;}
-#nice img{max-width:100%;}
-#nice pre{padding:1em;border-radius:4px;overflow-x:auto;font-size:0.9em;line-height:1.5;}
+#nice hr{border:none;border-top:1px solid #e5e7eb;margin:2.2em 0;}
+#nice ul,#nice ol{padding-left:1.4em;margin:0.85em 0;}
+#nice li{margin:0.38em 0;line-height:1.75;}
+#nice li>p{margin:0.2em 0;}
+#nice blockquote{margin:1.4em 0;padding:0.9em 1.1em;border-left:4px solid #d1d5db;color:#606875;background:#f8fafc;}
+#nice table{border-collapse:separate;border-spacing:0;width:100%;margin:1.5em 0;display:table;overflow:hidden;}
+#nice th,#nice td{border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:0.65em 0.8em;text-align:left;}
+#nice th{background:#f6f8fa;font-weight:600;}
+#nice img{display:block;max-width:100%;height:auto;margin:1.5em auto;}
+#nice .code-block{display:block;margin:1.5em 0;border-radius:10px;overflow:hidden;background:#0d1117;box-shadow:0 8px 24px rgba(15,23,42,.14);}
+#nice .code__header{display:flex;align-items:center;justify-content:space-between;height:34px;padding:0 14px;background:#161b22;border-bottom:1px solid rgba(255,255,255,.08);}
+#nice .code__dots{display:inline-block;line-height:0;}
+#nice .code__dots i{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%;background:#ff5f57;}
+#nice .code__dots i:nth-child(2){background:#febc2e;}
+#nice .code__dots i:nth-child(3){background:#28c840;}
+#nice .code__lang{font-size:10px;line-height:1;color:#8b949e;letter-spacing:.12em;font-weight:600;}
+#nice pre{margin:0;padding:1.05em 1.2em 1.2em;border-radius:0;overflow-x:auto;font-size:13px;line-height:1.72;letter-spacing:0;}
 #nice code{font-family:Menlo,Monaco,Consolas,monospace;}
 #nice pre code{background:none;padding:0;}
+#nice .codespan{padding:.15em .42em;border-radius:4px;font-size:.88em;letter-spacing:0;word-break:break-all;}
 `;
 
 /** 微信专项清洗 */
-function cleanForWeChat(html: string): string {
+function cleanForWeChat(html: string, primaryColor: string): string {
   const dom = new JSDOM(html);
   const doc = dom.window.document;
   const root = doc.getElementById("nice") ?? doc.body;
@@ -166,13 +175,9 @@ function cleanForWeChat(html: string): string {
     if (extra) img.setAttribute("style", `${existing};${extra}`.replace(/^;/, ""));
   });
 
-  // 嵌套列表：<li> 内的 ul/ol 移到 li 之后（公众号渲染异常）
-  root.querySelectorAll("li").forEach((li: Element) => {
-    const nested = li.querySelectorAll(":scope > ul, :scope > ol");
-    nested.forEach((list: Element) => {
-      li.after(list);
-    });
-  });
+  // 微信会重写 ul / ol / li，原生 marker 在嵌套列表、松散列表中很容易变成
+  // 独立空圆点。发布前改为纯 section + 文本 marker，不再依赖平台列表样式。
+  normalizeListsForWeChat(root, primaryColor);
 
   // 取出 root 的 innerHTML
   const cleaned = root.innerHTML;
@@ -181,4 +186,249 @@ function cleanForWeChat(html: string): string {
   const placeholder =
     '<p style="font-size:0;line-height:0;margin:0;visibility:hidden;">&nbsp;</p>';
   return placeholder + cleaned + placeholder;
+}
+
+/**
+ * 把语义列表转换为微信稳定结构。
+ *
+ * Markdown:
+ *   - **标题**：说明
+ *
+ * 输出:
+ *   <section data-wx-list="ul">
+ *     <section data-wx-list-item="true">
+ *       <span>•</span><strong>标题</strong>：说明
+ *     </section>
+ *   </section>
+ *
+ * 使用 padding-left + text-indent 实现悬挂缩进，只依赖微信长期支持的基础样式。
+ * 逆序处理可先完成子列表；只有子列表、没有正文的父 li 会被直接跳过，
+ * 避免出现截图中的空圆点。
+ */
+function normalizeListsForWeChat(root: Element, primaryColor: string): void {
+  const lists = Array.from(root.querySelectorAll("ul, ol")).reverse();
+
+  for (const list of lists) {
+    const doc = list.ownerDocument;
+    const ordered = list.tagName.toLowerCase() === "ol";
+    const start = ordered
+      ? Number.parseInt(list.getAttribute("start") || "1", 10) || 1
+      : 1;
+    const depth = getListDepth(list);
+    const wrapper = doc.createElement("section");
+    wrapper.setAttribute("data-wx-list", ordered ? "ol" : "ul");
+    wrapper.setAttribute("data-wx-list-depth", String(depth));
+    applyListWrapperStyle(wrapper, depth);
+
+    const items = Array.from(list.children).filter(
+      (child) => child.tagName.toLowerCase() === "li"
+    );
+    let visibleIndex = 0;
+
+    for (const item of items) {
+      const nestedLists = Array.from(
+        item.querySelectorAll(":scope > section[data-wx-list]")
+      );
+      const checkbox = item.querySelector(
+        ":scope > input[type='checkbox'], :scope > p > input[type='checkbox']"
+      ) as HTMLInputElement | null;
+      const ownText = getOwnListItemText(item, checkbox);
+
+      // Tiptap / AI 可能生成空父项包裹子列表。不要为这种父项输出 marker。
+      if (!ownText && nestedLists.length > 0) {
+        nestedLists.forEach((nested) => wrapper.appendChild(nested));
+        continue;
+      }
+      if (!ownText && !checkbox) continue;
+
+      const marker = checkbox
+        ? checkbox.checked
+          ? "☑"
+          : "☐"
+        : ordered
+          ? `${start + visibleIndex}.`
+          : getBullet(depth);
+      visibleIndex += 1;
+      checkbox?.remove();
+
+      const row = doc.createElement("section");
+      row.setAttribute("data-wx-list-item", "true");
+      row.setAttribute(
+        "style",
+        [
+          "display:block",
+          "margin:0.42em 0",
+          `padding-left:${ordered ? "1.8em" : "1.45em"}`,
+          `text-indent:-${ordered ? "1.8em" : "1.45em"}`,
+          "line-height:1.78",
+          "text-align:left",
+        ].join(";")
+      );
+
+      const markerNode = doc.createElement("span");
+      markerNode.setAttribute("data-wx-list-marker", "true");
+      markerNode.setAttribute(
+        "style",
+        [
+          "display:inline-block",
+          `min-width:${ordered ? "1.8em" : "1.45em"}`,
+          "text-indent:0",
+          `color:${primaryColor}`,
+          "font-weight:600",
+        ].join(";")
+      );
+      markerNode.textContent = marker;
+      row.appendChild(markerNode);
+
+      appendListItemContent(row, item, nestedLists);
+      wrapper.appendChild(row);
+    }
+
+    const directItems = Array.from(wrapper.children).filter(
+      (child) => child.hasAttribute("data-wx-list-item")
+    );
+    const directNestedLists = Array.from(wrapper.children).filter(
+      (child) => child.hasAttribute("data-wx-list")
+    );
+
+    // 整层都只是空壳时，直接提升子列表一级，不保留多余缩进和空容器。
+    if (directItems.length === 0 && directNestedLists.length > 0) {
+      const fragment = doc.createDocumentFragment();
+      directNestedLists.forEach((nested) => {
+        promoteList(nested);
+        fragment.appendChild(nested);
+      });
+      list.replaceWith(fragment);
+    } else {
+      list.replaceWith(wrapper);
+    }
+  }
+
+  root
+    .querySelectorAll("[data-wx-list-depth]")
+    .forEach((list) => list.removeAttribute("data-wx-list-depth"));
+}
+
+function getListDepth(list: Element): number {
+  let depth = 0;
+  let parent = list.parentElement;
+  while (parent) {
+    if (parent.tagName === "UL" || parent.tagName === "OL") depth += 1;
+    parent = parent.parentElement;
+  }
+  return depth;
+}
+
+function getBullet(depth: number): string {
+  if (depth % 3 === 1) return "◦";
+  if (depth % 3 === 2) return "▪";
+  return "•";
+}
+
+function getOwnListItemText(
+  item: Element,
+  checkbox: HTMLInputElement | null
+): string {
+  const clone = item.cloneNode(true) as Element;
+  clone
+    .querySelectorAll(":scope > section[data-wx-list]")
+    .forEach((nested) => nested.remove());
+  clone
+    .querySelectorAll("input[type='checkbox']")
+    .forEach((input) => input.remove());
+  if (checkbox && !clone.textContent?.trim()) return "";
+  return clone.textContent?.replace(/\u00a0/g, " ").trim() ?? "";
+}
+
+function applyListWrapperStyle(wrapper: Element, depth: number): void {
+  wrapper.setAttribute(
+    "style",
+    [
+      "display:block",
+      `margin:${depth > 0 ? "0.28em 0 0.2em 0.55em" : "0.8em 0"}`,
+      "padding:0",
+      "text-indent:0",
+    ].join(";")
+  );
+}
+
+function promoteList(list: Element): void {
+  const currentDepth = Number.parseInt(
+    list.getAttribute("data-wx-list-depth") || "0",
+    10
+  );
+  const nextDepth = Math.max(0, currentDepth - 1);
+  list.setAttribute("data-wx-list-depth", String(nextDepth));
+  applyListWrapperStyle(list, nextDepth);
+
+  if (list.getAttribute("data-wx-list") === "ul") {
+    Array.from(list.children)
+      .filter((child) => child.hasAttribute("data-wx-list-item"))
+      .forEach((item) => {
+        item
+          .querySelector(":scope > span[data-wx-list-marker]")
+          ?.replaceChildren(getBullet(nextDepth));
+      });
+  }
+
+  Array.from(list.children)
+    .filter((child) => child.hasAttribute("data-wx-list"))
+    .forEach((nested) => promoteList(nested));
+}
+
+function appendListItemContent(
+  row: Element,
+  item: Element,
+  nestedLists: Element[]
+): void {
+  const doc = row.ownerDocument;
+  const nestedSet = new Set(nestedLists);
+  let paragraphIndex = 0;
+
+  for (const node of Array.from(item.childNodes)) {
+    if (node.nodeType === 3) {
+      if (node.textContent?.trim()) row.appendChild(node);
+      continue;
+    }
+    if (!(node instanceof doc.defaultView!.Element)) continue;
+    if (nestedSet.has(node)) continue;
+    if (
+      node.tagName.toLowerCase() === "input" &&
+      node.getAttribute("type") === "checkbox"
+    ) {
+      continue;
+    }
+
+    if (node.tagName.toLowerCase() === "p") {
+      const children = Array.from(node.childNodes).filter(
+        (child) =>
+          !(
+            child instanceof doc.defaultView!.Element &&
+            child.tagName.toLowerCase() === "input" &&
+            child.getAttribute("type") === "checkbox"
+          )
+      );
+      if (paragraphIndex === 0 || startsWithJoinPunctuation(node.textContent)) {
+        children.forEach((child) => row.appendChild(child));
+      } else {
+        const paragraph = doc.createElement("section");
+        paragraph.setAttribute(
+          "style",
+          "display:block;margin:0.35em 0 0;padding:0;text-indent:0;line-height:1.78"
+        );
+        children.forEach((child) => paragraph.appendChild(child));
+        row.appendChild(paragraph);
+      }
+      paragraphIndex += 1;
+      continue;
+    }
+
+    row.appendChild(node);
+  }
+
+  nestedLists.forEach((nested) => row.appendChild(nested));
+}
+
+function startsWithJoinPunctuation(text: string | null): boolean {
+  return /^[：:，,；;、]/.test(text?.trim() ?? "");
 }

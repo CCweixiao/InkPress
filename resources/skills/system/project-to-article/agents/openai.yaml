@@ -1,0 +1,4 @@
+interface:
+  display_name: "项目转技术文章"
+  short_description: "将源码证据转化为读者友好且内容可核验的公众号技术文章"
+  default_prompt: "使用 $project-to-article 将这份代码证据包写成公众号技术文章。"

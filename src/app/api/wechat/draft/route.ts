@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { convertToWeChat } from "@/lib/convert/to-wechat";
 import { uploadBodyImage } from "@/lib/wechat/material";
-import { addDraft } from "@/lib/wechat/draft";
+import { addDraft, updateDraft } from "@/lib/wechat/draft";
+import { readContent } from "@/lib/content-store";
 
 const schema = z.object({
   articleId: z.string(),
@@ -63,9 +64,13 @@ export async function POST(req: NextRequest) {
   };
 
   try {
+    // 正文从文件读取（回退 contentMd 列兼容旧数据）
+    const markdown = article.contentPath
+      ? await readContent(article.id)
+      : (article.contentMd ?? "");
     // 2. 转换（含图片上传替换）
     const { html } = await convertToWeChat(
-      article.contentMd,
+      markdown,
       {
         cssContent: theme.cssContent,
         codeTheme: theme.codeTheme,
@@ -84,28 +89,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. 推送草稿
+    // 4. 推送草稿：已有 wxMediaId 则更新（覆盖修改），否则新增
     const finalDigest =
       digest ||
       article.digest ||
-      article.contentMd.slice(0, 54).replace(/[#*`>\-\n]/g, "").trim();
-    const mediaId = await addDraft({
+      markdown.slice(0, 54).replace(/[#*`>\-\n]/g, "").trim();
+    const draftArticle = {
       title: article.title || "无标题文章",
       content: html,
       thumb_media_id: thumbMediaId,
       author: author || "InkPress",
       digest: finalDigest,
-    });
+    };
 
-    // 5. 写回
+    const existedMediaId = article.wxMediaId;
+    if (existedMediaId) {
+      // 重复发布 = 更新已有草稿（单图文 index 恒为 0）
+      await updateDraft(existedMediaId, 0, draftArticle);
+      await prisma.article.update({
+        where: { id: articleId },
+        data: { status: "pushed", themeId: theme.id },
+      });
+      return NextResponse.json({
+        message: "已更新公众号草稿箱中的文章",
+        mediaId: existedMediaId,
+        updated: true,
+      });
+    }
+
+    // 首次发布 = 新增草稿
+    const mediaId = await addDraft(draftArticle);
     await prisma.article.update({
       where: { id: articleId },
       data: { wxMediaId: mediaId, status: "pushed", themeId: theme.id },
     });
-
     return NextResponse.json({
       message: "已推送到公众号草稿箱",
       mediaId,
+      updated: false,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "推送失败";

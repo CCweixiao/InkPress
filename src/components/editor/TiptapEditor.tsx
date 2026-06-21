@@ -3,7 +3,6 @@
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -15,14 +14,21 @@ import { createImageUploadExtension } from "./extensions/ImageUpload";
 export function TiptapEditor({
   value,
   onChange,
+  articleId,
 }: {
   value: string;
   onChange: (md: string) => void;
+  articleId?: string;
 }) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         // StarterKit 自带 codeBlock，但无高亮；保持简洁，高亮在预览/转换层统一处理
+        // StarterKit v3 已含 link 扩展，在此统一配置（避免重复注册告警）
+        link: {
+          openOnClick: false,
+          HTMLAttributes: { class: "text-primary underline" },
+        },
       }),
       Markdown.configure({
         html: false,
@@ -32,16 +38,12 @@ export function TiptapEditor({
       Placeholder.configure({
         placeholder: "开始写作，或从左侧用 AI 生成…",
       }),
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: { class: "text-primary underline" },
-      }),
       Image.configure({
         HTMLAttributes: { class: "rounded-lg" },
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
-      createImageUploadExtension(),
+      createImageUploadExtension(articleId),
     ],
     content: value,
     immediatelyRender: false,
