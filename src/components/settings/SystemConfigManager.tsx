@@ -61,6 +61,7 @@ type AgentProjectForm = {
 
 type AgentForm = {
   tavilyApiKey: string;
+  githubToken: string;
   projects: AgentProjectForm[];
   maxSteps: number;
   contextBudgetTokens: number;
@@ -97,6 +98,7 @@ const EMPTY_WECHAT: WechatForm = {
 
 const DEFAULT_AGENT: AgentForm = {
   tavilyApiKey: "",
+  githubToken: "",
   projects: [],
   maxSteps: 12,
   contextBudgetTokens: 32000,
@@ -209,6 +211,8 @@ function parseAgentValue(value?: string): AgentForm {
     return {
       tavilyApiKey:
         typeof parsed.tavilyApiKey === "string" ? parsed.tavilyApiKey : "",
+      githubToken:
+        typeof parsed.githubToken === "string" ? parsed.githubToken : "",
       projects: Array.isArray(parsed.projects)
         ? parsed.projects.map((project) => ({
             id: String(project.id ?? ""),
@@ -547,8 +551,8 @@ function AgentEditor({
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Tavily 用于联网检索；本地项目采用严格白名单只读访问。写作助手不会执行
-          Shell、构建或修改项目文件。
+          Tavily 用于联网检索；GitHub Token 仅用于提高公开仓库 API
+          限额。本地路径可在对话中首次授权，长期信任项目用于免确认访问。写作助手不会执行构建或修改项目文件。
         </p>
         <Button onClick={onSave} disabled={pending} size="sm">
           {pending ? (
@@ -560,7 +564,7 @@ function AgentEditor({
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Tavily API Key">
           <Input
             type="password"
@@ -572,6 +576,20 @@ function AgentEditor({
             }
             onChange={(event) =>
               onChange({ ...value, tavilyApiKey: event.target.value })
+            }
+          />
+        </Field>
+        <Field label="GitHub Token（可选）">
+          <Input
+            type="password"
+            value={value.githubToken === "********" ? "" : value.githubToken}
+            placeholder={
+              value.githubToken === "********"
+                ? "已配置（留空保持不变）"
+                : "github_pat_..."
+            }
+            onChange={(event) =>
+              onChange({ ...value, githubToken: event.target.value })
             }
           />
         </Field>
@@ -606,9 +624,9 @@ function AgentEditor({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium">本地项目白名单</div>
+            <div className="text-sm font-medium">长期信任项目</div>
             <div className="text-xs text-muted-foreground mt-0.5">
-              目录必须是运行 InkPress 的服务器可访问的绝对路径。
+              可选。对话中也能直接输入绝对路径并进行一次性授权。
             </div>
           </div>
           <Button
@@ -637,7 +655,7 @@ function AgentEditor({
         {value.projects.length === 0 ? (
           <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
             <FolderCode className="h-6 w-6 mx-auto mb-2 opacity-60" />
-            暂未配置可供写作助手分析的本地项目
+            暂无长期信任项目；仍可在对话中临时授权本地路径
           </div>
         ) : (
           value.projects.map((project, index) => (
