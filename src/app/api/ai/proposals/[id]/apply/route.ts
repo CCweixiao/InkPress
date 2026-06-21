@@ -158,6 +158,18 @@ async function applyTechnicalDocument(id: string) {
           ...(proposal.title !== null ? { title: proposal.title } : {}),
           snapshotHash:
             proposal.snapshotHash ?? proposal.technicalDocument.snapshotHash,
+          codeSourceJson: (() => {
+            try {
+              const snapshot = JSON.parse(proposal.sourceSnapshotJson) as {
+                codeSource?: unknown;
+              };
+              return snapshot.codeSource
+                ? JSON.stringify(snapshot.codeSource)
+                : proposal.technicalDocument.codeSourceJson;
+            } catch {
+              return proposal.technicalDocument.codeSourceJson;
+            }
+          })(),
         },
       });
       await tx.technicalDocumentVersion.create({

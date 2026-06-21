@@ -8,6 +8,7 @@ import {
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import { getProjectSnapshotHash } from "@/lib/ai/project-index";
+import { codeSourceProject } from "@/lib/ai/code-source";
 
 type Params = { params: Promise<{ id: string }> };
 const updateSchema = z.object({
@@ -33,7 +34,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
   }
   const markdown = await readTechnicalDocumentContent(id);
   const config = await getAgentConfig();
-  const project = config.projects.find((item) => item.id === document.projectId);
+  let project = config.projects.find((item) => item.id === document.projectId);
+  if (!project && document.codeSourceJson !== "{}") {
+    try {
+      const source = JSON.parse(document.codeSourceJson) as { id?: string };
+      if (source.id) project = (await codeSourceProject(source.id, config)).project;
+    } catch {
+      // Temporary grants can expire; stale status remains unknown until reauthorization.
+    }
+  }
   let currentSnapshotHash = "";
   if (project) {
     currentSnapshotHash =

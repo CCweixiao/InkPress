@@ -23,6 +23,11 @@ import { listSkills, loadSkill } from "@/lib/ai/skills";
 import { routeAgentRequest } from "@/lib/ai/agent-orchestrator";
 import { prepareAgentContext } from "@/lib/ai/context-manager";
 import { parseTags } from "@/lib/asset";
+import {
+  codeSourceProject,
+  createOrReuseCodeSourceGrant,
+  type CodeSourceReference,
+} from "@/lib/ai/code-source";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -213,6 +218,88 @@ export async function POST(req: NextRequest) {
       previousProjectId: session.selectedProjectId,
       targetKind: target.kind,
     });
+    let codeSource: CodeSourceReference | undefined;
+    let approval:
+      | {
+          id: string;
+          displayName: string;
+          locator: string;
+          approvalToken: string;
+        }
+      | undefined;
+
+    if (route.codeSourceCandidate) {
+      const resolved = await createOrReuseCodeSourceGrant({
+        sessionId: session.id,
+        candidate: route.codeSourceCandidate,
+      });
+      if (resolved.grant.status === "approved") {
+        const source = await codeSourceProject(resolved.grant.id, config, {
+          historyDepth: route.needsGitHistory ? 200 : 1,
+        });
+        route.project = source.project;
+        route.codeSource = source.source;
+        codeSource = source.source;
+        route.ambiguityQuestion = undefined;
+      } else if (resolved.approvalToken) {
+        approval = {
+          id: resolved.grant.id,
+          displayName: resolved.grant.displayName,
+          locator: resolved.grant.locator,
+          approvalToken: resolved.approvalToken,
+        };
+        route.ambiguityQuestion = undefined;
+      }
+    } else if (route.project) {
+      const resolved = await createOrReuseCodeSourceGrant({
+        sessionId: session.id,
+        candidate: {
+          kind: "configured-project",
+          locator: route.project.root,
+          projectId: route.project.id,
+          root: route.project.root,
+          displayName: route.project.name,
+        },
+      });
+      const source = await codeSourceProject(resolved.grant.id, config, {
+        historyDepth: route.needsGitHistory ? 200 : 1,
+      });
+      route.project = source.project;
+      route.codeSource = source.source;
+      codeSource = source.source;
+    } else if (route.needsProject) {
+      const previous = await prisma.codeSourceGrant.findFirst({
+        where: { sessionId: session.id, status: "approved" },
+        orderBy: { lastAccessedAt: "desc" },
+      });
+      if (previous) {
+        const source = await codeSourceProject(previous.id, config, {
+          historyDepth: route.needsGitHistory ? 200 : 1,
+        });
+        route.project = source.project;
+        route.codeSource = source.source;
+        codeSource = source.source;
+        route.ambiguityQuestion = undefined;
+      }
+    }
+
+    if (route.project) {
+      if (!route.activeTools.includes("explore_project")) {
+        route.activeTools.push("explore_project");
+      }
+      if (
+        route.needsGitHistory &&
+        !route.activeTools.includes("analyze_code_changes")
+      ) {
+        route.activeTools.push("analyze_code_changes");
+      }
+      if (
+        codeSource?.kind === "github" &&
+        !route.activeTools.includes("github_pull_request")
+      ) {
+        route.activeTools.push("github_pull_request");
+      }
+    }
     const loadedSkills = await Promise.all(
       route.skillIds.map((id) => loadSkill(id))
     );
@@ -301,13 +388,45 @@ export async function POST(req: NextRequest) {
         writeStep(writer, {
           id: "project",
           kind: "project",
-          title: "识别本地项目",
-          detail: route.project
-            ? `已选择 ${route.project.name}（严格只读）`
+          title: "识别代码源",
+          detail: codeSource
+            ? `已选择 ${codeSource.displayName}（${codeSource.kind === "github" ? "GitHub 公开仓库缓存" : "本地严格只读"}）`
+            : approval
+              ? `检测到 ${approval.displayName}，等待首次授权`
             : route.needsProject
               ? "需要确认项目"
-              : "本轮无需读取本地项目",
+              : "本轮无需读取代码源",
         });
+        if (route.codeSourceCandidate) {
+          writer.write({
+            type: "data-code-source-detected",
+            id: "code-source-detected",
+            data: {
+              kind: route.codeSourceCandidate.kind,
+              displayName: route.codeSourceCandidate.displayName,
+              locator: route.codeSourceCandidate.locator,
+            },
+          } as never);
+        }
+        if (approval) {
+          writer.write({
+            type: "data-code-source-approval",
+            id: `code-source-approval-${approval.id}`,
+            data: approval,
+          } as never);
+        } else if (codeSource) {
+          writer.write({
+            type: "data-code-source-ready",
+            id: `code-source-ready-${codeSource.id}`,
+            data: {
+              id: codeSource.id,
+              kind: codeSource.kind,
+              displayName: codeSource.displayName,
+              locator: codeSource.locator,
+              ref: codeSource.ref,
+            },
+          } as never);
+        }
         writeStep(writer, {
           id: "skills",
           kind: "skill",
@@ -338,6 +457,19 @@ export async function POST(req: NextRequest) {
           },
         } as never);
 
+        if (approval) {
+          const textId = crypto.randomUUID();
+          writer.write({ type: "text-start", id: textId } as never);
+          writer.write({
+            type: "text-delta",
+            id: textId,
+            delta:
+              "我识别到了本地项目路径。请先选择仅本会话授权，或保存为长期信任项目；授权后会自动继续本次分析。",
+          } as never);
+          writer.write({ type: "text-end", id: textId } as never);
+          return;
+        }
+
         if (route.ambiguityQuestion) {
           const textId = crypto.randomUUID();
           writer.write({ type: "text-start", id: textId } as never);
@@ -364,6 +496,7 @@ export async function POST(req: NextRequest) {
           providerId: parsed.data.providerId ?? undefined,
           modelId: parsed.data.modelId ?? undefined,
           project: route.project,
+          codeSource,
           config,
           route,
           loadedSkills,
@@ -395,6 +528,34 @@ export async function POST(req: NextRequest) {
                 data: source,
               } as never);
             }
+          },
+          onChangeEvidence: async (evidence) => {
+            writer.write({
+              type: "data-git-range",
+              id: crypto.randomUUID(),
+              data: {
+                requestedRange: evidence.requestedRange,
+                baseCommit: evidence.baseCommit,
+                headCommit: evidence.headCommit,
+              },
+            } as never);
+            for (const commit of evidence.commits.slice(0, 20)) {
+              writer.write({
+                type: "data-commit-evidence",
+                id: commit.sha,
+                data: commit,
+              } as never);
+            }
+            writer.write({
+              type: "data-change-evidence-summary",
+              id: crypto.randomUUID(),
+              data: {
+                commits: evidence.commits.length,
+                changedFiles: evidence.changedFiles.length,
+                featureGroups: evidence.featureGroups.length,
+                truncated: evidence.truncated,
+              },
+            } as never);
           },
           onFinishUsage: async (usage) => {
             turnUsage = usage;
@@ -461,6 +622,7 @@ export async function DELETE(req: NextRequest) {
           lastTotalTokens: 0,
         },
       }),
+      prisma.codeSourceGrant.deleteMany({ where: { sessionId: session.id } }),
     ]);
   }
   return NextResponse.json({ ok: true });
