@@ -2,9 +2,12 @@ import Link from "next/link";
 import { Boxes, FileCode2, FolderOpen, Palette, Settings, Sparkles, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { previewSnippet } from "@/lib/content-store";
+import { APP_VERSION, REPO_URL, releaseTagUrl } from "@/lib/site";
 import { Button } from "@/components/ui/button";
 import { HomeView } from "@/components/spaces/HomeView";
 import { GlobalSearch } from "@/components/common/GlobalSearch";
+import { BackToTop } from "@/components/common/BackToTop";
+import { GitHubIcon } from "@/components/common/GitHubIcon";
 import type { ArticleListItem } from "@/components/articles/ArticleCard";
 import type { SpaceItem } from "@/components/spaces/SpaceSection";
 
@@ -115,12 +118,41 @@ export default async function HomePage() {
               </Link>
             </Button>
           </nav>
+
+          {/* GitHub 仓库 + 版本徽章 */}
+          <div className="flex items-center gap-1 shrink-0 border-l border-border pl-2 ml-1">
+            <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+              <a
+                href={REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub 仓库"
+                title="GitHub 仓库"
+              >
+                <GitHubIcon className="h-4 w-4" />
+              </a>
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs font-mono">
+              <a
+                href={releaseTagUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`v${APP_VERSION} Release`}
+                title={`当前版本 v${APP_VERSION} · 查看 Release`}
+              >
+                v{APP_VERSION}
+              </a>
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8 space-y-6">
         <HomeView spaces={grouped} unclassified={unclassified} />
       </main>
+
+      {/* 回到顶部 */}
+      <BackToTop />
     </div>
   );
 }
