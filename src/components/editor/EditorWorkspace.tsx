@@ -13,6 +13,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { TiptapEditor } from "./TiptapEditor";
+import { LiveDraftPreview } from "./LiveDraftPreview";
 import { AIPanel, type AIPanelMode } from "./AIPanel";
 import { WeChatPreview } from "@/components/preview/WeChatPreview";
 import { PublishDialog } from "@/components/publish/PublishDialog";
@@ -56,6 +57,11 @@ export function EditorWorkspace({
   );
   const [publishOpen, setPublishOpen] = useState(false);
   const [aiMode, setAiMode] = useState<AIPanelMode>("chat");
+  // Agent 正文实时预览（不写回正文，仅镜像展示）
+  const [liveDraft, setLiveDraft] = useState<{
+    markdown: string;
+    title?: string;
+  } | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
     "idle"
   );
@@ -221,6 +227,7 @@ export function EditorWorkspace({
           spaceId={article.spaceId}
           onModeChange={setAiMode}
           onFlushArticle={flushArticle}
+          onDraftPreview={setLiveDraft}
         />
       </aside>
 
@@ -245,6 +252,13 @@ export function EditorWorkspace({
             发布
           </Button>
         </div>
+        {/* Agent 正文实时预览（不写回正文，仅镜像展示；应用需在对话区点「应用修改」） */}
+        {liveDraft && (
+          <LiveDraftPreview
+            draft={liveDraft}
+            onClose={() => setLiveDraft(null)}
+          />
+        )}
         <div className="editor-canvas flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-10 py-6">
             <TiptapEditor value={markdown} onChange={setMarkdown} articleId={article.id} />

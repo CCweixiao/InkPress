@@ -90,6 +90,7 @@ export async function prepareAgentContext(input: {
         prompt: `已有摘要：\n${summary || "（无）"}\n\n新增历史：\n${transcript}`,
         temperature: 0,
         maxOutputTokens: 1200,
+        maxRetries: 1,
       });
       summary = result.text.trim();
       summaryUpToPosition = cutoff - 1;
