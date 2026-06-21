@@ -49,8 +49,10 @@ export function AIPanel({
     contentMd?: string;
     digest?: string;
   }) => Promise<void>;
-  /** Agent 正文实时预览（不写回正文，仅镜像到预览面板）。 */
-  onDraftPreview?: (draft: { markdown: string; title?: string } | null) => void;
+  /** Agent 正文实时预览（后续修改模式，镜像到预览面板）。首次直写不走此回调。 */
+  onDraftPreview?: (
+    draft: { markdown: string; title?: string; mode: "direct" | "diff" } | null
+  ) => void;
 }) {
   const [mode, setModeState] = useState<AIPanelMode>("chat");
   const [providers, setProviders] = useState<Provider[]>([]);

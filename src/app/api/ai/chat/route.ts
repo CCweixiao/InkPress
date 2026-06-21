@@ -350,8 +350,10 @@ export async function POST(req: NextRequest) {
     const loadedSkills = await Promise.all(
       route.skillIds.map((id) => loadSkill(id))
     );
+    // 文章目标始终加载素材：意图路由可能把写作请求误判为 question，
+    // 但只要目标是文章且上传了素材，就应让 Agent 看到素材列表并按需插图。
     const assets =
-      target.kind === "article" && route.needsAssets
+      target.kind === "article"
         ? await prisma.asset.findMany({
             where: { articleId: target.id, trashed: false },
             select: {
@@ -487,9 +489,10 @@ export async function POST(req: NextRequest) {
             id: "assets",
             kind: "assets",
             title: "扫描文章素材",
-            detail: route.needsAssets
-              ? `已注入 ${assetCatalog.length} 项素材`
-              : "本轮无需扫描素材",
+            detail:
+              assetCatalog.length > 0
+                ? `已注入 ${assetCatalog.length} 项素材`
+                : "当前文章暂无素材",
           });
         }
         writer.write({
@@ -620,7 +623,11 @@ export async function POST(req: NextRequest) {
             writer.write({
               type: "data-article-draft",
               id: crypto.randomUUID(),
-              data: { markdown: draft.markdown, title: draft.title ?? null },
+              data: {
+                markdown: draft.markdown,
+                title: draft.title ?? null,
+                mode: draft.mode,
+              },
             } as never);
           },
         });

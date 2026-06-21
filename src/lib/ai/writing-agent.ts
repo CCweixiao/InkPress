@@ -92,8 +92,12 @@ export async function createWritingAgent(input: {
   onChangeEvidence?: (
     evidence: CodeChangeEvidencePackage
   ) => Promise<void> | void;
-  /** 文章提案生成时，把正文实时镜像到对话区（用于编辑器实时预览）。 */
-  onArticleDraft?: (draft: { markdown: string; title?: string }) => Promise<void> | void;
+  /** 文章提案生成时，把正文实时镜像到对话区。mode=direct 首次直写，mode=diff 后续预览。 */
+  onArticleDraft?: (draft: {
+    markdown: string;
+    title?: string;
+    mode: "direct" | "diff";
+  }) => Promise<void> | void;
 }) {
   const { model, config: modelConfig } = await getModel(
     input.providerId,
@@ -286,7 +290,7 @@ export async function createWritingAgent(input: {
     propose_article_revision: tool({
       title: "提交文章修改提案",
       description:
-        "当用户要求创建或修改文章时调用。提交完整 Markdown 快照供用户审阅，绝不直接修改编辑器。",
+        "当用户要求创建或修改文章时调用。提交完整 Markdown 快照供用户审阅。首次生成（编辑器为空）会直接写入，后续修改需用户 diff 审查后应用。",
       inputSchema: z.object({
         title: z.string().max(200).optional(),
         markdown: z.string().min(1),
@@ -297,8 +301,27 @@ export async function createWritingAgent(input: {
         if (input.target.kind !== "article") {
           throw new Error("当前目标不是公众号文章。");
         }
-        // 实时镜像正文到编辑器预览（不写回正文，仅预览）
-        await input.onArticleDraft?.({ markdown, title: title ?? undefined });
+        // 实时镜像正文到编辑器：首次直写，后续仅预览
+        const isEmptyArticle = input.target.markdown.trim() === "";
+        const draftMode = isEmptyArticle ? "direct" : "diff";
+        await input.onArticleDraft?.({
+          markdown,
+          title: title ?? undefined,
+          mode: draftMode,
+        });
+
+        // 首次生成（编辑器为空，无对比源）：跳过提案创建，前端直接写入编辑器
+        if (isEmptyArticle) {
+          return {
+            mode: "direct" as const,
+            markdown,
+            title: title ?? null,
+            digest: digest ?? null,
+            summary,
+          };
+        }
+
+        // 后续修改：创建提案，供前端 diff 审查后应用
         const oldLines = input.target.markdown.split("\n");
         const newLines = markdown.split("\n");
         const changedLines = Math.max(oldLines.length, newLines.length);
@@ -317,6 +340,7 @@ export async function createWritingAgent(input: {
           },
         });
         return {
+          mode: "proposal" as const,
           proposalId: proposal.id,
           status: proposal.status,
           summary: proposal.summary,
@@ -413,8 +437,8 @@ ${skill.manual}
 1. 服务端已完成意图识别和 Skill 预加载。复杂任务先调用 set_task_plan；只有发现遗漏能力时才补充调用 load_skill。
 2. 研究类任务必须先调用工具获取事实；分析源码时调用 explore_project；分析 Commit、版本、PR 或 Diff 时先调用 analyze_code_changes 获取独立只读证据包。
 3. 清楚区分事实、来源和推断。联网信息在最终回答中保留来源 URL。
-4. 当前目标为文章时，创建或修改正文必须调用 propose_article_revision；当前目标为技术文档时必须调用 propose_technical_document_revision。
-5. 仅公众号文章创作、重写或扩充时使用 article_assets；技术文档不调用文章素材工具。
+4. **关键**：当前目标为文章时，凡是产出或修改正文（创作、扩写、重写、润色、补充段落），都必须调用 propose_article_revision 提交完整 Markdown，**绝不把正文直接输出为对话文本**——正文只有通过该工具才能落到编辑器。当前目标为技术文档时同理必须调用 propose_technical_document_revision。
+5. **素材使用**：公众号文章创作、重写或扩充时，若素材列表非空，必须按素材描述/标签的相关性在合适位置插图，使用 \`![简短图注](素材URL)\` 语法，URL 必须取自素材列表，不得编造。无关素材不硬塞。技术文档不调用文章素材工具。
 6. 不输出隐藏思维链，只提供简洁计划、执行结果、来源和可操作结论。
 7. 避免无意义重复工具调用；工具失败时最多调整方案重试一次。
 

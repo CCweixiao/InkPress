@@ -13,7 +13,7 @@ export function LiveDraftPreview({
   draft,
   onClose,
 }: {
-  draft: { markdown: string; title?: string };
+  draft: { markdown: string; title?: string; mode: "direct" | "diff" };
   onClose: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
