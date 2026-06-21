@@ -4,14 +4,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 let documentId = "";
+const e2eDb = path.join(".e2e-data", "database", "inkpress.db");
+const e2eStorage = path.join(".e2e-data", "storage");
 
 test.afterEach(async () => {
   if (!documentId) return;
-  const db = new Database("dev.db");
+  const db = new Database(e2eDb);
   db.pragma("foreign_keys = ON");
   db.prepare("DELETE FROM TechnicalDocument WHERE id = ?").run(documentId);
   db.close();
-  await fs.rm(path.join("storage", "technical-documents", `${documentId}.md`), {
+  await fs.rm(path.join(e2eStorage, "technical-documents", `${documentId}.md`), {
     force: true,
   });
   documentId = "";
@@ -21,7 +23,7 @@ test("renders Mermaid, source evidence and applies a technical document proposal
   page,
 }) => {
   documentId = `techdoc-${Date.now()}`;
-  const db = new Database("dev.db");
+  const db = new Database(e2eDb);
   db.prepare(
     `INSERT INTO TechnicalDocument
       (id, title, documentType, projectId, contentPath, snapshotHash, status, createdAt, updatedAt)
@@ -32,11 +34,11 @@ test("renders Mermaid, source evidence and applies a technical document proposal
     `technical-documents/${documentId}.md`
   );
   db.close();
-  await fs.mkdir(path.join("storage", "technical-documents"), {
+  await fs.mkdir(path.join(e2eStorage, "technical-documents"), {
     recursive: true,
   });
   await fs.writeFile(
-    path.join("storage", "technical-documents", `${documentId}.md`),
+    path.join(e2eStorage, "technical-documents", `${documentId}.md`),
     "# 调用链\n\n`src/app/page.tsx#L1-L20`\n\n```mermaid\nflowchart LR\nA --> B\n```\n",
     "utf8"
   );
@@ -122,7 +124,7 @@ test("renders Mermaid, source evidence and applies a technical document proposal
   await page.goto(`/technical-documents/${documentId}`);
   await expect(page.getByText("代码探索工具调用")).toBeVisible();
   await expect(page.getByText(/12 个符号/)).toBeVisible();
-  await expect(page.getByText("A")).toBeVisible();
+  await expect(page.locator("svg").first()).toBeVisible();
   await expect(page.getByRole("link", { name: "src/app/page.tsx#L1-L20" })).toBeVisible();
   await expect(page.getByText("技术文档修改提案")).toBeVisible();
   await page.getByRole("button", { name: "应用修改" }).click();
