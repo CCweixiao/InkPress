@@ -7,6 +7,7 @@ describe("parseAgentConfig", () => {
       parseAgentConfig(
         JSON.stringify({
           tavilyApiKey: "tvly-test",
+          githubToken: "github-test",
           maxSteps: 99,
           contextBudgetTokens: 999999,
           projects: [
@@ -16,6 +17,7 @@ describe("parseAgentConfig", () => {
       )
     ).toEqual({
       tavilyApiKey: "tvly-test",
+      githubToken: "github-test",
       maxSteps: 20,
       contextBudgetTokens: 200000,
       projects: [{ id: "demo", name: "Demo", root: "/tmp/demo" }],
