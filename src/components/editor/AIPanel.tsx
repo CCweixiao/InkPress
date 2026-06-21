@@ -32,6 +32,7 @@ export function AIPanel({
   spaceId,
   onModeChange,
   onFlushArticle,
+  onDraftPreview,
 }: {
   onApply: (md: string) => void;
   onApplyArticle: (article: {
@@ -48,6 +49,8 @@ export function AIPanel({
     contentMd?: string;
     digest?: string;
   }) => Promise<void>;
+  /** Agent 正文实时预览（不写回正文，仅镜像到预览面板）。 */
+  onDraftPreview?: (draft: { markdown: string; title?: string } | null) => void;
 }) {
   const [mode, setModeState] = useState<AIPanelMode>("chat");
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -157,6 +160,7 @@ export function AIPanel({
           modelId={modelId}
           onApplyArticle={onApplyArticle}
           onFlushArticle={onFlushArticle}
+          onDraftPreview={onDraftPreview}
         />
       )}
 

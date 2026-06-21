@@ -92,6 +92,8 @@ export async function createWritingAgent(input: {
   onChangeEvidence?: (
     evidence: CodeChangeEvidencePackage
   ) => Promise<void> | void;
+  /** 文章提案生成时，把正文实时镜像到对话区（用于编辑器实时预览）。 */
+  onArticleDraft?: (draft: { markdown: string; title?: string }) => Promise<void> | void;
 }) {
   const { model, config: modelConfig } = await getModel(
     input.providerId,
@@ -295,6 +297,8 @@ export async function createWritingAgent(input: {
         if (input.target.kind !== "article") {
           throw new Error("当前目标不是公众号文章。");
         }
+        // 实时镜像正文到编辑器预览（不写回正文，仅预览）
+        await input.onArticleDraft?.({ markdown, title: title ?? undefined });
         const oldLines = input.target.markdown.split("\n");
         const newLines = markdown.split("\n");
         const changedLines = Math.max(oldLines.length, newLines.length);
@@ -443,6 +447,8 @@ ${assetText}
     tools,
     activeTools: input.route.activeTools as Array<keyof typeof tools>,
     temperature: modelConfig?.temperature ?? 0.6,
+    // 限制重试次数：余额不足等致命错误重试无意义，默认 2 次改为 1 次以更快暴露
+    maxRetries: 1,
     stopWhen: stepCountIs(input.config.maxSteps),
     onFinish: async (event) => {
       const usage = event.totalUsage;

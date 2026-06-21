@@ -245,7 +245,6 @@ body {
 }
 
 /* 技能表单：清晰聚焦边框（替代默认的模糊 ring） */
-/* 同时美化对话框表单的输入框、文本域、下拉触发器，统一聚焦态 */
 .skill-form input,
 .skill-form textarea,
 .skill-form [role="combobox"],
@@ -267,4 +266,144 @@ body {
   /* 清晰的实心边框 + 内侧浅色光晕（非外发光），边缘锐利不模糊 */
   box-shadow: inset 0 0 0 1px var(--primary), 0 0 0 3px rgba(37, 99, 235, 0.1);
   background-color: #fff;
+}
+
+/* 对话区 Markdown 渲染：紧凑、适配小字号气泡 */
+.markdown-chat {
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.markdown-chat p {
+  margin: 0.4em 0;
+}
+.markdown-chat p:first-child {
+  margin-top: 0;
+}
+.markdown-chat p:last-child {
+  margin-bottom: 0;
+}
+.markdown-chat h1,
+.markdown-chat h2,
+.markdown-chat h3 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.markdown-chat h1 {
+  font-size: 1.18em;
+}
+.markdown-chat h2 {
+  font-size: 1.08em;
+}
+.markdown-chat h3 {
+  font-size: 1em;
+}
+.markdown-chat ul,
+.markdown-chat ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.markdown-chat ul {
+  list-style: disc;
+}
+.markdown-chat ol {
+  list-style: decimal;
+}
+.markdown-chat li {
+  margin: 0.18em 0;
+}
+.markdown-chat a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-chat code {
+  background: var(--muted);
+  padding: 0.1em 0.32em;
+  border-radius: 0.3em;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: #d94660;
+}
+.markdown-chat pre {
+  margin: 0.5em 0;
+  padding: 0.7em 0.9em;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: #0d1424;
+  color: #d9e2f1;
+  font-size: 0.82em;
+  line-height: 1.6;
+}
+.markdown-chat pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.markdown-chat blockquote {
+  margin: 0.5em 0;
+  padding: 0.3em 0.8em;
+  border-left: 3px solid var(--primary);
+  background: var(--accent);
+  border-radius: 0 6px 6px 0;
+  color: #526078;
+}
+.markdown-chat blockquote p {
+  margin: 0.2em 0;
+}
+.markdown-chat table {
+  width: 100%;
+  margin: 0.5em 0;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.markdown-chat th,
+.markdown-chat td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.55em;
+  text-align: left;
+}
+.markdown-chat th {
+  background: var(--muted);
+  font-weight: 600;
+}
+.markdown-chat hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.markdown-chat strong {
+  font-weight: 680;
+}
+.markdown-chat img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* 全屏 Markdown 查看弹窗：放宽字号与行距，接近成稿阅读体验 */
+.markdown-fullscreen {
+  font-size: 15px;
+  line-height: 1.85;
+}
+.markdown-fullscreen p {
+  margin: 0.8em 0;
+}
+.markdown-fullscreen h1 {
+  font-size: 1.6em;
+  margin: 1.3em 0 0.6em;
+}
+.markdown-fullscreen h2 {
+  font-size: 1.32em;
+  margin: 1.4em 0 0.55em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+.markdown-fullscreen h3 {
+  font-size: 1.12em;
+  margin: 1.1em 0 0.45em;
+}
+.markdown-fullscreen pre {
+  font-size: 0.88em;
 }
