@@ -3,21 +3,117 @@ import Database from "better-sqlite3";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 let createdArticleId = "";
+const execFileAsync = promisify(execFile);
+const temporaryRoots: string[] = [];
+const e2eDb = path.join(".e2e-data", "database", "inkpress.db");
+const e2eStorage = path.join(".e2e-data", "storage");
 
 test.afterEach(async () => {
   if (!createdArticleId) return;
-  const db = new Database("dev.db");
+  const db = new Database(e2eDb);
   db.pragma("foreign_keys = ON");
   db.prepare("DELETE FROM Article WHERE id = ?").run(createdArticleId);
   db.close();
   await fs
-    .rm(path.join("storage", "articles", `${createdArticleId}.md`), {
+    .rm(path.join(e2eStorage, "articles", `${createdArticleId}.md`), {
       force: true,
     })
     .catch(() => {});
   createdArticleId = "";
+  await Promise.all(
+    temporaryRoots
+      .splice(0)
+      .map((root) => fs.rm(root, { recursive: true, force: true }))
+  );
+});
+
+test("authorizes a direct local path and exposes read-only git change APIs", async ({
+  request,
+}) => {
+  const created = await request.post("/api/articles", {
+    data: { title: "Dynamic Source E2E" },
+  });
+  expect(created.ok()).toBeTruthy();
+  const articleId = (await created.json()).article.id as string;
+  createdArticleId = articleId;
+
+  const root = await fs.mkdtemp(path.join("/tmp", "inkpress-e2e-source-"));
+  temporaryRoots.push(root);
+  const git = async (args: string[]) =>
+    (
+      await execFileAsync("git", args, {
+        cwd: root,
+      })
+    ).stdout.trim();
+  await git(["init"]);
+  await git(["config", "user.name", "InkPress E2E"]);
+  await git(["config", "user.email", "e2e@inkpress.local"]);
+  await fs.writeFile(path.join(root, "feature.ts"), "export const value = 1;\n");
+  await git(["add", "feature.ts"]);
+  await git(["commit", "-m", "feat: initial"]);
+  const base = await git(["rev-parse", "HEAD"]);
+  await fs.writeFile(
+    path.join(root, "feature.ts"),
+    "export const value = 2;\nexport const enabled = true;\n"
+  );
+  await git(["add", "feature.ts"]);
+  await git(["commit", "-m", "feat: enable behavior"]);
+  const head = await git(["rev-parse", "HEAD"]);
+
+  const resolved = await request.post("/api/ai/code-sources/resolve", {
+    data: {
+      target: { kind: "article", id: articleId },
+      message: `分析本地项目 ${root} 的提交变化`,
+    },
+  });
+  expect(resolved.ok()).toBeTruthy();
+  const sourceBody = await resolved.json();
+  expect(sourceBody.source.status).toBe("pending");
+  expect(sourceBody.approvalToken).toBeTruthy();
+
+  const invalid = await request.post(
+    `/api/ai/code-sources/${sourceBody.source.id}/approve`,
+    {
+      data: {
+        approvalToken: "invalid-invalid-invalid",
+        action: "approve",
+        scope: "session",
+      },
+    }
+  );
+  expect(invalid.status()).toBe(409);
+
+  const approved = await request.post(
+    `/api/ai/code-sources/${sourceBody.source.id}/approve`,
+    {
+      data: {
+        approvalToken: sourceBody.approvalToken,
+        action: "approve",
+        scope: "session",
+      },
+    }
+  );
+  expect(approved.ok()).toBeTruthy();
+
+  const commits = await request.get(
+    `/api/ai/code-sources/${sourceBody.source.id}/commits?base=${base}&head=${head}`
+  );
+  expect(commits.ok()).toBeTruthy();
+  expect((await commits.json()).commits).toHaveLength(1);
+
+  const changes = await request.post(
+    `/api/ai/code-sources/${sourceBody.source.id}/changes`,
+    { data: { base, head, includeDiff: true, file: "feature.ts" } }
+  );
+  expect(changes.ok()).toBeTruthy();
+  const changesBody = await changes.json();
+  expect(changesBody.changedFiles[0].path).toBe("feature.ts");
+  expect(changesBody.diff.diff).toContain("enabled = true");
+  expect(await git(["status", "--porcelain"])).toBe("");
 });
 
 test("shows a persisted proposal and applies it to the editor", async ({ page, request }) => {
@@ -157,7 +253,7 @@ test("proposal apply and reject are mutually exclusive", async ({ request }) => 
       })
     )
     .digest("hex");
-  const db = new Database("dev.db");
+  const db = new Database(e2eDb);
   db.prepare(
     `INSERT INTO AgentArticleProposal
       (id, articleId, baseVersionHash, baseTitle, baseMarkdown, baseDigest,

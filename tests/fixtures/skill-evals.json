@@ -5,5 +5,7 @@
   {"prompt":"联网查证最新版本和官方来源","intent":"research","skills":["web-research"]},
   {"prompt":"只读分析 Datastoria 的登录调用链","intent":"project-explore","skills":["codebase-exploration"]},
   {"prompt":"把刚才的代码证据写成调用链技术文档","intent":"write-technical-doc","skills":["technical-documentation"]},
-  {"prompt":"把项目实现写成公众号文章","intent":"project-to-article","skills":["codebase-exploration","project-to-article","wechat-writing"]}
+  {"prompt":"把项目实现写成公众号文章","intent":"project-to-article","skills":["codebase-exploration","project-to-article","wechat-writing"]},
+  {"prompt":"分析最近一周的 commit 和 diff，总结功能更新","intent":"project-change-analysis","skills":["code-change-analysis"]},
+  {"prompt":"根据 v1.2.0 到 v1.3.0 的提交写一篇公众号功能介绍","intent":"change-to-article","skills":["code-change-analysis","project-to-article","wechat-writing"]}
 ]
