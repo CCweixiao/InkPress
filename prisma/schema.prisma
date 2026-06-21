@@ -62,9 +62,37 @@ model AgentChatSession {
   article           Article?           @relation(fields: [articleId], references: [id], onDelete: Cascade)
   technicalDocument TechnicalDocument? @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
   messages          AgentChatMessage[]
+  codeSourceGrants  CodeSourceGrant[]
 
   @@index([articleId])
   @@index([technicalDocumentId])
+}
+
+model CodeSourceGrant {
+  id                String    @id @default(cuid())
+  sessionId         String
+  kind              String // local | github | configured
+  sourceKey         String
+  displayName       String
+  locator           String
+  root              String?
+  owner             String?
+  repo              String?
+  ref               String?
+  cacheRoot         String?
+  scope             String    @default("session") // session | trusted
+  status            String    @default("pending") // pending | approved | rejected | revoked
+  approvalTokenHash String?
+  approvedAt        DateTime?
+  lastAccessedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  session AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sourceKey])
+  @@index([sessionId, status])
+  @@index([sourceKey])
 }
 
 model AgentChatMessage {
@@ -115,6 +143,7 @@ model TechnicalDocument {
   projectId    String
   contentPath  String?
   snapshotHash String   @default("")
+  codeSourceJson String @default("{}")
   status       String   @default("draft")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

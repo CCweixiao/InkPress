@@ -86,6 +86,10 @@ function maskConfigs(
                 typeof parsed.tavilyApiKey === "string" && parsed.tavilyApiKey
                   ? "********"
                   : "",
+              githubToken:
+                typeof parsed.githubToken === "string" && parsed.githubToken
+                  ? "********"
+                  : "",
             },
             null,
             2
@@ -214,6 +218,9 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
     if (key === AGENT_CONFIG_KEY) {
       if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {
         newVal.tavilyApiKey = oldVal.tavilyApiKey ?? "";
+      }
+      if (newVal.githubToken === "********" || newVal.githubToken === "") {
+        newVal.githubToken = oldVal.githubToken ?? "";
       }
       return JSON.stringify(newVal, null, 2);
     }
