@@ -5,19 +5,17 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import {
   Bot,
-  BrainCircuit,
   Check,
   Clipboard,
   Eye,
   FileSearch,
-  Globe2,
   Loader2,
+  Maximize2,
   RefreshCcw,
   Send,
   Sparkles,
   Square,
   Trash2,
-  Wrench,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +24,11 @@ import {
   ArticleDiffDialog,
   type ProposalDetail,
 } from "./ArticleDiffDialog";
+import { ReasoningBlock } from "@/components/ai/ReasoningBlock";
+import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
+import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
+import { Markdown } from "@/components/ai/Markdown";
+import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
 
 type ProposalSummary = {
   id: string;
@@ -33,22 +36,6 @@ type ProposalSummary = {
   title?: string | null;
   summary: string;
   status: string;
-};
-
-const TOOL_LABELS: Record<string, string> = {
-  set_task_plan: "制定执行计划",
-  load_skill: "补充加载 Skill",
-  read_skill_resource: "读取 Skill 资源",
-  web_search: "搜索网络资料",
-  web_extract: "读取网页正文",
-  project_search: "搜索本地代码项目",
-  project_read: "读取项目文件",
-  explore_project: "只读探索代码项目",
-  analyze_code_changes: "分析 Git 提交与代码差异",
-  github_pull_request: "读取 GitHub Pull Request",
-  article_assets: "筛选文章素材",
-  propose_article_revision: "生成文章修改提案",
-  propose_technical_document_revision: "生成技术文档提案",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -127,38 +114,6 @@ async function materializeMermaid(markdown: string, articleId: string) {
     result = result.replace(full, `![Mermaid 图表 ${index + 1}](${data.asset.url})`);
   }
   return result;
-}
-
-function ToolIcon({ name }: { name: string }) {
-  if (name.startsWith("web_")) return <Globe2 className="h-3.5 w-3.5" />;
-  if (name.startsWith("project_")) return <FileSearch className="h-3.5 w-3.5" />;
-  if (name === "load_skill") return <Sparkles className="h-3.5 w-3.5" />;
-  return <Wrench className="h-3.5 w-3.5" />;
-}
-
-function summarizeTool(toolName: string, output: unknown, errorText?: unknown) {
-  if (typeof errorText === "string") return errorText;
-  if (!output || typeof output !== "object") return "执行完成";
-  const value = output as Record<string, unknown>;
-  if (toolName === "set_task_plan" && Array.isArray(value.steps)) {
-    return `${value.intent ?? "任务"} · ${value.steps.length} 个步骤`;
-  }
-  if (toolName === "load_skill") return `已加载 ${value.name ?? value.id ?? "Skill"}`;
-  if (toolName === "web_search") {
-    return `获得 ${Array.isArray(value.results) ? value.results.length : 0} 条搜索结果`;
-  }
-  if (toolName === "project_search") {
-    return `找到 ${Array.isArray(value.matches) ? value.matches.length : 0} 个匹配`;
-  }
-  if (toolName === "project_read") return `已读取 ${value.path ?? "项目文件"}`;
-  if (toolName === "explore_project") {
-    return `证据包包含 ${Array.isArray(value.symbols) ? value.symbols.length : 0} 个符号、${Array.isArray(value.edges) ? value.edges.length : 0} 条关系`;
-  }
-  if (toolName === "article_assets") {
-    return `读取 ${Array.isArray(value.assets) ? value.assets.length : 0} 项素材`;
-  }
-  if (toolName === "propose_article_revision") return "文章修改提案已生成";
-  return "执行完成";
 }
 
 function ProposalCard({
@@ -489,6 +444,7 @@ export function WritingAssistant({
   onApplyTechnicalDocument,
   onFlushArticle,
   onFlushTarget,
+  onDraftPreview,
 }: {
   articleId?: string;
   targetKind?: "article" | "technical-document";
@@ -508,11 +464,14 @@ export function WritingAssistant({
   }) => void;
   onFlushArticle?: () => Promise<void>;
   onFlushTarget?: () => Promise<void>;
+  /** Agent 正文实时预览（不写回正文，仅镜像到预览面板）。 */
+  onDraftPreview?: (draft: { markdown: string; title?: string } | null) => void;
 }) {
   const resolvedTargetId = targetId ?? articleId ?? "";
   const [input, setInput] = useState("");
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [initializing, setInitializing] = useState(true);
+  const [fullscreenText, setFullscreenText] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transport = useMemo(
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
@@ -591,6 +550,34 @@ export function WritingAssistant({
   }
 
   const busy = status === "streaming" || status === "submitted";
+
+  // 扫描最近的 data-article-draft part，把 Agent 正文实时镜像到预览面板。
+  // 流式期间持续更新；会话结束后清空预览（交回正文控制权）。
+  const latestDraft = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
+        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
+        if (p.type === "data-article-draft" && p.data && typeof p.data === "object") {
+          const d = p.data as { markdown?: unknown; title?: unknown };
+          if (typeof d.markdown === "string") {
+            return {
+              markdown: d.markdown,
+              title: typeof d.title === "string" ? d.title : undefined,
+            };
+          }
+        }
+      }
+    }
+    return null;
+  }, [messages]);
+
+  // 仅在流式期间把草稿镜像到预览面板；历史会话加载时不重新触发预览。
+  useEffect(() => {
+    if (busy) onDraftPreview?.(latestDraft);
+    if (!busy && !latestDraft) onDraftPreview?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestDraft, busy]);
+
   const proposalIdsInMessages = new Set(
     messages.flatMap((message) =>
       message.parts
@@ -668,17 +655,31 @@ export function WritingAssistant({
                 {message.parts.map((rawPart, index) => {
                   const part = rawPart as unknown as Record<string, unknown>;
                   if (part.type === "text" && typeof part.text === "string") {
+                    if (message.role === "user") {
+                      return (
+                        <div
+                          key={index}
+                          className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground"
+                        >
+                          {part.text}
+                        </div>
+                      );
+                    }
+                    // assistant 文本：markdown 渲染 + 全屏按钮
                     return (
                       <div
                         key={index}
-                        className={cn(
-                          "whitespace-pre-wrap break-words text-xs leading-5",
-                          message.role === "user"
-                            ? "max-w-[88%] rounded-xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground"
-                            : "text-foreground"
-                        )}
+                        className="group relative rounded-md text-foreground"
                       >
-                        {part.text}
+                        <Markdown className="text-xs leading-5">{part.text}</Markdown>
+                        <button
+                          type="button"
+                          title="全屏查看"
+                          onClick={() => setFullscreenText(part.text as string)}
+                          className="absolute -right-1 -top-1 rounded-md border bg-background p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100"
+                        >
+                          <Maximize2 className="h-3 w-3" />
+                        </button>
                       </div>
                     );
                   }
@@ -687,21 +688,11 @@ export function WritingAssistant({
                     typeof part.text === "string"
                   ) {
                     return (
-                      <details
+                      <ReasoningBlock
                         key={index}
-                        className="rounded-md border border-violet-200 bg-violet-50/60"
-                      >
-                        <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-[11px] text-violet-700">
-                          <BrainCircuit className="h-3.5 w-3.5" />
-                          模型思考
-                          {part.state === "streaming" && (
-                            <Loader2 className="ml-auto h-3 w-3 animate-spin" />
-                          )}
-                        </summary>
-                        <div className="border-t border-violet-200 px-3 py-2 whitespace-pre-wrap text-[11px] leading-5 text-violet-950">
-                          {part.text}
-                        </div>
-                      </details>
+                        text={part.text as string}
+                        state={typeof part.state === "string" ? part.state : undefined}
+                      />
                     );
                   }
                   if (
@@ -808,22 +799,11 @@ export function WritingAssistant({
                     part.data &&
                     typeof part.data === "object"
                   ) {
-                    const data = part.data as Record<string, unknown>;
                     return (
-                      <div
+                      <AgentStepBlock
                         key={index}
-                        className="flex items-start gap-2 rounded-md border bg-muted/25 px-2.5 py-2 text-[11px]"
-                      >
-                        <Check className="mt-0.5 h-3.5 w-3.5 text-emerald-600" />
-                        <div>
-                          <div className="font-medium">{String(data.title ?? "Agent 步骤")}</div>
-                          {Boolean(data.detail) && (
-                            <div className="mt-0.5 text-muted-foreground">
-                              {String(data.detail)}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                        data={part.data as Record<string, unknown>}
+                      />
                     );
                   }
                   if (
@@ -940,39 +920,8 @@ export function WritingAssistant({
                       />
                     );
                   }
-                  const state = String(part.state ?? "");
-                  const running =
-                    state.includes("streaming") ||
-                    state.includes("input") ||
-                    state === "call";
-                  const failed = state === "output-error";
-                  return (
-                    <div
-                      key={index}
-                      className={cn(
-                        "flex items-start gap-2 rounded-md border bg-muted/25 px-2.5 py-2 text-[11px]",
-                        failed && "border-red-200 bg-red-50"
-                      )}
-                    >
-                      {running ? (
-                        <Loader2 className="mt-0.5 h-3.5 w-3.5 animate-spin text-primary" />
-                      ) : failed ? (
-                        <X className="mt-0.5 h-3.5 w-3.5 text-red-600" />
-                      ) : (
-                        <ToolIcon name={toolName} />
-                      )}
-                      <div className="min-w-0">
-                        <div className="font-medium">
-                          {TOOL_LABELS[toolName] ?? toolName}
-                        </div>
-                        {!running && (
-                          <div className="mt-0.5 text-muted-foreground">
-                            {summarizeTool(toolName, part.output, part.errorText)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
+                  // 工具调用：用可展开的 ToolCallBlock（默认收起，点击查看输入输出）
+                  return <ToolCallBlock key={index} part={part} />;
                 })}
               </div>
             ))}
@@ -1013,8 +962,9 @@ export function WritingAssistant({
           </div>
         )}
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-            {error.message}
+          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700">
+            <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{error.message || "请求失败，请稍后重试。"}</span>
           </div>
         )}
       </div>
@@ -1059,6 +1009,13 @@ export function WritingAssistant({
           </div>
         </div>
       </div>
+
+      <MarkdownFullscreenDialog
+        open={fullscreenText !== null}
+        onOpenChange={(open) => !open && setFullscreenText(null)}
+        text={fullscreenText ?? ""}
+        title="AI 输出内容"
+      />
     </div>
   );
 }

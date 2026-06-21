@@ -186,6 +186,7 @@ ${skillCatalog || "（无）"}
 ${projectCatalog || "（无）"}`,
       prompt: input.message,
       temperature: 0,
+      maxRetries: 1,
     });
     routed = result.object;
   } catch {
