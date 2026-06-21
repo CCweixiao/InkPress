@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Tailwind v4：dark: 变体改为基于 .dark 类（而非 prefers-color-scheme），
+   使 ThemeProvider 手动切换时 dark: 工具类正确生效。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* 简洁大气的主题色板（shadcn slate 风格） */
 :root {
   --background: #ffffff;
@@ -18,6 +22,53 @@
   --accent-foreground: #1d4ed8;
   --ring: #2563eb;
   --radius: 0.625rem;
+  /* 写作画布专用变量（浅色） */
+  --editor-canvas-bg: radial-gradient(circle at 50% 0, rgba(37, 99, 235, 0.035), transparent 30rem), #f8fafc;
+  --editor-paper-bg: #ffffff;
+  --editor-text: #263244;
+  --editor-heading: #0f172a;
+  --editor-heading-2: #172033;
+  --editor-heading-3: #1e293b;
+  --editor-border: #e2e8f0;
+  --editor-blockquote-text: #526078;
+  --editor-strong: #111827;
+  --editor-hr: #cbd5e1;
+  --editor-code-bg: var(--muted);
+  --editor-code-color: #d94660;
+  --editor-li-marker: #2563eb;
+}
+
+/* 夜间模式：覆盖全部主题变量 */
+.dark {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+  --card: #0f172a;
+  --card-foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: #1e293b;
+  --input: #1e293b;
+  --primary: #3b82f6;
+  --primary-foreground: #f8fafc;
+  --secondary: #1e293b;
+  --secondary-foreground: #e2e8f0;
+  --accent: #172554;
+  --accent-foreground: #93c5fd;
+  --ring: #3b82f6;
+  /* 写作画布专用变量（深色） */
+  --editor-canvas-bg: radial-gradient(circle at 50% 0, rgba(59, 130, 246, 0.06), transparent 30rem), #0b1120;
+  --editor-paper-bg: #0f172a;
+  --editor-text: #cbd5e1;
+  --editor-heading: #f1f5f9;
+  --editor-heading-2: #e2e8f0;
+  --editor-heading-3: #cbd5e1;
+  --editor-border: #1e293b;
+  --editor-blockquote-text: #94a3b8;
+  --editor-strong: #f8fafc;
+  --editor-hr: #334155;
+  --editor-code-bg: #1e293b;
+  --editor-code-color: #fb7185;
+  --editor-li-marker: #60a5fa;
 }
 @theme inline {
   --color-background: var(--background);
@@ -55,21 +106,19 @@ body {
 
 /* Tiptap 编辑区：接近成稿的舒适写作纸张 */
 .editor-canvas {
-  background:
-    radial-gradient(circle at 50% 0, rgba(37, 99, 235, 0.035), transparent 30rem),
-    #f8fafc;
+  background: var(--editor-canvas-bg);
 }
 
 .editor-canvas > div {
   min-height: 100%;
-  background: #fff;
+  background: var(--editor-paper-bg);
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
 }
 
 .tiptap {
   outline: none;
   min-height: 60vh;
-  color: #263244;
+  color: var(--editor-text);
   font-size: 16.5px;
   line-height: 1.76;
   letter-spacing: 0.012em;
@@ -80,7 +129,7 @@ body {
 }
 .tiptap h1 {
   margin: 1.35em 0 0.62em;
-  color: #0f172a;
+  color: var(--editor-heading);
   font-size: 1.92em;
   font-weight: 750;
   line-height: 1.3;
@@ -92,8 +141,8 @@ body {
 .tiptap h2 {
   margin: 1.85em 0 0.58em;
   padding-bottom: 0.34em;
-  border-bottom: 1px solid #e2e8f0;
-  color: #172033;
+  border-bottom: 1px solid var(--editor-border);
+  color: var(--editor-heading-2);
   font-size: 1.4em;
   font-weight: 720;
   line-height: 1.38;
@@ -103,7 +152,7 @@ body {
   position: relative;
   margin: 1.38em 0 0.46em;
   padding-left: 0.72em;
-  color: #1e293b;
+  color: var(--editor-heading-3);
   font-size: 1.16em;
   font-weight: 680;
   line-height: 1.45;
@@ -144,17 +193,17 @@ body {
   margin: 0.22em 0;
 }
 .tiptap li::marker {
-  color: #2563eb;
+  color: var(--editor-li-marker);
   font-weight: 650;
 }
 .tiptap blockquote {
   margin: 1em 0;
   padding: 0.68em 1em;
-  border: 1px solid #dbeafe;
+  border: 1px solid var(--editor-border);
   border-left: 4px solid var(--primary);
   border-radius: 0 10px 10px 0;
-  background: linear-gradient(135deg, #f8fbff, #eff6ff);
-  color: #526078;
+  background: var(--muted);
+  color: var(--editor-blockquote-text);
 }
 .tiptap blockquote p {
   margin: 0;
@@ -192,11 +241,11 @@ body {
   font-size: inherit;
 }
 .tiptap :not(pre) > code {
-  background: var(--muted);
+  background: var(--editor-code-bg);
   padding: 0.18em 0.42em;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--editor-border);
   border-radius: 0.35em;
-  color: #d94660;
+  color: var(--editor-code-color);
   font-family: var(--font-mono);
   font-size: 0.86em;
 }
@@ -211,16 +260,16 @@ body {
   width: 32%;
   margin: 1.85em auto;
   border: 0;
-  border-top: 1px solid #cbd5e1;
+  border-top: 1px solid var(--editor-hr);
 }
 .tiptap a {
-  color: #2563eb;
+  color: var(--primary);
   text-decoration: underline;
-  text-decoration-color: #bfdbfe;
+  text-decoration-color: var(--accent);
   text-underline-offset: 3px;
 }
 .tiptap strong {
-  color: #111827;
+  color: var(--editor-strong);
   font-weight: 720;
 }
 .tiptap .is-empty:first-child::before {
@@ -406,4 +455,48 @@ body {
 }
 .markdown-fullscreen pre {
   font-size: 0.88em;
+}
+
+/* 公众号预览夜间模式：文章正文是 juice 内联的样式（高 specificity），
+   需用 !important 覆盖内联颜色，使深色下文字/背景适配。
+   注意：内联样式代表微信实际渲染结果，此处覆盖仅用于本地预览观感，
+   不影响发布到草稿箱的真实内容。代码块（.code-block 已是深色）保持不变。 */
+.dark .wechat-article-content {
+  background: #0f172a;
+  color: #cbd5e1 !important;
+}
+.dark .wechat-article-content p,
+.dark .wechat-article-content li,
+.dark .wechat-article-content span,
+.dark .wechat-article-content td,
+.dark .wechat-article-content blockquote {
+  color: #cbd5e1 !important;
+}
+.dark .wechat-article-content strong {
+  color: #f1f5f9 !important;
+}
+.dark .wechat-article-content blockquote {
+  background: #1e293b !important;
+  border-left-color: #475569 !important;
+}
+.dark .wechat-article-content h1,
+.dark .wechat-article-content h2,
+.dark .wechat-article-content h3,
+.dark .wechat-article-content h4 {
+  color: #f1f5f9 !important;
+}
+.dark .wechat-article-content a {
+  color: #93c5fd !important;
+  border-bottom-color: #93c5fd !important;
+}
+.dark .wechat-article-content hr {
+  border-top-color: #334155 !important;
+}
+.dark .wechat-article-content table th {
+  background: #1e293b !important;
+  color: #e2e8f0 !important;
+}
+.dark .wechat-article-content table th,
+.dark .wechat-article-content table td {
+  border-color: #334155 !important;
 }

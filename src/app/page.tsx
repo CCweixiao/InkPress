@@ -8,6 +8,7 @@ import { HomeView } from "@/components/spaces/HomeView";
 import { GlobalSearch } from "@/components/common/GlobalSearch";
 import { BackToTop } from "@/components/common/BackToTop";
 import { GitHubIcon } from "@/components/common/GitHubIcon";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import type { ArticleListItem } from "@/components/articles/ArticleCard";
 import type { SpaceItem } from "@/components/spaces/SpaceSection";
 
@@ -119,8 +120,9 @@ export default async function HomePage() {
             </Button>
           </nav>
 
-          {/* GitHub 仓库 + 版本徽章 */}
+          {/* 主题切换 + GitHub 仓库 + 版本徽章 */}
           <div className="flex items-center gap-1 shrink-0 border-l border-border pl-2 ml-1">
+            <ThemeToggle />
             <Button asChild variant="ghost" size="icon" className="h-8 w-8">
               <a
                 href={REPO_URL}
