@@ -10,6 +10,12 @@ import { parseTags } from "@/lib/asset";
 import type { AgentRoute } from "@/lib/ai/agent-orchestrator";
 import { exploreProjectWithAgent } from "@/lib/ai/code-explorer-agent";
 import type { CodeEvidencePackage } from "@/lib/ai/code-evidence";
+import type { CodeSourceReference } from "@/lib/ai/code-source";
+import { fetchGithubPullRequest } from "@/lib/ai/code-source";
+import {
+  analyzeCodeChangesWithAgent,
+  type CodeChangeEvidencePackage,
+} from "@/lib/ai/git-analysis";
 
 type AgentTargetContext = {
   kind: "article" | "technical-document";
@@ -53,6 +59,7 @@ export async function createWritingAgent(input: {
   providerId?: string;
   modelId?: string;
   project?: AgentProjectConfig;
+  codeSource?: CodeSourceReference;
   config: AgentConfig;
   route: AgentRoute;
   loadedSkills: Array<{
@@ -82,6 +89,9 @@ export async function createWritingAgent(input: {
     detail: string;
   }) => Promise<void> | void;
   onCodeEvidence?: (evidence: CodeEvidencePackage) => Promise<void> | void;
+  onChangeEvidence?: (
+    evidence: CodeChangeEvidencePackage
+  ) => Promise<void> | void;
 }) {
   const { model, config: modelConfig } = await getModel(
     input.providerId,
@@ -155,12 +165,12 @@ export async function createWritingAgent(input: {
       title: "只读探索代码项目",
       description: input.project
         ? `委托独立只读 Code Explorer 分析“${input.project.name}”，返回带文件和行号的结构化证据包。`
-        : "当前没有匹配的白名单项目，调用会失败。",
+        : "当前没有已授权代码源，调用会失败。",
       inputSchema: z.object({
         objective: z.string().min(3).max(1000),
       }),
       execute: async ({ objective }) => {
-        if (!input.project) throw new Error("当前没有匹配的白名单项目。");
+        if (!input.project) throw new Error("当前没有已授权代码源。");
         const result = await exploreProjectWithAgent({
           model,
           project: input.project,
@@ -170,6 +180,72 @@ export async function createWritingAgent(input: {
         });
         await input.onCodeEvidence?.(result);
         return result;
+      },
+    }),
+    analyze_code_changes: tool({
+      title: "分析 Git 提交与代码差异",
+      description: input.project
+        ? `只读分析“${input.project.name}”的固定提交范围、Diff 和相关源码，返回可追溯的功能变更证据包。`
+        : "当前没有已授权代码源，调用会失败。",
+      inputSchema: z.object({
+        objective: z.string().min(3).max(1000),
+        requestedRange: z.string().optional(),
+        base: z.string().optional(),
+        head: z.string().optional(),
+        since: z.string().optional(),
+        until: z.string().optional(),
+      }),
+      execute: async ({ objective, ...range }) => {
+        if (!input.project || !input.codeSource) {
+          throw new Error("当前没有已授权代码源。");
+        }
+        const result = await analyzeCodeChangesWithAgent({
+          model,
+          project: input.project,
+          source: input.codeSource,
+          objective,
+          range,
+          maxSteps: Math.min(10, input.config.maxSteps),
+          onStep: input.onCodeExploreStep,
+        });
+        await input.onChangeEvidence?.(result);
+        return {
+          source: result.source,
+          baseCommit: result.baseCommit,
+          headCommit: result.headCommit,
+          requestedRange: result.requestedRange,
+          commits: result.commits,
+          changedFiles: result.changedFiles,
+          featureGroups: result.featureGroups,
+          risks: result.risks,
+          openQuestions: result.openQuestions,
+          truncated: result.truncated,
+        };
+      },
+    }),
+    github_pull_request: tool({
+      title: "读取 GitHub Pull Request",
+      description:
+        input.codeSource?.kind === "github"
+          ? "读取当前 GitHub 公开仓库的 PR 元数据、提交和文件变化。"
+          : "当前代码源不是 GitHub 仓库，调用会失败。",
+      inputSchema: z.object({
+        pullNumber: z.number().int().positive(),
+      }),
+      execute: async ({ pullNumber }) => {
+        if (
+          input.codeSource?.kind !== "github" ||
+          !input.codeSource.owner ||
+          !input.codeSource.repo
+        ) {
+          throw new Error("当前代码源不是 GitHub 仓库。");
+        }
+        return fetchGithubPullRequest({
+          owner: input.codeSource.owner,
+          repo: input.codeSource.repo,
+          pullNumber,
+          config: input.config,
+        });
       },
     }),
     article_assets: tool({
@@ -283,7 +359,10 @@ export async function createWritingAgent(input: {
             title: title ?? null,
             markdown,
             snapshotHash: snapshotHash ?? input.target.snapshotHash ?? null,
-            sourceSnapshotJson: JSON.stringify(sourceSnapshot ?? {}),
+            sourceSnapshotJson: JSON.stringify({
+              ...(sourceSnapshot ?? {}),
+              ...(input.codeSource ? { codeSource: input.codeSource } : {}),
+            }),
             summary,
           },
         });
@@ -328,7 +407,7 @@ ${skill.manual}
 
 工作规则：
 1. 服务端已完成意图识别和 Skill 预加载。复杂任务先调用 set_task_plan；只有发现遗漏能力时才补充调用 load_skill。
-2. 研究类任务必须先调用工具获取事实；分析源码时调用 explore_project 获取独立只读证据包。
+2. 研究类任务必须先调用工具获取事实；分析源码时调用 explore_project；分析 Commit、版本、PR 或 Diff 时先调用 analyze_code_changes 获取独立只读证据包。
 3. 清楚区分事实、来源和推断。联网信息在最终回答中保留来源 URL。
 4. 当前目标为文章时，创建或修改正文必须调用 propose_article_revision；当前目标为技术文档时必须调用 propose_technical_document_revision。
 5. 仅公众号文章创作、重写或扩充时使用 article_assets；技术文档不调用文章素材工具。
@@ -342,7 +421,7 @@ ${skill.manual}
 - 正文：
 ${input.target.markdown || "（空内容）"}
 
-当前项目：${input.project ? `${input.project.name}（只读）` : "未选择"}
+当前代码源：${input.codeSource ? `${input.codeSource.displayName} | ${input.codeSource.kind} | ${input.codeSource.locator}` : input.project ? `${input.project.name}（只读）` : "未选择"}
 本轮意图：${input.route.intent}
 路由说明：${input.route.rationale}
 

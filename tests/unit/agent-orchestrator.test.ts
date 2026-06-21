@@ -12,6 +12,14 @@ const skills = [
     hasResources: true,
   },
   {
+    id: "code-change-analysis",
+    skillKey: "code-change-analysis",
+    name: "代码变更分析",
+    description: "分析 Git 提交和 Diff",
+    source: "system" as const,
+    hasResources: true,
+  },
+  {
     id: "codebase-exploration",
     skillKey: "codebase-exploration",
     name: "只读代码探索",
@@ -135,5 +143,29 @@ describe("routeAgentRequest", () => {
     expect(route.skillIds).toContain("de-ai-writing");
     expect(route.needsAssets).toBe(true);
     expect(route.activeTools).toContain("propose_article_revision");
+  });
+
+  it("detects direct local paths and Git change article intent", async () => {
+    const route = await routeAgentRequest({
+      model: failingModel,
+      message:
+        "根据 /Users/jielongping/OpenProjects/aiwaji 最近一周的 commit 和 diff 写一篇公众号功能更新文章",
+      skills,
+      config: {
+        tavilyApiKey: "",
+        maxSteps: 12,
+        contextBudgetTokens: 32000,
+        projects: [],
+      },
+      targetKind: "article",
+    });
+    expect(route.intent).toBe("change-to-article");
+    expect(route.needsGitHistory).toBe(true);
+    expect(route.codeSourceCandidate).toMatchObject({
+      kind: "local-path",
+      displayName: "aiwaji",
+    });
+    expect(route.skillIds).toContain("code-change-analysis");
+    expect(route.ambiguityQuestion).toBeUndefined();
   });
 });

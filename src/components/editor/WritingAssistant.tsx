@@ -44,6 +44,8 @@ const TOOL_LABELS: Record<string, string> = {
   project_search: "搜索本地代码项目",
   project_read: "读取项目文件",
   explore_project: "只读探索代码项目",
+  analyze_code_changes: "分析 Git 提交与代码差异",
+  github_pull_request: "读取 GitHub Pull Request",
   article_assets: "筛选文章素材",
   propose_article_revision: "生成文章修改提案",
   propose_technical_document_revision: "生成技术文档提案",
@@ -355,6 +357,128 @@ function ProposalCard({
   );
 }
 
+function CodeSourceApprovalCard({
+  data,
+  onApproved,
+}: {
+  data: {
+    id: string;
+    displayName: string;
+    locator: string;
+    approvalToken: string;
+  };
+  onApproved: () => Promise<void>;
+}) {
+  const [sourceStatus, setSourceStatus] = useState("pending");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/ai/code-sources/${data.id}/status`)
+      .then((response) => response.json())
+      .then((result) => {
+        if (result.source?.status) setSourceStatus(result.source.status);
+      })
+      .catch(() => undefined);
+  }, [data.id]);
+
+  async function decide(
+    action: "approve" | "reject",
+    scope: "session" | "trusted" = "session"
+  ) {
+    setBusy(true);
+    setError("");
+    const response = await fetch(
+      `/api/ai/code-sources/${data.id}/approve`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: data.approvalToken,
+          action,
+          scope,
+        }),
+      }
+    );
+    const result = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setError(result.error || "代码源授权失败。");
+      return;
+    }
+    setSourceStatus(action === "approve" ? "approved" : "rejected");
+    if (action === "approve") await onApproved();
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-xs">
+      <div className="flex items-start gap-2">
+        <FileSearch className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-amber-950">授权只读代码探索</div>
+          <div className="mt-1 text-amber-900">{data.displayName}</div>
+          <div className="mt-1 break-all font-mono text-[10px] text-amber-700">
+            {data.locator}
+          </div>
+          <p className="mt-2 leading-5 text-amber-800">
+            仅允许读取源码、符号与 Git 历史；不会修改、构建或执行项目。
+          </p>
+        </div>
+      </div>
+      {error && <p className="mt-2 text-red-600">{error}</p>}
+      {sourceStatus === "pending" ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <Button
+            size="sm"
+            className="h-7 text-xs"
+            disabled={busy}
+            onClick={() => void decide("approve", "session")}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Check className="h-3.5 w-3.5" />
+            )}
+            仅本会话允许
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled={busy}
+            onClick={() => void decide("approve", "trusted")}
+          >
+            允许并长期信任
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs"
+            disabled={busy}
+            onClick={() => void decide("reject")}
+          >
+            拒绝
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          {sourceStatus === "approved" ? (
+            <>
+              <Check className="h-3.5 w-3.5 text-emerald-600" />
+              已授权
+            </>
+          ) : (
+            <>
+              <X className="h-3.5 w-3.5" />
+              已拒绝或撤销
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WritingAssistant({
   articleId,
   targetKind = "article",
@@ -578,6 +702,105 @@ export function WritingAssistant({
                           {part.text}
                         </div>
                       </details>
+                    );
+                  }
+                  if (
+                    part.type === "data-code-source-approval" &&
+                    part.data &&
+                    typeof part.data === "object"
+                  ) {
+                    return (
+                      <CodeSourceApprovalCard
+                        key={index}
+                        data={
+                          part.data as {
+                            id: string;
+                            displayName: string;
+                            locator: string;
+                            approvalToken: string;
+                          }
+                        }
+                        onApproved={async () => {
+                          await (onFlushTarget ?? onFlushArticle)?.();
+                          await regenerate({ body: requestBody });
+                        }}
+                      />
+                    );
+                  }
+                  if (
+                    part.type === "data-code-source-ready" &&
+                    part.data &&
+                    typeof part.data === "object"
+                  ) {
+                    const data = part.data as Record<string, unknown>;
+                    return (
+                      <div
+                        key={index}
+                        className="rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-2 text-[11px] text-emerald-900"
+                      >
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          代码源已就绪：{String(data.displayName ?? "")}
+                        </div>
+                        <div className="mt-1 truncate font-mono text-[10px] text-emerald-700">
+                          {String(data.locator ?? "")}
+                          {data.ref ? ` · ${String(data.ref)}` : ""}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (
+                    part.type === "data-git-range" &&
+                    part.data &&
+                    typeof part.data === "object"
+                  ) {
+                    const data = part.data as Record<string, unknown>;
+                    return (
+                      <div
+                        key={index}
+                        className="rounded-md border border-violet-200 bg-violet-50/60 px-2.5 py-2 text-[11px]"
+                      >
+                        <div className="font-medium text-violet-950">
+                          Git 范围：{String(data.requestedRange ?? "")}
+                        </div>
+                        <div className="mt-1 font-mono text-[10px] text-violet-700">
+                          {String(data.baseCommit ?? "").slice(0, 10)} →{" "}
+                          {String(data.headCommit ?? "").slice(0, 10)}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (
+                    part.type === "data-commit-evidence" &&
+                    part.data &&
+                    typeof part.data === "object"
+                  ) {
+                    const data = part.data as Record<string, unknown>;
+                    return (
+                      <div key={index} className="rounded-md border px-2.5 py-2 text-[11px]">
+                        <span className="mr-2 font-mono text-primary">
+                          {String(data.shortSha ?? data.sha ?? "").slice(0, 10)}
+                        </span>
+                        {String(data.subject ?? "")}
+                        <div className="mt-1 text-[10px] text-muted-foreground">
+                          {String(data.author ?? "")} · {String(data.authoredAt ?? "")}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (
+                    part.type === "data-change-evidence-summary" &&
+                    part.data &&
+                    typeof part.data === "object"
+                  ) {
+                    const data = part.data as Record<string, unknown>;
+                    return (
+                      <div key={index} className="rounded-md border px-2.5 py-2 text-[11px]">
+                        已分析 {Number(data.commits ?? 0)} 个提交、{" "}
+                        {Number(data.changedFiles ?? 0)} 个文件，整理为{" "}
+                        {Number(data.featureGroups ?? 0)} 组功能变化
+                        {data.truncated ? " · 部分结果已截断" : ""}
+                      </div>
                     );
                   }
                   if (
