@@ -122,7 +122,8 @@
     "extraResources": [
       {
         "from": ".next/standalone-bundle",
-        "to": "standalone"
+        "to": "standalone",
+        "filter": ["**/*"]
       },
       {
         "from": "themes",
