@@ -11,9 +11,11 @@ import {
   VideoIcon,
   FileIcon,
   FolderOpen,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 type Asset = {
@@ -25,6 +27,9 @@ type Asset = {
   size: number;
   contentType: string;
   createdAt: string;
+  // 公众号素材库同步状态（可选，旧数据为 undefined）
+  wxSyncStatus?: "success" | "failed" | null;
+  wxSyncError?: string | null;
 };
 
 type Filter = "all" | "image" | "video" | "file";
@@ -54,6 +59,8 @@ export function MaterialLibrary({
   const [filter, setFilter] = useState<Filter>("all");
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  /** 正在重试公众号同步的 asset id */
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -112,6 +119,33 @@ export function MaterialLibrary({
       });
       if (res.ok) setItems((cur) => cur.filter((a) => a.id !== asset.id));
     });
+  }
+
+  /** 重试公众号素材库同步（仅 wxSyncStatus=failed 的素材） */
+  async function retryWxSync(asset: Asset) {
+    setSyncingId(asset.id);
+    try {
+      const res = await fetch(`/api/materials/${asset.id}/sync-wechat`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      setItems((cur) =>
+        cur.map((a) =>
+          a.id === asset.id
+            ? {
+                ...a,
+                wxSyncStatus: res.ok ? "success" : "failed",
+                wxSyncError: res.ok ? null : data.error || "同步失败",
+              }
+            : a
+        )
+      );
+      if (!res.ok) window.alert(data.error || "同步失败");
+    } catch {
+      window.alert("网络错误，同步失败");
+    } finally {
+      setSyncingId(null);
+    }
   }
 
   return (
@@ -206,6 +240,22 @@ export function MaterialLibrary({
                   <span>{formatSize(asset.size)}</span>
                   <span>{new Date(asset.createdAt).toLocaleDateString()}</span>
                 </div>
+                {asset.wxSyncStatus === "failed" && (
+                  <div className="flex items-center gap-1">
+                    <Badge variant="warning">公众号同步失败</Badge>
+                    <span
+                      className="text-[10px] text-amber-700/80 truncate"
+                      title={asset.wxSyncError ?? ""}
+                    >
+                      {asset.wxSyncError}
+                    </span>
+                  </div>
+                )}
+                {asset.wxSyncStatus === "success" && (
+                  <div>
+                    <Badge variant="success">已同步公众号</Badge>
+                  </div>
+                )}
                 <div className="flex items-center gap-1 pt-1">
                   <Button
                     size="sm"
@@ -223,6 +273,22 @@ export function MaterialLibrary({
                       </>
                     )}
                   </Button>
+                  {asset.wxSyncStatus === "failed" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-7 p-0 text-amber-600 hover:text-amber-700"
+                      title="重试同步到公众号"
+                      disabled={syncingId === asset.id}
+                      onClick={() => retryWxSync(asset)}
+                    >
+                      {syncingId === asset.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"

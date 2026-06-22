@@ -8,11 +8,15 @@ import {
   classifyByContentType,
 } from "@/lib/oss";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
+import { syncAssetToWechat } from "@/lib/wechat/asset-sync";
 import { cacheDir } from "@/lib/paths";
-import { withApiLog } from "@/lib/api-log";
+import { withApiLog, logMutation } from "@/lib/api-log";
+import { moduleLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const log = moduleLogger("upload.chunk");
 
 const TMP_ROOT = cacheDir();
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -30,6 +34,7 @@ type ChunkMeta = {
   tagsJson?: string;
   articleId?: string | null;
   spaceId?: string | null;
+  syncToWechat?: boolean;
 };
 
 function metaPath(uploadId: string) {
@@ -64,6 +69,7 @@ async function initUpload(
     tags?: string;
     articleId?: string | null;
     spaceId?: string | null;
+    syncToWechat?: boolean;
   }
 ) {
   await fs.mkdir(chunkDir(uploadId), { recursive: true });
@@ -76,6 +82,7 @@ async function initUpload(
     tagsJson: tagsToJson(splitTagInput(body.tags ?? "")),
     articleId: body.articleId ?? null,
     spaceId: body.spaceId ?? null,
+    syncToWechat: !!body.syncToWechat,
   });
   return { uploadId, chunkSize: CHUNK_SIZE_DEFAULT };
 }
@@ -132,13 +139,50 @@ async function completeUpload(uploadId: string) {
       spaceId: meta.spaceId ?? null,
     },
   });
+  logMutation("asset", "create", { id: asset.id, kind, chunked: true, syncToWechat: meta.syncToWechat });
+
+  // 同步到公众号素材库（失败不阻塞 OSS 上传，只标记状态）
+  let wxSyncStatus: string | null = null;
+  let wxSyncError: string | null = null;
+  if (meta.syncToWechat) {
+    const result = await syncAssetToWechat({
+      url: asset.url,
+      contentType: asset.contentType,
+      filename: asset.name,
+    });
+    if (result.ok) {
+      await prisma.asset.update({
+        where: { id: asset.id },
+        data: {
+          wxUrl: result.wxUrl,
+          wxMediaId: result.wxMediaId,
+          wxSyncStatus: "success",
+          wxSyncError: null,
+          wxSyncedAt: new Date(),
+        },
+      });
+      wxSyncStatus = "success";
+    } else {
+      await prisma.asset.update({
+        where: { id: asset.id },
+        data: {
+          wxSyncStatus: "failed",
+          wxSyncError: result.reason,
+          wxSyncedAt: new Date(),
+        },
+      });
+      wxSyncStatus = "failed";
+      wxSyncError = result.reason;
+      log.warn({ id: asset.id, reason: result.reason }, "分片上传同步公众号失败");
+    }
+  }
 
   // 清理临时文件
   await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   await fs.rm(merged, { force: true }).catch(() => {});
   await fs.rm(metaPath(uploadId), { force: true }).catch(() => {});
 
-  return { asset };
+  return { asset: { ...asset, wxSyncStatus, wxSyncError } };
 }
 
 export const POST = withApiLog("POST /api/upload/chunk", async (req: NextRequest) => {
@@ -161,6 +205,7 @@ export const POST = withApiLog("POST /api/upload/chunk", async (req: NextRequest
         tags?: string;
         articleId?: string | null;
         spaceId?: string | null;
+        syncToWechat?: boolean;
       };
       if (!body.fileName?.trim()) {
         return NextResponse.json({ error: "缺少文件名" }, { status: 400 });
