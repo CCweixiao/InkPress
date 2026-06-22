@@ -52,6 +52,13 @@ console.log(
 // 只复制了 package.json + cjs/，丢弃了 _/ esm/ src/ 等运行时需要的子目录。
 patchMissingPackages();
 
+// 提升 .pnpm/node_modules/ 虚拟根内容到顶层 node_modules/，确保 require 解析可达。
+// pnpm 的依赖解析依赖符号链接：顶层 next/ 是指向 .pnpm/next@*/node_modules/next/ 的
+// symlink，其依赖 @swc/helpers 在虚拟存储的兄弟目录下。materializeSymlinks 把 symlink
+// 物化为真实目录后，顶层 next/ 变成独立目录，兄弟解析路径断裂，导致 require('@swc/helpers')
+// 找不到模块。这里从项目 .pnpm/node_modules/ 补全 bundle 的虚拟根，再把缺失的包提升到顶层。
+hoistMissingTopLevel();
+
 // 重写 server.js 内硬编码的项目绝对路径（outputFileTracingRoot / turbopack.root）。
 // Next.js 构建时把构建机器的项目根写入 nextConfig，运行时 require-hook 用它解析
 // serverExternalPackages（如 better-sqlite3），导致打包到其他机器后 require 仍回退
@@ -150,10 +157,11 @@ function ensureNativeBindingForElectron() {
     console.warn("  ⚠ 项目 node_modules 找不到重编译后的 better_sqlite3.node");
     return;
   }
-  // 在 bundle 的 node_modules 内所有 better-sqlite3 副本刷新（物化后 .pnpm + 顶层都有副本）
-  const nmDir = path.join(bundle, "node_modules");
+  // 扫描整个 bundle 刷新所有 better_sqlite3.node 副本：
+  // - node_modules/{better-sqlite3,.pnpm/better-sqlite3@*}/...（常规路径）
+  // - .next/node_modules/better-sqlite3-*/...（Next.js nft 追踪生成的带哈希副本，运行时优先命中）
   let refreshed = 0;
-  const targets = findAllFiles(nmDir, "better_sqlite3.node");
+  const targets = findAllFiles(bundle, "better_sqlite3.node");
   for (const t of targets) {
     fs.copyFileSync(src, t);
     refreshed++;
@@ -316,6 +324,119 @@ function patchMissingPackages(): void {
   );
 }
 
+/**
+ * 提升 .pnpm/node_modules/ 虚拟根中缺失的包到顶层 node_modules/。
+ *
+ * pnpm 用符号链接实现依赖隔离：顶层 next 指向 .pnpm 虚拟存储中的真实位置，
+ * 其依赖 @swc/helpers 以兄弟目录形式存在于同一个虚拟包目录内。
+ *
+ * materializeSymlinks 把符号链接物化为真实目录后，next 变成独立的顶层目录，
+ * require('@swc/helpers') 从 node_modules/next 向上查找时只会找
+ * node_modules/@swc/helpers，而该路径从未被创建（standalone 只输出直接依赖）。
+ *
+ * 本函数用 BFS 遍历顶层包的依赖树，仅提升运行时实际需要的包（而非全部虚拟根内容），
+ * 避免引入 dev/test 依赖导致体积膨胀。源从项目虚拟根补全后的 bundle 虚拟根获取。
+ */
+function hoistMissingTopLevel(): void {
+  const bundleNm = path.join(bundle, "node_modules");
+  const projVirtualRoot = path.join(root, "node_modules", ".pnpm", "node_modules");
+  const bundleVirtualRoot = path.join(bundleNm, ".pnpm", "node_modules");
+  if (!fs.existsSync(projVirtualRoot)) return;
+
+  // 1. 用项目虚拟根补全 bundle 虚拟根（nft 追踪常遗漏子路径 exports 如 @swc/helpers/_/）
+  if (fs.existsSync(bundleVirtualRoot)) {
+    mergeDir(projVirtualRoot, bundleVirtualRoot);
+  }
+
+  // 2. BFS：从顶层已有包出发，沿 dependencies 边遍历，仅提升缺失的运行时依赖
+  const queue: string[] = [];
+  const collectTopLevel = (dir: string, prefix = "") => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === ".pnpm" || e.name.startsWith(".")) continue;
+      if (!fs.statSync(path.join(dir, e.name)).isDirectory()) continue;
+      if (e.name.startsWith("@") && !prefix) {
+        collectTopLevel(path.join(dir, e.name), e.name + "/");
+      } else {
+        queue.push(prefix + e.name);
+      }
+    }
+  };
+  collectTopLevel(bundleNm);
+
+  // 收集所有已知包（顶层 + nft 追踪）的 dependencies，作为 BFS 的需求来源。
+  // nft 追踪的包（.next/node_modules/<pkg>-<hash>/）运行时从 .next/ 向上解析依赖，
+  // 最终回退到顶层 node_modules/，因此其依赖也必须存在于顶层。
+  const requiredDeps = new Set<string>();
+  const scanDeps = (pkgDir: string) => {
+    try {
+      const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+      for (const dep of Object.keys(pj.dependencies || {})) requiredDeps.add(dep);
+    } catch {
+      /* ignore */
+    }
+  };
+  // 顶层包
+  for (const pkg of queue) scanDeps(path.join(bundleNm, pkg));
+  // nft 追踪包（.next/node_modules/<pkg>-<hash>/ 或 @scope/<pkg>-<hash>/）
+  const nextNm = path.join(bundle, ".next", "node_modules");
+  if (fs.existsSync(nextNm)) {
+    for (const e of fs.readdirSync(nextNm)) {
+      if (e.startsWith("@")) {
+        // scoped package: @org/ 下递归一层
+        const scopeDir = path.join(nextNm, e);
+        for (const sub of fs.readdirSync(scopeDir)) {
+          scanDeps(path.join(scopeDir, sub));
+        }
+      } else {
+        scanDeps(path.join(nextNm, e));
+      }
+    }
+  }
+
+  const seen = new Set(queue);
+  let hoisted = 0;
+  // 把 requiredDeps 加入队列（这些是某些包声明但可能不在顶层的依赖）
+  for (const dep of requiredDeps) {
+    if (!seen.has(dep)) {
+      seen.add(dep);
+      queue.push(dep);
+    }
+  }
+  while (queue.length > 0) {
+    const pkg = queue.shift()!;
+    let pkgDir = path.join(bundleNm, pkg);
+    // 包不存在于顶层 → 从虚拟根提升
+    if (!fs.existsSync(pkgDir)) {
+      const srcDep = path.join(bundleVirtualRoot, pkg);
+      if (!fs.existsSync(srcDep)) continue;
+      fs.cpSync(srcDep, pkgDir, { recursive: true, dereference: true });
+      hoisted++;
+    }
+    // 读取 dependencies 继续 BFS
+    let deps: string[] = [];
+    try {
+      const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+      deps = Object.keys(pj.dependencies || {});
+    } catch {
+      continue;
+    }
+    for (const dep of deps) {
+      if (seen.has(dep)) continue;
+      seen.add(dep);
+      queue.push(dep);
+    }
+  }
+  if (hoisted > 0) {
+    console.log(`  ✓ 从 .pnpm 虚拟根提升 ${hoisted} 个缺失包到顶层 node_modules`);
+  }
+}
+
 /** 把 src 目录的内容合并到 dest（只补 dest 缺失的文件，不覆盖已有的） */
 function mergeDir(src: string, dest: string): void {
   if (!fs.existsSync(dest)) {
@@ -331,9 +452,17 @@ function mergeDir(src: string, dest: string): void {
   for (const e of entries) {
     const s = path.join(src, e.name);
     const d = path.join(dest, e.name);
-    if (e.isDirectory()) {
+    // 用 statSync 跟随符号链接判断类型：pnpm 的 node_modules 中子包目录常以 symlink 形式存在，
+    // Dirent.isDirectory() 对 symlink 返回 false，会导致整个子目录树被跳过（如 @swc/helpers/_/）。
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(s);
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) {
       mergeDir(s, d);
-    } else if (e.isFile() && !fs.existsSync(d)) {
+    } else if (stat.isFile() && !fs.existsSync(d)) {
       fs.copyFileSync(s, d);
     }
   }
