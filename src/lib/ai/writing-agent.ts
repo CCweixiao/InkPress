@@ -16,6 +16,50 @@ import {
   analyzeCodeChangesWithAgent,
   type CodeChangeEvidencePackage,
 } from "@/lib/ai/git-analysis";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("ai.agent");
+
+/**
+ * 包装工具 execute：统一记录工具名、入参摘要、耗时与成功/失败。
+ * 仅记录结构化字段，不记录完整正文（markdown 等大对象只记长度）。
+ */
+function withToolLog<TArgs extends Record<string, unknown>, TResult>(
+  name: string,
+  execute: (args: TArgs) => Promise<TResult>
+): (args: TArgs) => Promise<TResult> {
+  return async (args: TArgs) => {
+    const start = Date.now();
+    const summary = summarizeToolArgs(name, args);
+    log.debug({ tool: name, args: summary }, `工具调用 ${name}`);
+    try {
+      const result = await execute(args);
+      const durationMs = Date.now() - start;
+      log.info({ tool: name, durationMs }, `工具完成 ${name}`);
+      return result;
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      log.error({ tool: name, durationMs, err }, `工具失败 ${name}`);
+      throw err;
+    }
+  };
+}
+
+/** 工具入参摘要：大文本只记长度，避免日志爆炸 */
+function summarizeToolArgs(
+  name: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "string" && value.length > 80) {
+      out[key] = `${value.slice(0, 80)}…(${value.length} chars)`;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
 
 type AgentTargetContext = {
   kind: "article" | "technical-document";
@@ -175,7 +219,7 @@ export async function createWritingAgent(input: {
       inputSchema: z.object({
         objective: z.string().min(3).max(1000),
       }),
-      execute: async ({ objective }) => {
+      execute: withToolLog("explore_project", async ({ objective }) => {
         if (!input.project) throw new Error("当前没有已授权代码源。");
         const result = await exploreProjectWithAgent({
           model,
@@ -186,7 +230,7 @@ export async function createWritingAgent(input: {
         });
         await input.onCodeEvidence?.(result);
         return result;
-      },
+      }),
     }),
     analyze_code_changes: tool({
       title: "分析 Git 提交与代码差异",
@@ -201,7 +245,7 @@ export async function createWritingAgent(input: {
         since: z.string().optional(),
         until: z.string().optional(),
       }),
-      execute: async ({ objective, ...range }) => {
+      execute: withToolLog("analyze_code_changes", async ({ objective, ...range }) => {
         if (!input.project || !input.codeSource) {
           throw new Error("当前没有已授权代码源。");
         }
@@ -227,7 +271,7 @@ export async function createWritingAgent(input: {
           openQuestions: result.openQuestions,
           truncated: result.truncated,
         };
-      },
+      }),
     }),
     github_pull_request: tool({
       title: "读取 GitHub Pull Request",
@@ -297,61 +341,64 @@ export async function createWritingAgent(input: {
         digest: z.string().max(200).optional(),
         summary: z.string().min(1).max(500),
       }),
-      execute: async ({ title, markdown, digest, summary }) => {
-        if (input.target.kind !== "article") {
-          throw new Error("当前目标不是公众号文章。");
-        }
-        // 实时镜像正文到编辑器：首次直写，后续仅预览
-        const isEmptyArticle = input.target.markdown.trim() === "";
-        const draftMode = isEmptyArticle ? "direct" : "diff";
-        await input.onArticleDraft?.({
-          markdown,
-          title: title ?? undefined,
-          mode: draftMode,
-        });
-
-        // 首次生成（编辑器为空，无对比源）：跳过提案创建，前端直接写入编辑器
-        if (isEmptyArticle) {
-          return {
-            mode: "direct" as const,
+      execute: withToolLog(
+        "propose_article_revision",
+        async ({ title, markdown, digest, summary }) => {
+          if (input.target.kind !== "article") {
+            throw new Error("当前目标不是公众号文章。");
+          }
+          // 实时镜像正文到编辑器：首次直写，后续仅预览
+          const isEmptyArticle = input.target.markdown.trim() === "";
+          const draftMode = isEmptyArticle ? "direct" : "diff";
+          await input.onArticleDraft?.({
             markdown,
-            title: title ?? null,
-            digest: digest ?? null,
-            summary,
+            title: title ?? undefined,
+            mode: draftMode,
+          });
+
+          // 首次生成（编辑器为空，无对比源）：跳过提案创建，前端直接写入编辑器
+          if (isEmptyArticle) {
+            return {
+              mode: "direct" as const,
+              markdown,
+              title: title ?? null,
+              digest: digest ?? null,
+              summary,
+            };
+          }
+
+          // 后续修改：创建提案，供前端 diff 审查后应用
+          const oldLines = input.target.markdown.split("\n");
+          const newLines = markdown.split("\n");
+          const changedLines = Math.max(oldLines.length, newLines.length);
+          const proposal = await prisma.agentArticleProposal.create({
+            data: {
+              articleId: input.target.id,
+              sessionId: input.sessionId,
+              baseVersionHash: baseHash,
+              baseTitle: input.target.title,
+              baseMarkdown: input.target.markdown,
+              baseDigest: input.target.digest ?? "",
+              title: title ?? null,
+              markdown,
+              digest: digest ?? null,
+              summary,
+            },
+          });
+          return {
+            mode: "proposal" as const,
+            proposalId: proposal.id,
+            status: proposal.status,
+            summary: proposal.summary,
+            title: proposal.title,
+            stats: {
+              oldLines: oldLines.length,
+              newLines: newLines.length,
+              changedLines,
+            },
           };
         }
-
-        // 后续修改：创建提案，供前端 diff 审查后应用
-        const oldLines = input.target.markdown.split("\n");
-        const newLines = markdown.split("\n");
-        const changedLines = Math.max(oldLines.length, newLines.length);
-        const proposal = await prisma.agentArticleProposal.create({
-          data: {
-            articleId: input.target.id,
-            sessionId: input.sessionId,
-            baseVersionHash: baseHash,
-            baseTitle: input.target.title,
-            baseMarkdown: input.target.markdown,
-            baseDigest: input.target.digest ?? "",
-            title: title ?? null,
-            markdown,
-            digest: digest ?? null,
-            summary,
-          },
-        });
-        return {
-          mode: "proposal" as const,
-          proposalId: proposal.id,
-          status: proposal.status,
-          summary: proposal.summary,
-          title: proposal.title,
-          stats: {
-            oldLines: oldLines.length,
-            newLines: newLines.length,
-            changedLines,
-          },
-        };
-      },
+      ),
     }),
     propose_technical_document_revision: tool({
       title: "提交技术文档提案",
@@ -364,48 +411,51 @@ export async function createWritingAgent(input: {
         sourceSnapshot: z.record(z.string(), z.unknown()).optional(),
         summary: z.string().min(1).max(500),
       }),
-      execute: async ({
-        title,
-        markdown,
-        snapshotHash,
-        sourceSnapshot,
-        summary,
-      }) => {
-        if (input.target.kind !== "technical-document") {
-          throw new Error("当前目标不是技术文档。");
+      execute: withToolLog(
+        "propose_technical_document_revision",
+        async ({
+          title,
+          markdown,
+          snapshotHash,
+          sourceSnapshot,
+          summary,
+        }) => {
+          if (input.target.kind !== "technical-document") {
+            throw new Error("当前目标不是技术文档。");
+          }
+          const oldLines = input.target.markdown.split("\n");
+          const newLines = markdown.split("\n");
+          const proposal = await prisma.agentTechnicalDocumentProposal.create({
+            data: {
+              technicalDocumentId: input.target.id,
+              sessionId: input.sessionId,
+              baseVersionHash: baseHash,
+              baseTitle: input.target.title,
+              baseMarkdown: input.target.markdown,
+              baseSnapshotHash: input.target.snapshotHash ?? "",
+              title: title ?? null,
+              markdown,
+              snapshotHash: snapshotHash ?? input.target.snapshotHash ?? null,
+              sourceSnapshotJson: JSON.stringify({
+                ...(sourceSnapshot ?? {}),
+                ...(input.codeSource ? { codeSource: input.codeSource } : {}),
+              }),
+              summary,
+            },
+          });
+          return {
+            proposalId: proposal.id,
+            proposalKind: "technical-document",
+            status: proposal.status,
+            summary: proposal.summary,
+            stats: {
+              oldLines: oldLines.length,
+              newLines: newLines.length,
+              changedLines: Math.max(oldLines.length, newLines.length),
+            },
+          };
         }
-        const oldLines = input.target.markdown.split("\n");
-        const newLines = markdown.split("\n");
-        const proposal = await prisma.agentTechnicalDocumentProposal.create({
-          data: {
-            technicalDocumentId: input.target.id,
-            sessionId: input.sessionId,
-            baseVersionHash: baseHash,
-            baseTitle: input.target.title,
-            baseMarkdown: input.target.markdown,
-            baseSnapshotHash: input.target.snapshotHash ?? "",
-            title: title ?? null,
-            markdown,
-            snapshotHash: snapshotHash ?? input.target.snapshotHash ?? null,
-            sourceSnapshotJson: JSON.stringify({
-              ...(sourceSnapshot ?? {}),
-              ...(input.codeSource ? { codeSource: input.codeSource } : {}),
-            }),
-            summary,
-          },
-        });
-        return {
-          proposalId: proposal.id,
-          proposalKind: "technical-document",
-          status: proposal.status,
-          summary: proposal.summary,
-          stats: {
-            oldLines: oldLines.length,
-            newLines: newLines.length,
-            changedLines: Math.max(oldLines.length, newLines.length),
-          },
-        };
-      },
+      ),
     }),
   };
 
@@ -464,6 +514,20 @@ ${assetText}
 
 全部可用 Skill：${skillCatalog.map((skill) => `${skill.id}: ${skill.description}`).join("\n")}`;
 
+  log.info(
+    {
+      sessionId: input.sessionId,
+      target: input.target.id,
+      targetKind: input.target.kind,
+      intent: input.route.intent,
+      activeTools: input.route.activeTools,
+      skills: input.route.skillIds,
+      hasProject: !!input.project,
+      hasCodeSource: !!input.codeSource,
+    },
+    "写作 Agent 已创建"
+  );
+
   return new ToolLoopAgent({
     id: "inkpress-writing-agent",
     model,
@@ -476,11 +540,23 @@ ${assetText}
     stopWhen: stepCountIs(input.config.maxSteps),
     onFinish: async (event) => {
       const usage = event.totalUsage;
+      const totalTokens = usage.totalTokens ?? 0;
+      log.info(
+        {
+          sessionId: input.sessionId,
+          target: input.target.id,
+          totalTokens,
+          inputTokens: usage.inputTokens ?? 0,
+          outputTokens: usage.outputTokens ?? 0,
+          reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? 0,
+        },
+        "写作 Agent 轮次完成"
+      );
       await input.onFinishUsage?.({
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,
         reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? 0,
-        totalTokens: usage.totalTokens ?? 0,
+        totalTokens,
       });
     },
   });

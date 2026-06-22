@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 // 更新空间（默认空间不可编辑）
-export async function PUT(req: NextRequest, { params }: Params) {
+export const PUT = withApiLog("PUT /api/spaces/[id]", async (req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const existing = await prisma.space.findUnique({ where: { id } });
   if (existing?.isDefault) {
@@ -41,11 +42,12 @@ export async function PUT(req: NextRequest, { params }: Params) {
   const data: Record<string, unknown> = { ...rest };
   if (tags) data.tagsJson = JSON.stringify(tags);
   const space = await prisma.space.update({ where: { id }, data });
+  logMutation("space", "update", { id, name: space.name });
   return NextResponse.json({ space });
-}
+});
 
 // 删除空间（默认空间不可删；软删除到回收站；前置校验：其下非回收文章数须为 0）
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export const DELETE = withApiLog("DELETE /api/spaces/[id]", async (_req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const existing = await prisma.space.findUnique({ where: { id } });
   if (existing?.isDefault) {
@@ -76,5 +78,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     where: { spaceId: id, trashed: false },
     data: { trashed: true, trashedAt: now, expiresAt },
   });
+  logMutation("space", "trash", { id });
   return NextResponse.json({ ok: true });
-}
+});

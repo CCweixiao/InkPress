@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 const upsertSchema = z.object({
   name: z.string().min(1).max(20),
@@ -18,7 +19,7 @@ export async function GET() {
 }
 
 // 新建自定义主题
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/themes", async (req: NextRequest) => {
   const body = await req.json().catch(() => ({}));
   const parsed = upsertSchema.safeParse(body);
   if (!parsed.success) {
@@ -27,5 +28,6 @@ export async function POST(req: NextRequest) {
   const theme = await prisma.theme.create({
     data: { ...parsed.data, isBuiltIn: false },
   });
+  logMutation("theme", "create", { id: theme.id, name: theme.name });
   return NextResponse.json({ theme }, { status: 201 });
-}
+});

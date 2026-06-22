@@ -5,6 +5,10 @@ import { convertToWeChat } from "@/lib/convert/to-wechat";
 import { uploadBodyImage } from "@/lib/wechat/material";
 import { addDraft, updateDraft } from "@/lib/wechat/draft";
 import { readContent } from "@/lib/content-store";
+import { moduleLogger } from "@/lib/logger";
+import { withApiLog } from "@/lib/api-log";
+
+const log = moduleLogger("wechat.draft.api");
 
 const schema = z.object({
   articleId: z.string(),
@@ -21,7 +25,7 @@ const schema = z.object({
  * 4. addDraft 推送
  * 5. 写回 wxMediaId + status=pushed
  */
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest) => {
   const body = await req.json().catch(() => ({}));
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -130,6 +134,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "推送失败";
+    log.error({ err: e, articleId }, "推送公众号草稿失败");
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
+});

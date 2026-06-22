@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ const createSchema = z.object({
 });
 
 // 新建空间
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/spaces", async (req: NextRequest) => {
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
@@ -46,5 +47,6 @@ export async function POST(req: NextRequest) {
       pinned: pinned ?? false,
     },
   });
+  logMutation("space", "create", { id: space.id, name: space.name });
   return NextResponse.json({ space }, { status: 201 });
-}
+});

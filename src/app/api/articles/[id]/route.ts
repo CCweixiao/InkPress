@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { readContent, writeContent } from "@/lib/content-store";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 const updateSchema = z.object({
   title: z.string().max(200).optional(),
@@ -54,19 +55,23 @@ async function updateArticle(id: string, req: NextRequest) {
 }
 
 // PUT 更新（编辑器自动保存等）
-export async function PUT(req: NextRequest, { params }: Params) {
+export const PUT = withApiLog("PUT /api/articles/[id]", async (req: NextRequest, { params }: Params) => {
   const { id } = await params;
-  return updateArticle(id, req);
-}
+  const res = await updateArticle(id, req);
+  logMutation("article", "update", { id });
+  return res;
+});
 
 // POST 更新（页面卸载时 sendBeacon 只能发 POST，此处复用更新逻辑）
-export async function POST(req: NextRequest, { params }: Params) {
+export const POST = withApiLog("POST /api/articles/[id]", async (req: NextRequest, { params }: Params) => {
   const { id } = await params;
-  return updateArticle(id, req);
-}
+  const res = await updateArticle(id, req);
+  logMutation("article", "update", { id, beacon: true });
+  return res;
+});
 
 // 软删除（移入回收站，30 天后过期）
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export const DELETE = withApiLog("DELETE /api/articles/[id]", async (_req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -79,5 +84,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     where: { articleId: id, trashed: false },
     data: { trashed: true, trashedAt: now, expiresAt },
   });
+  logMutation("article", "trash", { id });
   return NextResponse.json({ ok: true });
-}
+});

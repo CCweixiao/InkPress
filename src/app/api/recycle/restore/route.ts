@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,7 @@ const schema = z.object({
 
 /** 恢复回收站项：清除 trashed 标记。
  * 文章恢复时若其所属空间仍在回收站，则提示先恢复空间。 */
-export async function POST(req: Request) {
+export const POST = withApiLog("POST /api/recycle/restore", async (req: Request) => {
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "参数无效" }, { status: 400 });
@@ -41,6 +42,7 @@ export async function POST(req: Request) {
       where: { articleId: id },
       data: { trashed: false, trashedAt: null, expiresAt: null },
     });
+    logMutation("recycle", "restore", { type, id });
     return NextResponse.json({ ok: true });
   }
 
@@ -53,6 +55,7 @@ export async function POST(req: Request) {
       where: { spaceId: id },
       data: { trashed: false, trashedAt: null, expiresAt: null },
     });
+    logMutation("recycle", "restore", { type, id });
     return NextResponse.json({ ok: true });
   }
 
@@ -61,5 +64,6 @@ export async function POST(req: Request) {
     where: { id },
     data: { trashed: false, trashedAt: null, expiresAt: null },
   });
+  logMutation("recycle", "restore", { type, id });
   return NextResponse.json({ ok: true });
-}
+});
