@@ -16,6 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const srcStandalone = path.join(root, ".next", "standalone");
@@ -75,22 +76,65 @@ copyInto(path.join(root, "themes"), "themes", "themes");
 // 4. Prisma migrations（首次启动建表用）
 copyInto(path.join(root, "prisma", "migrations"), "migrations", "prisma/migrations");
 
-// 5. better-sqlite3 原生绑定：确保 bundle 内顶层 + .pnpm 路径的 .node 文件存在且一致
-ensureNativeBinding();
+// 5. better-sqlite3 原生绑定：为 Electron ABI 重新编译（ELECTRON_RUN_AS_NODE 下
+//    Electron 42 的 Node ABI=146，与标准 Node 22 的 prebuilt ABI=127 不匹配）
+ensureNativeBindingForElectron();
+
+// 6. 瘦身：剔除运行时不需要的文件（编译期产物、源码、类型声明、文档）
+slimBundle();
 
 console.log("✓ standalone bundle 准备完成：" + path.relative(root, bundle));
 
-function ensureNativeBinding() {
-  // 从源 standalone 的 node_modules 取绑定（已是 node-127 prebuilt，适配 ELECTRON_RUN_AS_NODE）
+/**
+ * 为 Electron ABI 重新编译 bundle 内的 better-sqlite3。
+ *
+ * ELECTRON_RUN_AS_NODE=1 下，Electron 42 内嵌 Node 的 ABI=146，
+ * 而 better-sqlite3 官方 prebuilt 针对标准 Node（ABI=127），两者不匹配。
+ * 用 @electron/rebuild 针对当前 electron 版本重新编译原生绑定。
+ *
+ * 注意：必须在 bundle 的 app_modules 上跑（而非项目 node_modules），
+ * 因为 standalone 用 NODE_PATH 指向 app_modules 解析依赖。
+ */
+function ensureNativeBindingForElectron() {
+  console.log("  → 为 Electron 重编译 better-sqlite3 原生绑定…");
+
+  // 在项目根目录用 electron-rebuild 重编译（需要标准 node_modules 结构）
+  const electronVersion = JSON.parse(
+    fs.readFileSync(path.join(root, "node_modules", "electron", "package.json"), "utf8")
+  ).version;
+
+  const result = spawnSync(
+    "npx",
+    ["--yes", "electron-rebuild", "-f", "-w", "better-sqlite3", "--version", electronVersion],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        npm_config_runtime: "electron",
+        npm_config_target: electronVersion,
+        npm_config_disturl: "https://electronjs.org/headers",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
+
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+
+  if (result.status !== 0) {
+    console.warn(`  ⚠ electron-rebuild 失败（退出码 ${result.status}），better-sqlite3 可能无法加载`);
+    return;
+  }
+
+  // 把重编译后的 .node 复制到 bundle 的所有 better-sqlite3 副本
   const src = findFile(
-    path.join(srcStandalone, "node_modules", "better-sqlite3"),
+    path.join(root, "node_modules", ".pnpm"),
     "better_sqlite3.node"
   );
   if (!src) {
-    console.warn("  ⚠ 未在 standalone 找到 better_sqlite3.node");
+    console.warn("  ⚠ 项目 node_modules 找不到重编译后的 better_sqlite3.node");
     return;
   }
-  // bundle 内 app_modules（已从 node_modules 重命名）所有 better_sqlite3.node 刷新为同一份
   const appModules = path.join(bundle, "app_modules");
   let refreshed = 0;
   const targets = findAllFiles(appModules, "better_sqlite3.node");
@@ -98,7 +142,7 @@ function ensureNativeBinding() {
     fs.copyFileSync(src, t);
     refreshed++;
   }
-  console.log(`  ✓ better_sqlite3.node 已刷新 ${refreshed} 处`);
+  console.log(`  ✓ better-sqlite3（Electron ABI）已刷新 ${refreshed} 处`);
 }
 
 function findAllFiles(dir: string, name: string): string[] {
@@ -124,4 +168,85 @@ function findAllFiles(dir: string, name: string): string[] {
 function findFile(dir: string, name: string): string | null {
   const all = findAllFiles(dir, name);
   return all[0] ?? null;
+}
+
+/**
+ * 从 bundle 内删除运行时（生产环境）不需要的文件，减小打包体积。
+ *
+ * 安全策略：只删确认无用的，保留所有 .js / .node / .json / .css / .wasm。
+ * 删除清单：
+ * - better-sqlite3/{deps,src}/：sqlite 源码与 C++ 源码（运行时只用 build/Release/*.node）
+ * - *.d.ts / *.ts / *.map：TypeScript 声明与源码映射（生产环境不编译）
+ * - *.md / LICENSE* / CHANGELOG* / README*：文档与许可证（不影响运行）
+ * - .bin/：npm bin 脚本（shell 包装，运行时不走 npm）
+ */
+function slimBundle() {
+  let removedFiles = 0;
+  let removedBytes = 0;
+
+  const shouldRemove = (filePath: string): boolean => {
+    const base = path.basename(filePath);
+    const rel = path.relative(bundle, filePath);
+
+    // 1. better-sqlite3 的编译期产物（sqlite 源码 + C++ 源码）
+    if (rel.includes("better-sqlite3")) {
+      if (rel.includes("/deps/") || rel.includes("/src/")) return true;
+    }
+
+    // 2. 按扩展名/文件名剔除
+    if (base.endsWith(".d.ts")) return true;
+    if (base.endsWith(".d.mts")) return true;
+    if (base.endsWith(".d.cts")) return true;
+    if (base.endsWith(".ts") && !base.endsWith(".d.ts")) return true;
+    if (base.endsWith(".ts.map")) return true;
+    if (base.endsWith(".js.map")) return true;
+    if (base.endsWith(".md") || base.endsWith(".markdown")) return true;
+    if (base.endsWith(".tgz")) return true;
+    if (base === "LICENSE" || base.startsWith("LICENSE.") || base.startsWith("LICENCE")) return true;
+    if (base.startsWith("CHANGELOG") || base.startsWith("changelog")) return true;
+    if (base === "README" || base.startsWith("README.")) return true;
+
+    // 3. npm .bin 目录（shell 包装脚本）
+    if (rel.includes("/.bin/") || rel === "app_modules/.bin") return true;
+
+    // 4. 隐藏文件 / 编辑器配置 / CI 配置
+    if (base === ".DS_Store" || base === ".npmignore" || base === ".editorconfig") return true;
+    if (base === ".travis.yml" || base === "appveyor.yml" || base === "circle.yml") return true;
+
+    return false;
+  };
+
+  // 遍历 bundle，删除匹配的文件
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        // 删完子文件后，若目录变空则删除空目录
+        try {
+          if (fs.readdirSync(full).length === 0) fs.rmdirSync(full);
+        } catch {
+          /* 非空或不存在，忽略 */
+        }
+      } else if (entry.isFile() && shouldRemove(full)) {
+        try {
+          const size = fs.statSync(full).size;
+          fs.rmSync(full);
+          removedFiles++;
+          removedBytes += size;
+        } catch {
+          /* 删除失败，忽略 */
+        }
+      }
+    }
+  };
+
+  walk(bundle);
+  console.log(`  ✓ 瘦身完成：删除 ${removedFiles} 个文件（约 ${(removedBytes / 1024 / 1024).toFixed(1)} MB）`);
 }
