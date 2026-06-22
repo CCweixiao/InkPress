@@ -242,6 +242,9 @@ async function bootstrap() {
     await createWindow(serverPort);
   } catch (e) {
     console.error("[electron] 启动失败：", e);
+    // 失败时清理 server 子进程，避免孤儿进程占用端口
+    // （waitForServer 超时、createWindow 抛异常等情况下 serverProc 可能已 spawn）
+    await killServer();
     mainWindow = new BrowserWindow({ width: 600, height: 400 });
     const msg = e instanceof Error ? e.message : String(e);
     mainWindow.loadURL(
