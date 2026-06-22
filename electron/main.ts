@@ -119,15 +119,14 @@ function startServer(port: number): ChildProcess {
   const serverExe = app.isPackaged
     ? path.join(process.resourcesPath!, "..", "PlugIns", "InkPressServer.app", "Contents", "MacOS", "InkPressServer")
     : process.execPath;
-  // 打包后 bundle 内的 node_modules 已重命名为 app_modules（绕过 electron-builder 剔除），
-  // 通过 NODE_PATH 让 Node 模块解析能找到这些依赖。
-  const appModules = path.join(serverDir, "app_modules");
+  // bundle 内的 node_modules 保留原名（prepare-standalone 已物化 pnpm symlink
+  // 为真实文件，且 extraResources 不受 files 规则的 node_modules 剔除影响）。
+  // Node 标准 require 解析天然从 server.js 同级的 node_modules 查找，无需 NODE_PATH。
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(port),
     HOSTNAME: "127.0.0.1",
     NODE_ENV: "production",
-    NODE_PATH: appModules,
     // 以纯 Node 模式运行 Electron 内置 Node（server 进程用此 ABI 加载 better-sqlite3）
     ELECTRON_RUN_AS_NODE: "1",
   };
