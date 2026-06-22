@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { ConfigImportExport } from "./ConfigImportExport";
 
 export const LLM_CONFIG_KEY = "inkpress.llm";
 export const OSS_CONFIG_KEY = "inkpress.oss";
@@ -414,6 +415,14 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
 
   return (
     <div className="space-y-4">
+      {/* 导入导出工具栏 */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs text-muted-foreground">
+          配置含密钥，请妥善保管。支持加密导出与导入，用于跨机器迁移或备份。
+        </div>
+        <ConfigImportExport onImported={refreshConfigs} />
+      </div>
+
       {/* Tab 切换 */}
       <div className="flex gap-1 rounded-md bg-muted p-1 w-fit">
         <button
