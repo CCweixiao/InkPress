@@ -55,36 +55,56 @@ if (process.env.NEXT_RUNTIME === "nodejs") {
 }
 
 // 多路输出：stdout + 文件
-const transport = pino.transport({
-  targets: [
-    {
-      target: isDev ? "pino-pretty" : "pino/file",
-      options: isDev
-        ? { colorize: true, translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l" }
-        : { destination: 1 },
-      level: "trace",
-    },
-    {
-      target: "pino/file",
-      // destination 既接受 fd(number) 也接受文件路径(string)，类型定义偏严，用 unknown 绕过
-      options: { destination: logFilePath, mkdir: true } as unknown as { destination: number },
-      level: "info",
-    },
-  ],
-});
+//
+// 注意：pino.transport() 会通过 thread-stream 创建 Worker 线程，Worker 内动态 require
+// pino-abstract-transport / split2 等依赖，Next.js standalone 的静态分析无法追踪，
+// 导致打包后 Cannot find module。
+// 生产环境用同步 multistream（不走 Worker），开发环境仍用 pino-pretty 的 transport。
+// INKPRESS_HOME 由 Electron 主进程注入（仅打包形态设置），作为打包环境判据。
+const isPackaged = !!process.env.INKPRESS_HOME;
 
-export const logger = pino(
-  {
-    level: process.env.LOG_LEVEL ?? "info",
-    timestamp: pino.stdTimeFunctions.isoTime,
-    formatters: {
-      level(label) {
-        return { level: label };
+let logger: pino.Logger;
+if (isDev && !isPackaged) {
+  // 开发：pino-pretty 美化输出（走 transport/Worker，但开发环境 node_modules 完整）
+  const transport = pino.transport({
+    targets: [
+      {
+        target: "pino-pretty",
+        options: { colorize: true, translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l" } as unknown as { destination: number },
+        level: "trace",
       },
+      {
+        target: "pino/file",
+        options: { destination: logFilePath, mkdir: true } as unknown as { destination: number },
+        level: "info",
+      },
+    ],
+  });
+  logger = pino(
+    {
+      level: process.env.LOG_LEVEL ?? "info",
+      timestamp: pino.stdTimeFunctions.isoTime,
+      formatters: { level(label) { return { level: label }; } },
     },
-  },
-  transport
-);
+    transport
+  );
+} else {
+  // 生产：同步 multistream（不走 Worker 线程，无需 pino-abstract-transport）
+  const fileDest = pino.destination({ dest: logFilePath, mkdir: true });
+  const stdoutDest = pino.destination(1);
+  logger = pino(
+    {
+      level: process.env.LOG_LEVEL ?? "info",
+      timestamp: pino.stdTimeFunctions.isoTime,
+      formatters: { level(label) { return { level: label }; } },
+    },
+    pino.multistream([
+      { level: "info", stream: fileDest },
+      { level: "info", stream: stdoutDest },
+    ])
+  );
+}
+export { logger };
 
 /** 创建带 module 标签的子日志（约定用法：logger.module("db")） */
 export function moduleLogger(module: string) {
