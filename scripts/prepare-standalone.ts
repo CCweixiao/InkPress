@@ -17,11 +17,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire, builtinModules } from "node:module";
 
 const root = process.cwd();
 const srcStandalone = path.join(root, ".next", "standalone");
 // 去符号链接的 bundle 目录（electron-builder 的 extraResources 指向此处）
 const bundle = path.join(root, ".next", "standalone-bundle");
+
+// Next.js serverExternalPackages（next.config.ts）+ 原生模块
+// 这些包不参与 esbuild bundle，运行时从 node_modules 加载
+const SERVER_EXTERNALS = [
+  "better-sqlite3",
+  "@prisma/adapter-better-sqlite3",
+  "@prisma/client",
+  "adm-zip",
+  "ali-oss",
+];
 
 if (!fs.existsSync(srcStandalone)) {
   console.error("✗ .next/standalone 不存在，请先执行 pnpm build（需 output: standalone）");
@@ -102,10 +113,19 @@ copyInto(path.join(root, "prisma", "migrations"), "migrations", "prisma/migratio
 //    Electron 42 的 Node ABI=146，与标准 Node 22 的 prebuilt ABI=127 不匹配）
 ensureNativeBindingForElectron();
 
-// 6. 瘦身：剔除运行时不需要的文件（编译期产物、源码、类型声明、文档）
-slimBundle();
-
-console.log("✓ standalone bundle 准备完成：" + path.relative(root, bundle));
+// 6-8. esbuild bundle + prune + slimBundle（esbuild build 异步，用 IIFE 包装）
+void (async () => {
+  // 6. esbuild bundle：把 925 MB node_modules 压成单个 server.bundle.js
+  await bundleServerJs();
+  // 7. 删除 bundle 已内联的 node_modules（保留 externals 及其依赖闭包）
+  pruneBundledNodeModules();
+  // 8. 瘦身：剔除 externals 残留的 .d.ts / .map / .md 等
+  slimBundle();
+  console.log("✓ standalone bundle 准备完成：" + path.relative(root, bundle));
+})().catch((err) => {
+  console.error("✗ prepare-standalone 失败:", err);
+  process.exit(1);
+});
 
 /**
  * 为 Electron ABI 重新编译 bundle 内的 better-sqlite3。
@@ -593,4 +613,384 @@ function slimBundle() {
 
   walk(bundle);
   console.log(`  ✓ 瘦身完成：删除 ${removedFiles} 个文件（约 ${(removedBytes / 1024 / 1024).toFixed(1)} MB）`);
+}
+
+/* ============ esbuild bundle：把 node_modules 压成单个 server.bundle.js ============ */
+
+/**
+ * 用 esbuild bundle Next.js standalone server.js。
+ *
+ * 把 925 MB node_modules 压成单个 server.bundle.js（~30 MB），
+ * 只保留 externals（原生模块 + 其依赖闭包）在 node_modules 里运行时加载。
+ *
+ * 关键技术点：
+ * 1. 自定义 plugin 处理 require.resolve（Next 内部用，esbuild 无法 bundle）
+ * 2. 自定义 plugin fallback：解析失败的 import 标记为 external（Next 的条件依赖如 critters）
+ * 3. external 包内发出的 require 也 external（保留其依赖链在 node_modules）
+ * 4. .map 文件用 empty loader（source map 生产不需要）
+ *
+ * PoC 验证：bundle 后首页 200、/api/themes 返回正常 JSON、Prisma 正常查询。
+ */
+async function bundleServerJs(): Promise<void> {
+  const { build } = await import("esbuild");
+  const serverJs = path.join(bundle, "server.js");
+  const outFile = path.join(bundle, "server.bundle.js");
+
+  if (!fs.existsSync(serverJs)) {
+    console.warn("  ⚠ server.js 不存在，跳过 esbuild bundle");
+    return;
+  }
+
+  const externalClosure = collectExternalClosure();
+  const nmDir = path.join(bundle, "node_modules") + path.sep;
+  const isInsideExternal = (filePath: string): boolean => {
+    if (!filePath.startsWith(nmDir)) return false;
+    const rel = path.relative(nmDir, filePath);
+    const parts = rel.split(path.sep);
+    const pkgName = parts[0].startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+    return externalClosure.has(pkgName);
+  };
+
+  const builtinSet = new Set([
+    ...builtinModules,
+    ...builtinModules.map((m) => `node:${m}`),
+  ]);
+
+  const resolvePlugin = {
+    name: "inkpress-resolve",
+    setup(buildInst: any) {
+      buildInst.onResolve({ filter: /.*/ }, (args: any) => {
+        // 1. require.resolve → external（Next 内部用，运行时从 node_modules 解析）
+        if (args.kind === "require-resolve") {
+          return { path: args.path, external: true };
+        }
+        if (args.kind === "entry-point") return undefined;
+        // 2. .map 文件 → external
+        if (args.path.endsWith(".map")) {
+          return { path: args.path, external: true };
+        }
+        // 3. Node 内置模块 → external
+        if (builtinSet.has(args.path) || builtinSet.has(args.path.replace(/^node:/, ""))) {
+          return { path: args.path, external: true };
+        }
+        // 4. externals 闭包（bare specifier）→ external
+        for (const ext of externalClosure) {
+          if (args.path === ext || args.path.startsWith(ext + "/")) {
+            return { path: args.path, external: true };
+          }
+        }
+        // 5. 从 external 包内部发出的 require → external（保留依赖链）
+        if (args.importer && isInsideExternal(args.importer)) {
+          return { path: args.path, external: true };
+        }
+        // 6. 其他 → 尝试 Node 解析，失败则 external（条件依赖：critters、dev 工具等）
+        try {
+          const importerDir = args.importer ? path.dirname(args.importer) : bundle;
+          const importerRequire = createRequire(path.join(importerDir, "__anchor__.js"));
+          const resolved = importerRequire.resolve(args.path);
+          return { path: resolved };
+        } catch {
+          return { path: args.path, external: true };
+        }
+      });
+    },
+  };
+
+  console.log("  → esbuild bundle server.js…");
+  const startMs = Date.now();
+  const result = await build({
+    entryPoints: [serverJs],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+    outfile: outFile,
+    plugins: [resolvePlugin],
+    loader: { ".map": "empty" },
+    metafile: true,
+    allowOverwrite: true,
+    legalComments: "none",
+    logLevel: "silent",
+    logOverride: {
+      "dynamic-require": "silent",
+      "import-is-undefined": "silent",
+    },
+  });
+
+  const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+  const sizeMB = (fs.statSync(outFile).size / 1024 / 1024).toFixed(1);
+  const inputCount = Object.keys(result.metafile.inputs).length;
+  console.log(`    ✓ server.bundle.js（${sizeMB} MB，${inputCount} inputs，${elapsed}s）`);
+
+  // 删除原 server.js，用 server.bundle.js 替代
+  fs.rmSync(serverJs);
+  fs.renameSync(outFile, serverJs);
+  console.log(`    ✓ server.bundle.js → server.js（替换原入口）`);
+}
+
+/**
+ * 收集 externals 的完整依赖闭包。
+ *
+ * externals 包（better-sqlite3、@prisma/client 等）被 esbuild external 后，
+ * 它们的 dependencies 也要留在 node_modules（运行时 require）。
+ *
+ * 同时包含 Next Turbopack runtime 用 externalRequire 加载的 nft 追踪包
+ * （.next/node_modules/ 里的包，如 pino-HASH、postcss-HASH 等）。
+ * 这些包的 package.json name 是真实名（不带 HASH），依赖也必须保留。
+ *
+ * BFS 遍历每个 external 的 package.json dependencies。
+ *
+ * @param includeNext 是否把 next 整包加入闭包。
+ *   - false（默认，esbuild bundle 用）：next 被 esbuild 内联到 server.bundle.js，
+ *     不作为 external。
+ *   - true（pruneBundledNodeModules 用）：next 整包保留在 node_modules。
+ *     原因：Next 16 Turbopack 的 runtime chunk
+ *     .next/server/chunks/ssr/[turbopack]_runtime.js 渲染时会
+ *     externalRequire('next/dist/compiled/next-server/app-page-turbo.runtime.prod.js')
+ *     等子模块，这条 require 不在 server.js 静态依赖图里、esbuild bundle 不到，
+ *     必须运行时从 node_modules/next/ 解析。若 prune 删了 next，渲染必崩（500）。
+ */
+function collectExternalClosure(opts?: { includeNext?: boolean }): Set<string> {
+  const seed = opts?.includeNext ? [...SERVER_EXTERNALS, "next"] : SERVER_EXTERNALS;
+  const closure = new Set<string>(seed);
+  const queue = [...seed];
+  const nmDir = path.join(bundle, "node_modules");
+
+  // 若包含 next：把 next 的 peerDependencies 也加入闭包种子。
+  // 原因：next 内部 require('react')、require('react-dom')，
+  // 但 react/react-dom 是 next 的 peerDependencies 而非 dependencies，
+  // 下面的 BFS 只读 dependencies / optionalDependencies，到不了 react。
+  // 排除 @playwright/test（dev/test 工具，运行时不需要，体积 ~100MB）。
+  if (opts?.includeNext) {
+    try {
+      const bundleRequire = createRequire(path.join(bundle, "__closure_anchor__.js"));
+      const nextPjPath = bundleRequire.resolve("next/package.json");
+      const nextPj = JSON.parse(fs.readFileSync(nextPjPath, "utf8"));
+      for (const peer of Object.keys(nextPj.peerDependencies || {})) {
+        if (peer === "@playwright/test") continue;
+        if (!closure.has(peer)) {
+          closure.add(peer);
+          queue.push(peer);
+        }
+      }
+    } catch {
+      /* next package.json 暂不可用（bundleServerJs 阶段），忽略 */
+    }
+  }
+
+  // 额外收集 .next/node_modules/ 里的 nft 追踪包
+  // Turbopack runtime 用 externalRequire('pkgName-HASH') 加载这些包
+  // 同时读取它们的 dependencies（这些包可能不在顶层，readPkgDeps 找不到）
+  const nextNmDir = path.join(bundle, ".next", "node_modules");
+  if (fs.existsSync(nextNmDir)) {
+    const collectFromDir = (dir: string, scope = "") => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const pkgDir = path.join(dir, e.name);
+        const pjPath = path.join(pkgDir, "package.json");
+        if (!fs.existsSync(pjPath)) {
+          if (e.name.startsWith("@") && !scope) {
+            collectFromDir(pkgDir, e.name + "/");
+          }
+          continue;
+        }
+        try {
+          const pj = JSON.parse(fs.readFileSync(pjPath, "utf8"));
+          if (pj.name && !closure.has(pj.name)) {
+            closure.add(pj.name);
+            queue.push(pj.name);
+          }
+          // 直接从这个 package.json 收集 dependencies
+          for (const dep of [
+            ...Object.keys(pj.dependencies || {}),
+            ...Object.keys(pj.optionalDependencies || {}),
+          ]) {
+            if (!closure.has(dep)) {
+              closure.add(dep);
+              queue.push(dep);
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    collectFromDir(nextNmDir);
+  }
+
+  const readPkgDeps = (pkgName: string): string[] => {
+    // 优先用 Node 的模块解析（能穿透 pnpm 的 .pnpm 深层结构）
+    try {
+      const bundleRequire = createRequire(path.join(bundle, "__closure_anchor__.js"));
+      const resolved = bundleRequire.resolve(`${pkgName}/package.json`);
+      const pj = JSON.parse(fs.readFileSync(resolved, "utf8"));
+      return [
+        ...Object.keys(pj.dependencies || {}),
+        ...Object.keys(pj.optionalDependencies || {}),
+      ];
+    } catch {
+      /* fallthrough */
+    }
+    // 回退：直接路径查找（顶层 / 虚拟根）
+    const paths = [
+      path.join(nmDir, pkgName, "package.json"),
+      path.join(nmDir, ".pnpm", "node_modules", pkgName, "package.json"),
+    ];
+    for (const p of paths) {
+      if (fs.existsSync(p)) {
+        try {
+          const pj = JSON.parse(fs.readFileSync(p, "utf8"));
+          return [
+            ...Object.keys(pj.dependencies || {}),
+            ...Object.keys(pj.optionalDependencies || {}),
+          ];
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return [];
+  };
+
+  while (queue.length > 0) {
+    const pkg = queue.shift()!;
+    for (const dep of readPkgDeps(pkg)) {
+      if (!closure.has(dep)) {
+        closure.add(dep);
+        queue.push(dep);
+      }
+    }
+  }
+  return closure;
+}
+
+/**
+ * 删除 bundle 已内联的 node_modules。
+ *
+ * bundle 后，只有 externals 闭包需要留在 node_modules（运行时 require）。
+ * 其他包都被内联到 server.bundle.js 里，可以删除。
+ *
+ * 同时清理：
+ * - .next/node_modules（nft 追踪包，bundle 已内联）
+ * - .pnpm 虚拟存储（externals 已提升到顶层）
+ * - .bin（npm 脚本）
+ */
+function pruneBundledNodeModules(): void {
+  // includeNext: true → next 整包保留在 node_modules，供 Turbopack chunks
+  // 运行时 externalRequire('next/dist/compiled/...') 解析（详见函数注释）
+  const closure = collectExternalClosure({ includeNext: true });
+  const nmDir = path.join(bundle, "node_modules");
+  const pnpmDir = path.join(nmDir, ".pnpm");
+
+  let removedBytes = 0;
+  let removedPkgs = 0;
+
+  const sizeOf = (p: string): number => {
+    const walk = (d: string): number => {
+      let total = 0;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(d, { withFileTypes: true });
+      } catch {
+        return 0;
+      }
+      for (const e of entries) {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) total += walk(full);
+        else if (e.isFile()) {
+          try {
+            total += fs.statSync(full).size;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      return total;
+    };
+    try {
+      return walk(p);
+    } catch {
+      return 0;
+    }
+  };
+
+  // 1. 把闭包内的包从 .pnpm 虚拟根提升到顶层（如果顶层没有）
+  const virtualRoot = path.join(pnpmDir, "node_modules");
+  if (fs.existsSync(virtualRoot)) {
+    for (const pkg of closure) {
+      const topLevel = path.join(nmDir, pkg);
+      if (fs.existsSync(topLevel)) continue;
+      const virtualPkg = path.join(virtualRoot, pkg);
+      if (fs.existsSync(virtualPkg)) {
+        fs.mkdirSync(path.dirname(topLevel), { recursive: true });
+        fs.cpSync(virtualPkg, topLevel, { recursive: true, dereference: true });
+      }
+    }
+  }
+
+  // 2. 删除顶层非闭包的包
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(nmDir, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;
+    if (e.name.startsWith("@")) {
+      const scopeDir = path.join(nmDir, e.name);
+      let subs: fs.Dirent[];
+      try {
+        subs = fs.readdirSync(scopeDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const sub of subs) {
+        const fullName = `${e.name}/${sub.name}`;
+        if (!closure.has(fullName)) {
+          const p = path.join(scopeDir, sub.name);
+          removedBytes += sizeOf(p);
+          fs.rmSync(p, { recursive: true, force: true });
+          removedPkgs++;
+        }
+      }
+      try {
+        if (fs.readdirSync(scopeDir).length === 0) fs.rmdirSync(scopeDir);
+      } catch {
+        /* ignore */
+      }
+    } else if (!closure.has(e.name)) {
+      const p = path.join(nmDir, e.name);
+      removedBytes += sizeOf(p);
+      fs.rmSync(p, { recursive: true, force: true });
+      removedPkgs++;
+    }
+  }
+
+  // 3. 删除 .pnpm（externals 已提升到顶层）
+  if (fs.existsSync(pnpmDir)) {
+    removedBytes += sizeOf(pnpmDir);
+    fs.rmSync(pnpmDir, { recursive: true, force: true });
+  }
+
+  // 4. 删除 .bin
+  const binDir = path.join(nmDir, ".bin");
+  if (fs.existsSync(binDir)) {
+    removedBytes += sizeOf(binDir);
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+
+  // 注：不删除 .next/node_modules/ —— Next Turbopack runtime 用
+  // externalRequire('pino-HASH') 加载带哈希的包（nft 追踪包），这些包必须保留
+
+  console.log(
+    `    ✓ 删除 ${removedPkgs} 个非 externals 包 + .pnpm（约 ${(removedBytes / 1024 / 1024).toFixed(1)} MB）`
+  );
+  console.log(`    ✓ externals 闭包保留：${closure.size} 个包`);
 }
