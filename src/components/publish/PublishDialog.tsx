@@ -55,6 +55,9 @@ export function PublishDialog({
     mediaId?: string;
     updated?: boolean;
   } | null>(null);
+  const [failedImages, setFailedImages] = useState<
+    { url: string; reason: string }[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
   const [digestGenerating, setDigestGenerating] = useState(false);
 
@@ -151,6 +154,7 @@ export function PublishDialog({
     setLoading(true);
     setError(null);
     setResult(null);
+    setFailedImages([]);
     if (!cover) {
       setError("请先上传封面图");
       setLoading(false);
@@ -189,6 +193,7 @@ export function PublishDialog({
           : `已新增到公众号草稿箱`
       );
       setResultMeta({ mediaId: data.mediaId, updated: !!data.updated });
+      setFailedImages(Array.isArray(data.failedImages) ? data.failedImages : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "推送失败");
     } finally {
@@ -231,6 +236,25 @@ export function PublishDialog({
                   </div>
                 )}
               </div>
+              {failedImages.length > 0 && (
+                <div className="mt-2 ml-8 rounded-md bg-amber-50 border border-amber-200 p-3 space-y-1.5">
+                  <div className="text-xs font-medium text-amber-800">
+                    ⚠ {failedImages.length} 张图片上传失败，草稿中将以原链接展示（公众号可能因防盗链显示裂图）
+                  </div>
+                  <ul className="text-[11px] text-amber-700/90 space-y-0.5 max-h-32 overflow-y-auto">
+                    {failedImages.map((f, i) => (
+                      <li key={i} className="break-all">
+                        <span className="text-amber-600">•</span>{" "}
+                        <span className="text-amber-500">{f.reason}：</span>
+                        {f.url}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="text-[11px] text-amber-700/80 pt-1">
+                    常见原因：图片源防盗链/需授权、网络超时、超过 10MB、或本地占位未上传。请修复后重新推送。
+                  </div>
+                </div>
+              )}
               <a
                 href="https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&lang=zh_CN"
                 target="_blank"
@@ -249,6 +273,7 @@ export function PublishDialog({
                 onClick={() => {
                   setResult(null);
                   setResultMeta(null);
+                  setFailedImages([]);
                   onOpenChange(false);
                 }}
               >
@@ -258,6 +283,7 @@ export function PublishDialog({
                 onClick={() => {
                   setResult(null);
                   setResultMeta(null);
+                  setFailedImages([]);
                 }}
               >
                 继续编辑

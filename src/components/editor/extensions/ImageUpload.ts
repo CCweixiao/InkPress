@@ -52,7 +52,13 @@ function getImages(event: DragEvent | ClipboardEvent): File[] {
   return Array.from(dt.files).filter((f) => f.type.startsWith("image/"));
 }
 
-/** 逐个上传：先插占位，上传成功后把占位 src 替换为真实 URL */
+/**
+ * 逐个上传：先插占位，上传成功后把占位 src 替换为真实 URL。
+ *
+ * 关键：上传失败时必须把占位节点从文档中移除。否则 blob: URL 会残留在
+ * markdown 里，发布时服务端无法下载（blob 是浏览器内存引用），
+ * 必然导致公众号正文图片缺失。
+ */
 async function insertFiles(editor: Editor, files: File[], pos: number, articleId?: string) {
   let insertPos = pos;
   for (const file of files) {
@@ -65,9 +71,24 @@ async function insertFiles(editor: Editor, files: File[], pos: number, articleId
 
     try {
       const url = await uploadImage(file, articleId);
-      if (url) replaceImageSrc(editor, placeholder, url);
+      if (url) {
+        replaceImageSrc(editor, placeholder, url);
+      } else {
+        // upload 返回 null（OSS + 微信都失败）→ 移除占位，插一段可见提示
+        removeImageBySrc(editor, placeholder);
+        editor.commands.insertContentAt(
+          editor.state.selection.from,
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: `〔图片「${file.name}」上传失败，请重试〕` },
+            ],
+          }
+        );
+      }
     } catch {
-      // 上传失败保留占位（可后续重试）
+      // 异常：同样移除占位，避免 blob 残留
+      removeImageBySrc(editor, placeholder);
     } finally {
       URL.revokeObjectURL(placeholder);
     }
@@ -117,6 +138,24 @@ function replaceImageSrc(editor: Editor, from: string, to: string) {
           ...node.attrs,
           src: to,
         });
+      }
+      return true;
+    });
+    return true;
+  });
+}
+
+/** 删除文档中指定 src 的图片节点（用于上传失败清理 blob 占位） */
+function removeImageBySrc(editor: Editor, src: string) {
+  editor.commands.command(({ tr, state }) => {
+    let removed = false;
+    state.doc.descendants((node, nodePos) => {
+      if (removed) return false;
+      if (node.type.name === "image" && node.attrs.src === src) {
+        // deleteRange 需要 resolved pos；nodePos 是该节点起始位置
+        tr.delete(nodePos, nodePos + node.nodeSize);
+        removed = true;
+        return false;
       }
       return true;
     });
