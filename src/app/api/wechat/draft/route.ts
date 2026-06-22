@@ -47,6 +47,8 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
   }
 
   // 服务端 fetcher（下载外链图片，带超时与大小限制，避免卡死或超大文件）
+  // 每个失败分支都记 warn：图片下载失败是公众号图片缺失的最常见根因，
+  // 之前被上层 .catch(()=>null) 吞掉，现在这里留下明确日志。
   const fetcher = async (url: string): Promise<ArrayBuffer> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -55,13 +57,26 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
         signal: controller.signal,
         headers: { "user-agent": "Mozilla/5.0 (compatible; WePaperBot/1.0)" },
       });
-      if (!res.ok) throw new Error(`下载图片失败：${url}（${res.status}）`);
+      if (!res.ok) {
+        log.warn({ url, status: res.status }, "下载外链图片失败（HTTP 非 2xx）");
+        throw new Error(`下载图片失败：${url}（${res.status}）`);
+      }
       const buf = await res.arrayBuffer();
       // 限制 10MB（微信单图上限约 10MB）
       if (buf.byteLength > 10 * 1024 * 1024) {
+        log.warn(
+          { url, sizeMb: +(buf.byteLength / 1024 / 1024).toFixed(1) },
+          "外链图片超出 10MB 上限"
+        );
         throw new Error(`图片过大（${(buf.byteLength / 1024 / 1024).toFixed(1)}MB）：${url}`);
       }
       return buf;
+    } catch (e) {
+      // abort（超时）与网络错误在此统一记 warn；上面已记的 HTTP/超大分支不会重复
+      if (e instanceof Error && !/下载图片失败|图片过大/.test(e.message)) {
+        log.warn({ url, err: e.message }, "下载外链图片异常（超时或网络错误）");
+      }
+      throw e;
     } finally {
       clearTimeout(timer);
     }
@@ -72,8 +87,8 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
     const markdown = article.contentPath
       ? await readContent(article.id)
       : (article.contentMd ?? "");
-    // 2. 转换（含图片上传替换）
-    const { html } = await convertToWeChat(
+    // 2. 转换（含图片上传替换；failedImages 为上传失败的外链，原样保留在 HTML 中）
+    const { html, failedImages } = await convertToWeChat(
       markdown,
       {
         cssContent: theme.cssContent,
@@ -82,6 +97,12 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
       },
       { uploadImage: (url) => uploadBodyImage(url, fetcher) }
     );
+    if (failedImages.length > 0) {
+      log.warn(
+        { articleId, count: failedImages.length, urls: failedImages.map((f) => f.url) },
+        "部分正文图片上传失败，将以原外链推送（公众号可能因防盗链裂图）"
+      );
+    }
 
     // 3. 封面
     let thumbMediaId = article.coverMediaId ?? "";
@@ -118,6 +139,7 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
         message: "已更新公众号草稿箱中的文章",
         mediaId: existedMediaId,
         updated: true,
+        failedImages,
       });
     }
 
@@ -131,6 +153,7 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
       message: "已推送到公众号草稿箱",
       mediaId,
       updated: false,
+      failedImages,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "推送失败";

@@ -6,6 +6,9 @@ import {
   resolveCssVariables,
   readCodeThemeCss,
 } from "@/lib/themes/loader";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("convert.wechat");
 
 export type ConvertThemeInput = {
   cssContent: string;
@@ -13,9 +16,16 @@ export type ConvertThemeInput = {
   primaryColor: string;
 };
 
+/** 单张图片上传失败的记录（url + 原因），供上层向用户回显 */
+export type FailedImage = {
+  url: string;
+  reason: string;
+};
+
 export type ConvertResult = {
   html: string; // 微信安全 HTML（全内联 style）
   title: string; // 从 front-matter 提取的标题（可选）
+  failedImages: FailedImage[]; // 上传失败的图片（已跳过替换，原外链保留 → 公众号会因防盗链裂图）
 };
 
 /** 微信公众号正文图片上传器（正文图必须走 uploadimg 换 wx_src） */
@@ -44,10 +54,13 @@ export async function convertToWeChat(
   const body = fm.body || markdown;
   const fmTitle = typeof fm.attributes?.title === "string" ? fm.attributes.title : "";
 
-  // 2. 图片 URL 预处理
+  // 2. 图片 URL 预处理（外链 → wx_src，失败保留原 URL 并记录）
   let processedMd = body;
+  let failedImages: FailedImage[] = [];
   if (options.uploadImage) {
-    processedMd = await replaceImageUrls(body, options.uploadImage);
+    const r = await replaceImageUrls(body, options.uploadImage);
+    processedMd = r.md;
+    failedImages = r.failed;
   }
 
   // 3. markdown-it 渲染
@@ -78,17 +91,25 @@ export async function convertToWeChat(
   // 7. 微信专项清洗（基于 jsdom）
   const cleaned = cleanForWeChat(inlined, theme.primaryColor);
 
-  return { html: cleaned, title: fmTitle };
+  return { html: cleaned, title: fmTitle, failedImages };
 }
 
-/** 提取所有 ![](url) 并替换为微信素材 URL（并发上传，带限流） */
+/**
+ * 提取所有 ![](url) 并替换为微信素材 URL（并发上传，带限流）。
+ *
+ * 返回替换后的 markdown + 失败列表。失败 URL 原样保留在 markdown 中
+ * （公众号会因防盗链裂图），上层据此向用户提示哪些图需要修复。
+ *
+ * 本地伪协议（blob:/data:）无法在服务端下载，直接记为失败跳过上传，
+ * 避免无意义的 fetch 报错噪声。
+ */
 async function replaceImageUrls(
   md: string,
   upload: ImageUploader
-): Promise<string> {
+): Promise<{ md: string; failed: FailedImage[] }> {
   const pattern = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   const matches = [...md.matchAll(pattern)];
-  if (matches.length === 0) return md;
+  if (matches.length === 0) return { md, failed: [] };
 
   // 去重 URL
   const uniqueUrls = [...new Set(matches.map((m) => m[1]))];
@@ -96,23 +117,47 @@ async function replaceImageUrls(
   // 并发上传（最多 3 个同时），避免长文几十张图串行等待
   const CONCURRENCY = 3;
   const urlMap = new Map<string, string>();
+  const failed: FailedImage[] = [];
   for (let i = 0; i < uniqueUrls.length; i += CONCURRENCY) {
     const batch = uniqueUrls.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       batch.map(async (url) => {
-        const wx = await upload(url).catch(() => null);
-        return [url, wx] as const;
+        // 本地伪协议：服务端无法下载，注定失败，跳过上传
+        if (/^(blob:|data:)/i.test(url)) {
+          const reason = "本地占位 URL（blob/data），请重新插入图片";
+          log.warn({ url, reason }, "跳过不可下载的本地图片");
+          return [url, null, reason] as const;
+        }
+        // 失败原因透传：upload 内部已记录详细日志，这里只收口
+        const wx = await upload(url).catch((e) => {
+          const reason = e instanceof Error ? e.message : "上传失败";
+          log.warn({ url, reason }, "正文图上传失败，原外链保留");
+          return null;
+        });
+        return [url, wx, ""] as const;
       })
     );
-    for (const [url, wx] of results) {
-      if (wx) urlMap.set(url, wx);
+    for (const [url, wx, reason] of results) {
+      if (wx) {
+        urlMap.set(url, wx);
+      } else {
+        failed.push({ url, reason: reason || "上传失败" });
+      }
     }
   }
 
-  return md.replace(pattern, (full, url: string) => {
+  if (failed.length > 0) {
+    log.warn(
+      { total: uniqueUrls.length, failed: failed.length, urls: failed.map((f) => f.url) },
+      "部分正文图片上传失败，将以原外链推送（公众号可能因防盗链裂图）"
+    );
+  }
+
+  const replaced = md.replace(pattern, (full, url: string) => {
     const wx = urlMap.get(url);
     return wx ? full.replace(url, wx) : full;
   });
+  return { md: replaced, failed };
 }
 
 /** 微信公众号基础排版下限样式（与 doocs base 类似） */
