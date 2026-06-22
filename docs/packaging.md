@@ -9,7 +9,7 @@
 InkPress 桌面应用 = **Next.js standalone server**（跑在 Electron 内嵌 Node 里）+ **Electron 壳**。
 三套工具链（Next.js / pnpm / electron-builder）各有自己的"默认行为"，我们的打包方案必须同时满足三者的约束，任何一处偏差都会让应用启动即崩。
 
-### 脆弱链路的 6 个坑（按发现顺序）
+### 脆弱链路的 11 个坑（按发现顺序）
 
 | # | 坑 | 根因 | 当前解法 |
 |---|---|---|---|
@@ -18,7 +18,14 @@ InkPress 桌面应用 = **Next.js standalone server**（跑在 Electron 内嵌 N
 | 3 | **server.js 硬编码构建机绝对路径** | Next.js 把 `outputFileTracingRoot`/`turbopack.root` 写死成构建目录 | `rewriteServerJsPaths()` 替换为 `.` |
 | 4 | **standalone file tracing 漏追踪子路径** | `@swc/helpers/_`、`esm/` 等子目录没被 Next.js 静态分析追踪到 | `patchMissingPackages()` 从项目 node_modules 补全 |
 | 5 | **打包污染开发环境** | `electron-builder` 的 after-pack 阶段会 rebuild x64，覆盖开发用的 arm64 二进制 | 打包后**必须** `pnpm rebuild better-sqlite3` 恢复 |
-| 6 | **node_modules 改名 app_modules** | 之前误以为 electron-builder 的 files 规则会剔除 extraResources 里的 node_modules（实际不会） | **保留 node_modules 原名**，靠 NODE_PATH 已无必要 |
+| 6 | ~~node_modules 改名 app_modules~~ | ~~误以为 files 规则会剔除 extraResources 里的 node_modules~~ | **保留 node_modules 原名**（已废弃改名方案） |
+| 7 | **native binding 遗漏 .next/node_modules 路径** | `ensureNativeBindingForElectron` 只扫描 `bundle/node_modules/`，遗漏 nft 追踪的 `.next/node_modules/better-sqlite3-HASH/` | 扫描范围改为整个 `bundle`，覆盖全部 4 处副本 |
+| 8 | **electron-builder 剥离 standalone 顶层 node_modules** | electron-builder 对 extraResources 也应用全局 `!**/node_modules/**` 排除 | `extraResources` 拆分：node_modules 单独一条 entry 绕过过滤 |
+| 9 | **mergeDir 跳过 pnpm 符号链接子目录** | `Dirent.isDirectory()` 对 symlink 返回 false，符号链接子目录被跳过 | `mergeDir` 改用 `fs.statSync()`（跟随符号链接）判断类型 |
+| 10 | **pnpm 兄弟解析路径物化后断裂** | 顶层包物化为独立目录后，间接依赖（如 `@swc/helpers`）在顶层不存在 | `hoistMissingTopLevel()` BFS 遍历依赖树，从虚拟根提升缺失包 |
+| 11 | **nft 追踪包的间接依赖缺失** | `.next/node_modules/` 中 nft 追踪包（如 `@prisma/client-HASH`）的依赖不在顶层 | BFS 同时扫描 `.next/node_modules/` 的 package.json dependencies |
+
+> 坑 7-11 于 2026-06-22 检测发现并修复。详见 `docs/packaging-analysis.md`。
 
 ### "之前能跑"是假象
 
@@ -95,7 +102,10 @@ tail ~/.inkpress/logs/inkpress.log
 |---|---|---|
 | `NODE_MODULE_VERSION 127 ... need 146` | better-sqlite3 用标准 Node 编译，Electron 要 ABI 146 | `ensureNativeBindingForElectron()` 未跑成功，检查 electron-rebuild |
 | `mach-o ... incompatible architecture (have 'x86_64', need 'arm64')` | 打包后没恢复开发环境 | `pnpm rebuild better-sqlite3` |
-| `Cannot find module '@swc/helpers/_/...'` | standalone file tracing 漏追踪 | `patchMissingPackages()` 补全 |
+| `Cannot find module '@swc/helpers/_/...'` | standalone file tracing 漏追踪 或 mergeDir 跳过符号链接子目录 | `patchMissingPackages()` + `mergeDir` 的 `statSync` 修复 |
+| `Cannot find module '@prisma/client-runtime-utils'` | nft 追踪包的间接依赖未提升到顶层 | `hoistMissingTopLevel()` 的 BFS 需扫描 `.next/node_modules/` |
+| `Cannot find module 'next'`（server.js 崩溃） | electron-builder 剥离了 standalone 顶层 node_modules | `extraResources` 拆分：node_modules 单独一条 entry |
+| `ELF 64-bit LSB shared object`（better_sqlite3.node） | node_modules 被 Linux 环境污染 | `pnpm rebuild better-sqlite3` 恢复 macOS 原生二进制 |
 | server.js 报项目绝对路径 | outputFileTracingRoot 没改写 | `rewriteServerJsPaths()` 未跑 |
 
 ## 五、升级依赖时的检查清单
@@ -112,8 +122,9 @@ tail ~/.inkpress/logs/inkpress.log
 
 | 文件 | 作用 |
 |---|---|
-| `scripts/prepare-standalone.ts` | 打包前处理 standalone bundle（物化/补全/改写路径/重编译 native） |
+| `scripts/prepare-standalone.ts` | 打包前处理 standalone bundle（物化/补全/提升/改写路径/重编译 native） |
 | `electron/main.ts` | Electron 主进程，spawn standalone server 子进程 |
-| `scripts/after-pack.cjs` | electron-builder after-pack 钩子 |
+| `scripts/after-pack.cjs` | electron-builder after-pack 钩子（创建 LSUIElement helper） |
 | `next.config.ts` | `output: "standalone"` + `serverExternalPackages` |
-| `package.json` → `build` | electron-builder 配置（extraResources 指向 bundle） |
+| `package.json` → `build` | electron-builder 配置（extraResources 拆分复制 node_modules + bundle） |
+| `docs/packaging-analysis.md` | 打包机制分析与架构评估报告（体积分析、主流方案对比、迁移评估） |
