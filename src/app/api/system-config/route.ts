@@ -9,6 +9,7 @@ import { I18N_CONFIG_KEY, parseI18nConfig } from "@/lib/i18n-config";
 import { LLM_PRESETS_KEY, parseLlmPresets } from "@/lib/llm-presets";
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -131,7 +132,7 @@ export async function GET() {
   return NextResponse.json({ ok: true, configs: maskConfigs(configs) });
 }
 
-export async function POST(req: Request) {
+export const POST = withApiLog("POST /api/system-config", async (req: Request) => {
   const parsed = configSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "配置参数无效。" }, { status: 400 });
@@ -145,10 +146,11 @@ export async function POST(req: Request) {
     );
   }
   const item = await prisma.systemConfig.create({ data: parsed.data });
+  logMutation("systemConfig", "create", { key: parsed.data.key });
   return NextResponse.json({ ok: true, item: maskConfigs([item])[0] });
-}
+});
 
-export async function PUT(req: Request) {
+export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => {
   const parsed = configSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "配置参数无效。" }, { status: 400 });
@@ -182,17 +184,19 @@ export async function PUT(req: Request) {
     update: { value },
     create: { key: parsed.data.key, value },
   });
+  logMutation("systemConfig", "update", { key: parsed.data.key });
   return NextResponse.json({ ok: true, item: maskConfigs([item])[0] });
-}
+});
 
-export async function DELETE(req: Request) {
+export const DELETE = withApiLog("DELETE /api/system-config", async (req: Request) => {
   const parsed = deleteSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "删除参数无效。" }, { status: 400 });
   }
   await prisma.systemConfig.delete({ where: { key: parsed.data.key } });
+  logMutation("systemConfig", "delete", { key: parsed.data.key });
   return NextResponse.json({ ok: true });
-}
+});
 
 /** 保存时把脱敏占位 "********" 还原成 DB 中已有的真实密钥 */
 function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): string {

@@ -1,6 +1,9 @@
 import { wxUpload, ensureOk, type WxResponse } from "./client";
 import { prisma } from "@/lib/db";
 import { createHash } from "node:crypto";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("wechat.material");
 
 export type UploadedMaterial = {
   url: string; // 正文图用
@@ -25,9 +28,13 @@ export async function uploadBodyImage(
 
   // 缓存命中
   const cached = await prisma.material.findUnique({ where: { sourceHash: hash } });
-  if (cached?.wxUrl) return cached.wxUrl;
+  if (cached?.wxUrl) {
+    log.debug({ sourceHash: hash, cached: true }, "正文图命中缓存");
+    return cached.wxUrl;
+  }
 
   // 下载并上传
+  const start = Date.now();
   const buf = await fetcher(sourceUrl);
   const blob = new Blob([buf]);
   const form = new FormData();
@@ -42,6 +49,10 @@ export async function uploadBodyImage(
     update: { wxUrl: url },
     create: { sourceUrl, sourceHash: hash, wxUrl: url, kind: "body" },
   });
+  log.info(
+    { sourceHash: hash, size: buf.byteLength, durationMs: Date.now() - start },
+    "正文图上传完成"
+  );
   return url;
 }
 
@@ -56,9 +67,11 @@ export async function uploadCoverImage(
   const hash = `cover:${hashUrl(sourceUrl)}`;
   const cached = await prisma.material.findUnique({ where: { sourceHash: hash } });
   if (cached?.wxMediaId && cached.wxUrl) {
+    log.debug({ sourceHash: hash, cached: true }, "封面图命中缓存");
     return { mediaId: cached.wxMediaId, url: cached.wxUrl };
   }
 
+  const start = Date.now();
   const buf = await fetcher(sourceUrl);
   const blob = new Blob([buf]);
   const form = new FormData();
@@ -79,6 +92,10 @@ export async function uploadCoverImage(
       kind: "cover",
     },
   });
+  log.info(
+    { mediaId: result.media_id, size: buf.byteLength, durationMs: Date.now() - start },
+    "封面图上传完成"
+  );
   return { mediaId: result.media_id, url: result.url ?? "" };
 }
 

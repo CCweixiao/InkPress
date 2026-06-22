@@ -7,6 +7,9 @@ import {
   type UIMessage,
 } from "ai";
 import { prisma } from "@/lib/db";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("ai.context");
 
 const RECENT_MESSAGE_COUNT = 8;
 const MAX_SUMMARY_SOURCE_CHARS = 24_000;
@@ -110,13 +113,30 @@ export async function prepareAgentContext(input: {
     emptyMessages: "remove",
   }) as ModelMessage[];
 
+  const compressed =
+    shouldSummarize && input.uiMessages.length > RECENT_MESSAGE_COUNT;
+
+  log.debug(
+    {
+      sessionId: input.sessionId,
+      articleTokens,
+      conversationTokens,
+      estimatedTokens,
+      budget: input.contextBudgetTokens,
+      compressed,
+      retainedMessages: recentMessages.length,
+      totalMessages: input.uiMessages.length,
+    },
+    compressed ? "上下文已压缩" : "上下文未压缩"
+  );
+
   return {
     summary,
     summaryUpToPosition,
     messages,
     estimatedTokens,
     articleTokens,
-    compressed: shouldSummarize && input.uiMessages.length > RECENT_MESSAGE_COUNT,
+    compressed,
     retainedMessages: recentMessages.length,
   };
 }

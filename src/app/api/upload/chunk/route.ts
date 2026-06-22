@@ -9,6 +9,7 @@ import {
 } from "@/lib/oss";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
 import { cacheDir } from "@/lib/paths";
+import { withApiLog } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -140,7 +141,7 @@ async function completeUpload(uploadId: string) {
   return { asset };
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/upload/chunk", async (req: NextRequest) => {
   if (!(await hasOssConfig())) {
     return NextResponse.json({ error: "尚未配置 OSS。" }, { status: 400 });
   }
@@ -219,7 +220,7 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-}
+});
 
 /** 查询已上传分片（断点续传）/ 状态 */
 export async function GET(req: NextRequest) {

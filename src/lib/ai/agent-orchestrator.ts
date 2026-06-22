@@ -10,6 +10,9 @@ import {
   type CodeSourceCandidate,
   type CodeSourceReference,
 } from "@/lib/ai/code-source";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("ai.router");
 
 export const agentIntentSchema = z.enum([
   "question",
@@ -167,6 +170,7 @@ export async function routeAgentRequest(input: {
     .join("\n");
 
   let routed: z.infer<typeof routeSchema>;
+  let llmRouted = true;
   try {
     const result = await generateObject({
       model: input.model,
@@ -189,7 +193,9 @@ ${projectCatalog || "（无）"}`,
       maxRetries: 1,
     });
     routed = result.object;
-  } catch {
+  } catch (err) {
+    llmRouted = false;
+    log.warn({ err }, "意图路由 LLM 失败，回退到规则路由");
     routed = fallbackRoute(input.message);
   }
   const deterministic = fallbackRoute(input.message);
@@ -290,7 +296,7 @@ ${projectCatalog || "（无）"}`,
     ...(routed.needsGitHistory && project ? ["analyze_code_changes"] : []),
   ];
 
-  return {
+  const route: AgentRoute = {
     ...routed,
     needsAssets,
     skillIds: requestedSkills.slice(0, 4),
@@ -299,4 +305,23 @@ ${projectCatalog || "（无）"}`,
     ambiguityQuestion,
     activeTools,
   };
+
+  log.info(
+    {
+      llmRouted,
+      intent: route.intent,
+      skillIds: route.skillIds,
+      activeTools: route.activeTools,
+      projectId: route.project?.id ?? null,
+      codeSource: route.codeSourceCandidate?.displayName ?? null,
+      needsWeb: route.needsWeb,
+      needsProject: route.needsProject,
+      needsGitHistory: route.needsGitHistory,
+      needsProposal: route.needsProposal,
+      ambiguous: !!route.ambiguityQuestion,
+    },
+    "意图路由完成"
+  );
+
+  return route;
 }

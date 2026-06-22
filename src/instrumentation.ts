@@ -20,5 +20,18 @@ export async function register() {
       // 初始化失败不阻塞启动，但记录错误
       log.error({ err: e }, "数据目录初始化失败");
     }
+
+    // 全局异常兜底：捕获未处理的 Promise 拒绝与未捕获异常，写入日志。
+    // 避免这些错误静默丢失（Next.js 默认只在控制台打印，不落日志文件）。
+    process.on("unhandledRejection", (reason) => {
+      log.fatal(
+        { err: reason instanceof Error ? reason : { reason: String(reason) } },
+        "未处理的 Promise 拒绝（unhandledRejection）"
+      );
+    });
+    process.on("uncaughtException", (err) => {
+      log.fatal({ err }, "未捕获异常（uncaughtException）");
+      // 不主动 exit：让 Next.js / Node 默认行为接管，仅确保日志已落盘
+    });
   }
 }

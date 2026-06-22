@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { writeContent, relativePath } from "@/lib/content-store";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 const createSchema = z.object({
   title: z.string().max(200).optional(),
@@ -20,7 +21,7 @@ export async function GET() {
 }
 
 // 新建文章
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/articles", async (req: NextRequest) => {
   const body = await req.json().catch(() => ({}));
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
@@ -47,5 +48,6 @@ export async function POST(req: NextRequest) {
     where: { id: article.id },
     data: { contentPath: relativePath(article.id) },
   });
+  logMutation("article", "create", { id: article.id, title: article.title, spaceId: article.spaceId });
   return NextResponse.json({ article }, { status: 201 });
-}
+});
