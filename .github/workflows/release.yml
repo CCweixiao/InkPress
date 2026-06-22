@@ -37,16 +37,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: "11.8.0"
           run_install: false
+
+      - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # 启用 pnpm store 缓存：首次运行后，依赖装包时间从 ~60s 降到 ~10s
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -54,7 +56,7 @@ jobs:
           # 允许 better-sqlite3 / electron / sharp 等原生包构建
           pnpm_allow_build: "true"
 
-      - name: Prepare standalone bundle（next build → prepare-standalone → tsc electron）
+      - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
         run: pnpm electron:prepare
 
       - name: Configure code signing
