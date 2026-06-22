@@ -1,6 +1,9 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 import { chooseLlmConfig, type SelectedLlmConfig } from "@/lib/ai/llm-config";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("ai.provider");
 
 /**
  * 从数据库的「模型配置」加载 LanguageModel（统一走 openai-compatible 协议，
@@ -15,8 +18,17 @@ export async function getModel(
 ): Promise<{ model: LanguageModel; config: SelectedLlmConfig | null }> {
   const selected = await chooseLlmConfig(providerId, modelId);
   if (selected) {
+    log.debug(
+      {
+        providerId: selected.id,
+        modelId: selected.model.id,
+        baseUrl: selected.baseUrl,
+      },
+      "已加载 AI 模型"
+    );
     return { model: createModel(selected), config: selected };
   }
+  log.error({ providerId, modelId }, "未配置任何 AI 模型供应商");
   throw new Error(
     "尚未配置 AI 模型，请先在「设置 → 系统配置 → AI 模型」中添加至少一个供应商并填入 API Key。"
   );

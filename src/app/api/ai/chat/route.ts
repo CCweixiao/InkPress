@@ -28,6 +28,10 @@ import {
   createOrReuseCodeSourceGrant,
   type CodeSourceReference,
 } from "@/lib/ai/code-source";
+import { moduleLogger } from "@/lib/logger";
+import { withApiLog } from "@/lib/api-log";
+
+const log = moduleLogger("ai.chat");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -240,7 +244,7 @@ export async function GET(req: NextRequest) {
   });
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => {
   const parsed = postSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "Agent 请求参数无效。" }, { status: 400 });
@@ -253,6 +257,18 @@ export async function POST(req: NextRequest) {
   const session = await getOrCreateAgentSession(target);
   const config = await getAgentConfig();
   await saveAgentMessages(session.id, uiMessages);
+
+  log.info(
+    {
+      sessionId: session.id,
+      targetKind: target.kind,
+      targetId: target.id,
+      messages: uiMessages.length,
+      providerId: parsed.data.providerId ?? null,
+      modelId: parsed.data.modelId ?? null,
+    },
+    "Agent 对话开始"
+  );
 
   try {
     const { model } = await getModel(parsed.data.providerId, parsed.data.modelId);
@@ -642,9 +658,13 @@ export async function POST(req: NextRequest) {
     });
     return createUIMessageStreamResponse({ stream });
   } catch (error) {
+    log.error(
+      { err: error, sessionId: session.id, targetId: target.id },
+      "Agent 对话失败"
+    );
     return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
-}
+});
 
 export async function DELETE(req: NextRequest) {
   const target = targetFromQuery(req);

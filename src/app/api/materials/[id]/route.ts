@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { tagsToJson } from "@/lib/asset";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ const patchSchema = z.object({
 });
 
 /** 编辑素材元数据（描述 / 标签） */
-export async function PATCH(req: NextRequest, { params }: Params) {
+export const PATCH = withApiLog("PATCH /api/materials/[id]", async (req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -32,5 +33,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!asset) {
     return NextResponse.json({ error: "素材不存在" }, { status: 404 });
   }
+  logMutation("asset", "update", { id });
   return NextResponse.json({ asset });
-}
+});

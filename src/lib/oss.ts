@@ -7,6 +7,9 @@ import {
   parseOssConfig,
 } from "@/lib/oss-config";
 import { prisma } from "@/lib/db";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("oss");
 
 export type UploadedFile = {
   key: string;
@@ -92,13 +95,22 @@ export async function uploadToOss(
   const config = await getOssConfig();
   const bytes = Buffer.from(await file.arrayBuffer());
   const objectKey = objectKeyFor(file.name, dir);
+  const start = Date.now();
 
-  await createClient(config).put(objectKey, bytes, {
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-      "Content-Disposition": `inline; filename="${safeFilename(file.name)}"`,
-    },
-  });
+  try {
+    await createClient(config).put(objectKey, bytes, {
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "Content-Disposition": `inline; filename="${safeFilename(file.name)}"`,
+      },
+    });
+  } catch (err) {
+    log.error({ key: objectKey, size: file.size, err }, "OSS 上传失败");
+    throw err;
+  }
+
+  const durationMs = Date.now() - start;
+  log.info({ key: objectKey, size: file.size, durationMs }, "OSS 上传完成");
 
   return {
     key: objectKey,
@@ -117,13 +129,22 @@ export async function uploadBufferToOss(
 ): Promise<UploadedFile> {
   const config = await getOssConfig();
   const objectKey = objectKeyFor(filename, dir);
+  const start = Date.now();
 
-  await createClient(config).put(objectKey, buffer, {
-    headers: {
-      "Content-Type": contentType,
-      "Content-Disposition": `inline; filename="${safeFilename(filename)}"`,
-    },
-  });
+  try {
+    await createClient(config).put(objectKey, buffer, {
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `inline; filename="${safeFilename(filename)}"`,
+      },
+    });
+  } catch (err) {
+    log.error({ key: objectKey, size: buffer.byteLength, err }, "OSS 上传失败");
+    throw err;
+  }
+
+  const durationMs = Date.now() - start;
+  log.info({ key: objectKey, size: buffer.byteLength, durationMs }, "OSS 上传完成");
 
   return {
     key: objectKey,
@@ -136,7 +157,14 @@ export async function uploadBufferToOss(
 
 export async function deleteFromOss(key: string) {
   const config = await getOssConfig();
-  await createClient(config).delete(key);
+  const start = Date.now();
+  try {
+    await createClient(config).delete(key);
+    log.debug({ key, durationMs: Date.now() - start }, "OSS 删除完成");
+  } catch (err) {
+    log.warn({ key, err }, "OSS 删除失败");
+    throw err;
+  }
 }
 
 /**
@@ -154,19 +182,30 @@ export async function multipartUploadFileToOss(
   const config = await getOssConfig();
   const objectKey = objectKeyFor(filename, dir);
   const client = createClient(config);
+  const start = Date.now();
   // ali-oss multipartUpload：服务端断点续传（若同 key+file 的上传中断，可续传）
-  await client.multipartUpload(objectKey, localPath, {
-    partSize: 1024 * 1024, // 1MB / part
-    headers: {
-      "Content-Type": contentType || "application/octet-stream",
-      "Content-Disposition": `inline; filename="${safeFilename(filename)}"`,
-    },
-    progress: (p: number) => {
-      onProgress?.(p);
-      return Promise.resolve();
-    },
-  });
+  try {
+    await client.multipartUpload(objectKey, localPath, {
+      partSize: 1024 * 1024, // 1MB / part
+      headers: {
+        "Content-Type": contentType || "application/octet-stream",
+        "Content-Disposition": `inline; filename="${safeFilename(filename)}"`,
+      },
+      progress: (p: number) => {
+        onProgress?.(p);
+        return Promise.resolve();
+      },
+    });
+  } catch (err) {
+    log.error({ key: objectKey, filename, err }, "OSS 分片上传失败");
+    throw err;
+  }
   const stat = await import("node:fs").then((fs) => fs.promises.stat(localPath));
+  const durationMs = Date.now() - start;
+  log.info(
+    { key: objectKey, size: stat.size, durationMs },
+    "OSS 分片上传完成"
+  );
   return {
     key: objectKey,
     url: publicUrl(config, objectKey),

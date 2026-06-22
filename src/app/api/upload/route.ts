@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { uploadToOss, classifyByContentType } from "@/lib/oss";
 import { prisma } from "@/lib/db";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
+import { withApiLog } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -11,7 +12,7 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
  * 上传到 OSS，并落 Asset 表。
  * 字段：file(必填)、articleId?、spaceId?、description?、tags?(逗号分隔)
  */
-export async function POST(req: Request) {
+export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   const formData = await req.formData();
   const file = formData.get("file");
 
@@ -61,4 +62,4 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-}
+});
