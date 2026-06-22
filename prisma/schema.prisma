@@ -292,6 +292,12 @@ model Asset {
   trashed     Boolean   @default(false)
   trashedAt   DateTime?
   expiresAt   DateTime?
+  // 微信公众号素材库同步（仅当上传时勾选了同步才写入；null=未尝试过同步）
+  wxMediaId    String?  // add_material 返回的 media_id（永久素材）
+  wxUrl        String?  // uploadimg 返回的 URL（正文图）或 add_material 的 url
+  wxSyncStatus String?  // "success" | "failed" | null（null=未勾选同步）
+  wxSyncError  String?  // 失败原因（同步失败时填，成功时清空）
+  wxSyncedAt   DateTime? // 最后一次同步时间（成功/失败均更新）
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -303,4 +309,5 @@ model Asset {
   @@index([spaceId])
   @@index([articleId])
   @@index([trashed])
+  @@index([wxSyncStatus])
 }

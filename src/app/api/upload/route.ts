@@ -2,15 +2,20 @@ import { NextResponse } from "next/server";
 import { uploadToOss, classifyByContentType } from "@/lib/oss";
 import { prisma } from "@/lib/db";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
-import { withApiLog } from "@/lib/api-log";
+import { syncAssetToWechat } from "@/lib/wechat/asset-sync";
+import { withApiLog, logMutation } from "@/lib/api-log";
+import { moduleLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+
+const log = moduleLogger("upload.api");
 
 /**
  * 通用文件上传：multipart/form-data 字段 file = File
  * 上传到 OSS，并落 Asset 表。
  * 字段：file(必填)、articleId?、spaceId?、description?、tags?(逗号分隔)
+ *       syncToWechat?(任意非空字符串=true) — 勾选后同步到公众号素材库
  */
 export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   const formData = await req.formData();
@@ -35,6 +40,8 @@ export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   const description = (formData.get("description") as string | null) || "";
   const tagsRaw = (formData.get("tags") as string | null) || "";
   const tagsJson = tagsToJson(splitTagInput(tagsRaw));
+  // 是否同步到公众号素材库（勾选框）
+  const syncToWechat = !!formData.get("syncToWechat");
 
   try {
     const uploaded = await uploadToOss(file, dir);
@@ -52,7 +59,45 @@ export const POST = withApiLog("POST /api/upload", async (req: Request) => {
         spaceId,
       },
     });
-    return NextResponse.json({ ok: true, asset });
+    logMutation("asset", "create", { id: asset.id, kind, syncToWechat });
+
+    // 同步到公众号素材库（失败不阻塞 OSS 上传，只标记状态）
+    let wxSyncStatus: string | null = null;
+    let wxSyncError: string | null = null;
+    if (syncToWechat) {
+      const result = await syncAssetToWechat({
+        url: asset.url,
+        contentType: asset.contentType,
+        filename: asset.name,
+      });
+      if (result.ok) {
+        await prisma.asset.update({
+          where: { id: asset.id },
+          data: {
+            wxUrl: result.wxUrl,
+            wxMediaId: result.wxMediaId,
+            wxSyncStatus: "success",
+            wxSyncError: null,
+            wxSyncedAt: new Date(),
+          },
+        });
+        wxSyncStatus = "success";
+      } else {
+        await prisma.asset.update({
+          where: { id: asset.id },
+          data: {
+            wxSyncStatus: "failed",
+            wxSyncError: result.reason,
+            wxSyncedAt: new Date(),
+          },
+        });
+        wxSyncStatus = "failed";
+        wxSyncError = result.reason;
+        log.warn({ id: asset.id, reason: result.reason }, "上传时同步公众号失败");
+      }
+    }
+
+    return NextResponse.json({ ok: true, asset: { ...asset, wxSyncStatus, wxSyncError } });
   } catch (error) {
     return NextResponse.json(
       {
