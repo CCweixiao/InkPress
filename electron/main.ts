@@ -21,6 +21,7 @@ const PREFERRED_PORT = 17391;
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let serverPort = PREFERRED_PORT;
+let isQuitting = false;
 
 /**
  * 是否处于打包形态。
@@ -109,6 +110,15 @@ async function pickPort(preferred: number): Promise<number> {
 
 function startServer(port: number): ChildProcess {
   const serverDir = path.dirname(serverFile());
+  /**
+   * 打包形态：用 LSUIElement helper 子 bundle 的可执行文件启动 server，
+   * 避免 macOS Dock 显示第二个图标（主 InkPress 二进制会被 LaunchServices
+   * 注册为独立 app 实例，helper 子 bundle 设了 LSUIElement=true 不显示 Dock）。
+   * 开发形态：直接用 process.execPath。
+   */
+  const serverExe = app.isPackaged
+    ? path.join(process.resourcesPath!, "..", "PlugIns", "InkPressServer.app", "Contents", "MacOS", "InkPressServer")
+    : process.execPath;
   // 打包后 bundle 内的 node_modules 已重命名为 app_modules（绕过 electron-builder 剔除），
   // 通过 NODE_PATH 让 Node 模块解析能找到这些依赖。
   const appModules = path.join(serverDir, "app_modules");
@@ -130,7 +140,7 @@ function startServer(port: number): ChildProcess {
     env.RESOURCE_ROOT = resourcesDir();
     env.INKPRESS_RESOURCES_DIR = resourcesDir();
   }
-  const proc = spawn(process.execPath, [serverFile()], {
+  const proc = spawn(serverExe, [serverFile()], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
     cwd: serverDir,
@@ -139,6 +149,45 @@ function startServer(port: number): ChildProcess {
   proc.stderr?.on("data", (d) => process.stderr.write(`[next] ${d}`));
   proc.on("exit", (code) => console.log(`[next] server exited code=${code}`));
   return proc;
+}
+
+/**
+ * 优雅关闭 server 子进程：SIGTERM → 等 exit → 兜底 SIGKILL。
+ * 返回的 Promise 在 server 真正退出后 resolve，杜绝孤儿进程。
+ */
+function killServer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!serverProc || serverProc.killed) {
+      resolve();
+      return;
+    }
+    const pid = serverProc.pid;
+    let settled = false;
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    serverProc.once("exit", done);
+    try {
+      serverProc.kill("SIGTERM");
+    } catch {
+      done();
+      return;
+    }
+    // 5 秒后兜底 SIGKILL（直接用 pid，确保即便 ChildProcess 句柄失效也能杀掉）
+    setTimeout(() => {
+      if (!settled && pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* 进程已退出，忽略 */
+        }
+        setTimeout(done, 500);
+      }
+    }, 5000);
+  });
 }
 
 function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
@@ -218,11 +267,25 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  if (serverProc && !serverProc.killed) {
-    serverProc.kill("SIGTERM");
-    setTimeout(() => serverProc?.kill("SIGKILL"), 3000);
-  }
+/**
+ * 退出流程：阻止默认退出，先优雅 kill server 并等待其真正退出，再退出主进程。
+ * isQuitting 标志防止重入（Cmd+Q 多次点击 / app.quit() 递归）。
+ */
+app.on("before-quit", (e) => {
+  if (isQuitting) return;
+  isQuitting = true;
+  e.preventDefault();
+  void killServer().then(() => {
+    app.quit();
+  });
 });
 
-process.on("uncaughtException", (e) => console.error("[electron] uncaughtException:", e));
+// 捕获终端信号（Ctrl-C / kill），走统一退出流程清理 server
+process.on("SIGINT", () => app.quit());
+process.on("SIGTERM", () => app.quit());
+
+process.on("uncaughtException", (e) => {
+  console.error("[electron] uncaughtException:", e);
+  // 异常时也尝试清理 server，避免孤儿进程
+  void killServer().finally(() => process.exit(1));
+});

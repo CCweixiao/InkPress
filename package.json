@@ -113,7 +113,11 @@
       "output": "dist"
     },
     "files": [
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "!**/node_modules/**",
+      "!**/*.{ts,md,markdown,map}",
+      "!**/.{git,github,vscode,idea,DS_Store,npmignore}",
+      "!**/{tsconfig*.json,*.tgz,LICENSE*,CHANGELOG*}"
     ],
     "extraResources": [
       {
@@ -145,6 +149,7 @@
       ],
       "category": "public.app-category.productivity"
     },
+    "afterPack": "scripts/after-pack.cjs",
     "dmg": {
       "contents": [
         {
