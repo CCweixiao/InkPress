@@ -19,6 +19,17 @@ import {
 } from "@/lib/ai/chat-persistence";
 import { createWritingAgent } from "@/lib/ai/writing-agent";
 import { classifyError } from "@/lib/ai/error-classify";
+import {
+  CAPABILITY_REPLY,
+  CLARIFY_REPLY,
+  isAccidentalInput,
+  isCapabilityQuestion,
+} from "@/lib/ai/capability-reply";
+import {
+  EMPTY_ARTICLE_REPLY,
+  referencesCurrentArticle,
+  shouldIncludeArticleBody,
+} from "@/lib/ai/current-article";
 import { getModel } from "@/lib/ai/provider";
 import { listSkills, loadSkill } from "@/lib/ai/skills";
 import { routeAgentRequest } from "@/lib/ai/agent-orchestrator";
@@ -50,6 +61,10 @@ const postSchema = z
     providerId: z.string().optional().nullable(),
     modelId: z.string().optional().nullable(),
     messages: z.array(z.unknown()).min(1),
+    // 斜杠命令 /<skill> 强制加载的 Skill（最多 4 个，与意图路由 skillIds 一致）。
+    forceSkillIds: z.array(z.string().min(1)).max(4).optional(),
+    // 实时编辑区正文：权威来源，覆盖 DB 读取，避免 flush 时序导致 Agent 拿到空/旧正文。
+    currentMarkdown: z.string().nullable().optional(),
   })
   .refine((value) => value.target || value.articleId, {
     message: "缺少对话目标",
@@ -270,7 +285,16 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   const loaded = await loadTarget(target);
   if (!loaded) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
 
+  // 权威正文：优先用前端实时编辑区内容（currentMarkdown），避免 flush 时序导致读取到空/旧正文，
+  // 也避免「当前文章从上下文消失」。前端未传（如个别调用方）时回落到 DB 读取。
+  const articleMarkdown =
+    typeof parsed.data.currentMarkdown === "string"
+      ? parsed.data.currentMarkdown
+      : (loaded.markdown ?? "");
+
   const uiMessages = parsed.data.messages as UIMessage[];
+  const userText = lastUserText(uiMessages);
+  const referencesArticle = referencesCurrentArticle(userText);
   const session = await getOrCreateAgentSession(target);
   const config = await getAgentConfig();
   await saveAgentMessages(session.id, uiMessages);
@@ -287,6 +311,92 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     "Agent 对话开始"
   );
 
+  // 能力/身份介绍类询问：预路由短路，跳过意图路由与 Agent，直接回精简能力清单。
+  // 省 token、零延迟、文案稳定；未命中则照常进入下方意图路由（question 兜底即普通对话）。
+  if (isCapabilityQuestion(userText)) {
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: uiMessages,
+      onFinish: async ({ messages }) => {
+        await saveAgentMessages(session.id, messages);
+      },
+      onError: errorMessage,
+      execute: async ({ writer }) => {
+        writeStep(writer, {
+          id: "capability",
+          kind: "intent",
+          title: "能力介绍",
+          detail: "列出 Agent 可提供的能力范围",
+        });
+        const textId = crypto.randomUUID();
+        writer.write({ type: "text-start", id: textId } as never);
+        writer.write({
+          type: "text-delta",
+          id: textId,
+          delta: CAPABILITY_REPLY,
+        } as never);
+        writer.write({ type: "text-end", id: textId } as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  // 误触/乱码输入（纯符号、空内容、误触特殊字符）：预路由短路，反问引导补充，不浪费 LLM 去硬猜。
+  if (isAccidentalInput(userText)) {
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: uiMessages,
+      onFinish: async ({ messages }) => {
+        await saveAgentMessages(session.id, messages);
+      },
+      onError: errorMessage,
+      execute: async ({ writer }) => {
+        writeStep(writer, {
+          id: "clarify",
+          kind: "intent",
+          title: "需要补充信息",
+          detail: "输入不够明确，引导用户补充需求细节",
+        });
+        const textId = crypto.randomUUID();
+        writer.write({ type: "text-start", id: textId } as never);
+        writer.write({
+          type: "text-delta",
+          id: textId,
+          delta: CLARIFY_REPLY,
+        } as never);
+        writer.write({ type: "text-end", id: textId } as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  // 用户指代「当前文章/本文」但实时正文为空：直接明确提示，不让 Agent 反问「文章在哪里」或臆断。
+  // 兼顾两种成因（编辑区确实空 / 内容尚未同步过来），都引导用户先写入或粘贴。
+  if (referencesArticle && articleMarkdown.trim() === "") {
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: uiMessages,
+      onFinish: async ({ messages }) => {
+        await saveAgentMessages(session.id, messages);
+      },
+      onError: errorMessage,
+      execute: async ({ writer }) => {
+        writeStep(writer, {
+          id: "empty-article",
+          kind: "intent",
+          title: "当前文章为空",
+          detail: "编辑区还没有可处理的正文，引导用户先写入或粘贴",
+        });
+        const textId = crypto.randomUUID();
+        writer.write({ type: "text-start", id: textId } as never);
+        writer.write({
+          type: "text-delta",
+          id: textId,
+          delta: EMPTY_ARTICLE_REPLY,
+        } as never);
+        writer.write({ type: "text-end", id: textId } as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
   try {
     const { model } = await getModel(parsed.data.providerId, parsed.data.modelId);
     const skills = await listSkills();
@@ -298,6 +408,31 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       previousProjectId: session.selectedProjectId,
       targetKind: target.kind,
     });
+
+    // 按需注入正文：默认带全文；仅与正文无关的意图（联网/代码）且用户未指代当前文章时省略全文，省 token。
+    const includeArticleBody = shouldIncludeArticleBody(
+      route.intent,
+      referencesArticle
+    );
+
+    // 斜杠命令 /<skill>：强制加载用户指定的 Skill（优先级最高，去重后并入路由结果，限 4 个）。
+    // 仅接受已注册的 skillKey/id；强制 Skill 需要工具链路里的 load_skill 能力。
+    if (parsed.data.forceSkillIds?.length) {
+      const availableSkillIds = new Set(
+        skills.flatMap((skill) => [skill.id, skill.skillKey])
+      );
+      const forced = parsed.data.forceSkillIds.filter((id) =>
+        availableSkillIds.has(id)
+      );
+      if (forced.length) {
+        route.skillIds = Array.from(
+          new Set([...forced, ...route.skillIds])
+        ).slice(0, 4);
+        if (!route.activeTools.includes("load_skill")) {
+          route.activeTools.push("load_skill");
+        }
+      }
+    }
     let codeSource: CodeSourceReference | undefined;
     let approval:
       | {
@@ -425,7 +560,9 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       sessionSummary: session.summary,
       summaryUpToPosition: session.summaryUpToPosition,
       uiMessages,
-      articleText: `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${loaded.markdown}`,
+      articleText: includeArticleBody
+        ? `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
+        : "",
       contextBudgetTokens: config.contextBudgetTokens,
     });
 
@@ -528,6 +665,15 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 : "当前文章暂无素材",
           });
         }
+        // 按需载入正文时，显式提示已注入实时编辑区正文（含字数），让用户确认上下文已就位。
+        if (includeArticleBody && articleMarkdown.trim() !== "") {
+          writeStep(writer, {
+            id: "current-article",
+            kind: "intent",
+            title: "已载入当前文章",
+            detail: `已注入实时编辑区正文（约 ${articleMarkdown.length.toLocaleString()} 字）`,
+          });
+        }
         writer.write({
           type: "data-context-usage",
           id: "context",
@@ -582,7 +728,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             kind: target.kind,
             id: target.id,
             title: loaded.title,
-            markdown: loaded.markdown,
+            markdown: articleMarkdown,
             digest: loaded.digest,
             documentType: loaded.documentType,
             snapshotHash: loaded.snapshotHash,
@@ -597,6 +743,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           loadedSkills,
           assetCatalog,
           conversationSummary: context.summary,
+          includeArticleBody,
           onCodeExploreStep: async (step) => {
             writer.write({
               type: "data-code-explore-step",

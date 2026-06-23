@@ -135,8 +135,40 @@ describe("routeAgentRequest", () => {
     expect(route.ambiguityQuestion).toContain("项目 A");
   });
 
-  it("loads de-ai-writing for Chinese polishing requests", async () => {
-    const route = await routeAgentRequest({
+  it("exposes web tools whenever a Tavily key is configured (not only needsWeb)", async () => {
+    // 消息无「搜索/联网/资料」等关键词 → 规则 needsWeb=false；
+    // 但配置了 Tavily Key 即应让 web_search/web_extract 常驻可用，由模型按需调用。
+    const withKey = await routeAgentRequest({
+      model: failingModel,
+      message: "写一篇关于边缘计算的科普文章",
+      skills,
+      config: {
+        tavilyApiKey: "tvly-xxx",
+        maxSteps: 12,
+        contextBudgetTokens: 32000,
+        projects: [],
+      },
+    });
+    expect(withKey.activeTools).toContain("web_search");
+    expect(withKey.activeTools).toContain("web_extract");
+
+    // 未配置 Key 且消息也无调研关键词：既无 Key 兜底、needsWeb 又为 false → 不暴露 web 工具。
+    const noKey = await routeAgentRequest({
+      model: failingModel,
+      message: "写一篇关于边缘计算的科普文章",
+      skills,
+      config: {
+        tavilyApiKey: "",
+        maxSteps: 12,
+        contextBudgetTokens: 32000,
+        projects: [],
+      },
+    });
+    expect(noKey.needsWeb).toBe(false);
+    expect(noKey.activeTools).not.toContain("web_search");
+  });
+
+  it("loads de-ai-writing for Chinese polishing requests", async () => {    const route = await routeAgentRequest({
       model: failingModel,
       message: "请把当前文章润色得像真人写的，去掉 AI 味",
       skills,
