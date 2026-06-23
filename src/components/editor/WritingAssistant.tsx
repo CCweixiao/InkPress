@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import {
@@ -546,6 +546,376 @@ function CodeSourceApprovalCard({
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Agent part 渲染注册表（声明式：每条 part → { stage, match, render }）
+// 替换原 message.parts.map 内的 if/else 链；新增 part 类型只需加一条规则。
+// stage 为阶段语义（意图/就绪/计划/思考/工具/证据/产出/meta/异常），当前按 part
+// 原序渲染，阶段分组可视化（设计文档 §2.1）作为后续增量。
+// ────────────────────────────────────────────────────────────────────────────
+
+export type Stage =
+  | "intent"
+  | "ready"
+  | "plan"
+  | "reasoning"
+  | "tool"
+  | "evidence"
+  | "output"
+  | "meta"
+  | "error";
+
+/** 阶段顺序（§2.1 规范化流水线），供后续阶段分组渲染使用。 */
+export const STAGE_ORDER: Stage[] = [
+  "intent",
+  "ready",
+  "plan",
+  "reasoning",
+  "tool",
+  "evidence",
+  "output",
+  "meta",
+  "error",
+];
+
+type AgentPart = Record<string, unknown>;
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object";
+
+export type RenderCtx = {
+  role: "user" | "assistant" | "system";
+  targetKind: "article" | "technical-document";
+  setFullscreenText: (text: string | null) => void;
+  onApplyArticle?: (article: {
+    title: string;
+    contentMd: string;
+    digest: string | null;
+  }) => void;
+  onApplyTechnicalDocument?: (document: {
+    title: string;
+    markdown: string;
+    snapshotHash: string;
+  }) => void;
+  resumeAfterApproval: () => Promise<void>;
+};
+
+export type PartRenderer = {
+  stage: Stage;
+  match: (part: AgentPart) => boolean;
+  render: (part: AgentPart, ctx: RenderCtx) => ReactNode;
+};
+
+/** 代码源就绪提示（② 就绪阶段）。 */
+function CodeSourceReadyNotice({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-2 text-[11px] text-emerald-900">
+      <div className="flex items-center gap-1.5 font-medium">
+        <Check className="h-3.5 w-3.5 text-emerald-600" />
+        代码源已就绪：{String(data.displayName ?? "")}
+      </div>
+      <div className="mt-1 truncate font-mono text-[10px] text-emerald-700">
+        {String(data.locator ?? "")}
+        {data.ref ? ` · ${String(data.ref)}` : ""}
+      </div>
+    </div>
+  );
+}
+
+/** 上下文用量提示（meta 阶段）。 */
+function ContextUsageLine({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="text-[10px] text-muted-foreground">
+      上下文约 {Number(data.estimatedTokens ?? 0).toLocaleString()} /{" "}
+      {Number(data.budgetTokens ?? 0).toLocaleString()} tokens
+      {data.compressed ? " · 已压缩历史对话" : ""}
+    </div>
+  );
+}
+
+/** 首次直写提示（⑦ 产出阶段，direct 模式：正文已直接写入编辑器）。 */
+function DirectWriteNotice() {
+  return (
+    <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] text-emerald-800">
+      <Check className="h-3.5 w-3.5 text-emerald-600" />
+      已写入正文（首次生成）
+    </div>
+  );
+}
+
+type EvidenceKind =
+  | "git-range"
+  | "commit"
+  | "change-summary"
+  | "explore"
+  | "snapshot"
+  | "source";
+
+/** 证据 chip（⑥ 证据阶段）：6 类证据 part 合并为一个组件，按 kind 切换样式。 */
+function EvidenceChip({
+  kind,
+  data,
+}: {
+  kind: EvidenceKind;
+  data: Record<string, unknown>;
+}) {
+  switch (kind) {
+    case "git-range":
+      return (
+        <div className="rounded-md border border-violet-200 bg-violet-50/60 px-2.5 py-2 text-[11px]">
+          <div className="font-medium text-violet-950">
+            Git 范围：{String(data.requestedRange ?? "")}
+          </div>
+          <div className="mt-1 font-mono text-[10px] text-violet-700">
+            {String(data.baseCommit ?? "").slice(0, 10)} →{" "}
+            {String(data.headCommit ?? "").slice(0, 10)}
+          </div>
+        </div>
+      );
+    case "commit":
+      return (
+        <div className="rounded-md border px-2.5 py-2 text-[11px]">
+          <span className="mr-2 font-mono text-primary">
+            {String(data.shortSha ?? data.sha ?? "").slice(0, 10)}
+          </span>
+          {String(data.subject ?? "")}
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            {String(data.author ?? "")} · {String(data.authoredAt ?? "")}
+          </div>
+        </div>
+      );
+    case "change-summary":
+      return (
+        <div className="rounded-md border px-2.5 py-2 text-[11px]">
+          已分析 {Number(data.commits ?? 0)} 个提交、{" "}
+          {Number(data.changedFiles ?? 0)} 个文件，整理为{" "}
+          {Number(data.featureGroups ?? 0)} 组功能变化
+          {data.truncated ? " · 部分结果已截断" : ""}
+        </div>
+      );
+    case "explore":
+      return (
+        <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-[11px]">
+          <FileSearch className="mt-0.5 h-3.5 w-3.5 text-blue-700" />
+          <div>
+            <div className="font-medium text-blue-950">
+              {String(data.title ?? "代码探索")}
+            </div>
+            <div className="mt-0.5 text-blue-700">
+              {String(data.detail ?? "")}
+            </div>
+          </div>
+        </div>
+      );
+    case "snapshot":
+      return (
+        <div className="rounded-md border px-2.5 py-2 text-[11px]">
+          代码快照 {String(data.snapshotHash ?? "").slice(0, 10)} ·{" "}
+          {Number(data.symbols ?? 0)} 个符号 · {Number(data.edges ?? 0)} 条关系
+          {data.truncated ? " · 部分结果已截断" : ""}
+        </div>
+      );
+    case "source":
+      return (
+        <div className="truncate text-[10px] text-muted-foreground">
+          {String(data.path ?? "")}#L{String(data.startLine ?? "")}
+          {data.endLine !== data.startLine
+            ? `-L${String(data.endLine ?? "")}`
+            : ""}
+        </div>
+      );
+  }
+}
+
+/** 工具类 part 渲染：direct 直写提示 / 提案卡片 / 通用工具块。 */
+function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
+  const toolName = toolNameFromPart(part);
+  const draftMode = (part.output as { mode?: unknown } | undefined)?.mode;
+  if (toolName === "propose_article_revision" && draftMode === "direct") {
+    return <DirectWriteNotice />;
+  }
+  const proposalId =
+    toolName === "propose_article_revision" ||
+    toolName === "propose_technical_document_revision"
+      ? proposalIdFromOutput(part.output)
+      : "";
+  if (proposalId) {
+    return (
+      <ProposalCard
+        proposalId={proposalId}
+        onApplied={(result) => {
+          if (ctx.targetKind === "article") {
+            ctx.onApplyArticle?.(
+              result as {
+                title: string;
+                contentMd: string;
+                digest: string | null;
+              }
+            );
+          } else {
+            ctx.onApplyTechnicalDocument?.(
+              result as {
+                title: string;
+                markdown: string;
+                snapshotHash: string;
+              }
+            );
+          }
+        }}
+      />
+    );
+  }
+  return <ToolCallBlock part={part} />;
+}
+
+// 顺序即优先级：特化 matcher（text/reasoning/data-*）必须在通用 tool matcher 之前。
+export const PART_RENDERERS: PartRenderer[] = [
+  {
+    stage: "output",
+    match: (p) => p.type === "text" && typeof p.text === "string",
+    render: (p, ctx) => {
+      const text = p.text as string;
+      if (ctx.role === "user") {
+        return (
+          <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground">
+            {text}
+          </div>
+        );
+      }
+      return (
+        <div className="group relative rounded-md text-foreground">
+          <Markdown className="text-xs leading-5">{text}</Markdown>
+          <button
+            type="button"
+            title="全屏查看"
+            onClick={() => ctx.setFullscreenText(text)}
+            className="absolute -right-1 -top-1 rounded-md border bg-background p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100"
+          >
+            <Maximize2 className="h-3 w-3" />
+          </button>
+        </div>
+      );
+    },
+  },
+  {
+    stage: "reasoning",
+    match: (p) => p.type === "reasoning" && typeof p.text === "string",
+    render: (p) => (
+      <ReasoningBlock
+        text={p.text as string}
+        state={typeof p.state === "string" ? p.state : undefined}
+      />
+    ),
+  },
+  {
+    stage: "ready",
+    match: (p) => p.type === "data-code-source-approval" && isObj(p.data),
+    render: (p, ctx) => (
+      <CodeSourceApprovalCard
+        data={
+          p.data as {
+            id: string;
+            displayName: string;
+            locator: string;
+            approvalToken: string;
+          }
+        }
+        onApproved={ctx.resumeAfterApproval}
+      />
+    ),
+  },
+  {
+    stage: "ready",
+    match: (p) => p.type === "data-code-source-ready" && isObj(p.data),
+    render: (p) => (
+      <CodeSourceReadyNotice data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "data-git-range" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip kind="git-range" data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "data-commit-evidence" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip kind="commit" data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "data-change-evidence-summary" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip
+        kind="change-summary"
+        data={p.data as Record<string, unknown>}
+      />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "data-code-explore-step" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip kind="explore" data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "data-project-snapshot" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip kind="snapshot" data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "data-source-evidence" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip kind="source" data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "evidence",
+    match: (p) => p.type === "source-url" && typeof p.url === "string",
+    render: (p) => (
+      <a
+        href={p.url as string}
+        target="_blank"
+        rel="noreferrer"
+        className="block truncate rounded-md border px-2 py-1.5 text-[11px] text-primary hover:bg-accent"
+      >
+        {typeof p.title === "string" ? p.title : (p.url as string)}
+      </a>
+    ),
+  },
+  {
+    stage: "intent",
+    match: (p) => p.type === "data-agent-step" && isObj(p.data),
+    render: (p) => <AgentStepBlock data={p.data as Record<string, unknown>} />,
+  },
+  {
+    stage: "meta",
+    match: (p) => p.type === "data-context-usage" && isObj(p.data),
+    render: (p) => (
+      <ContextUsageLine data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
+    stage: "tool",
+    match: (p) => toolNameFromPart(p) !== "",
+    render: (p, ctx) => renderToolPart(p, ctx),
+  },
+];
+
+/** 按 part 找到首个命中的 renderer 并渲染；未命中返回 null。 */
+export function renderAgentPart(part: AgentPart, ctx: RenderCtx): ReactNode {
+  for (const renderer of PART_RENDERERS) {
+    if (renderer.match(part)) return renderer.render(part, ctx);
+  }
+  return null;
+}
+
 export function WritingAssistant({
   articleId,
   targetKind = "article",
@@ -807,280 +1177,22 @@ export function WritingAssistant({
                 )}
               >
                 {message.parts.map((rawPart, index) => {
-                  const part = rawPart as unknown as Record<string, unknown>;
-                  if (part.type === "text" && typeof part.text === "string") {
-                    if (message.role === "user") {
-                      return (
-                        <div
-                          key={index}
-                          className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground"
-                        >
-                          {part.text}
-                        </div>
-                      );
-                    }
-                    // assistant 文本：markdown 渲染 + 全屏按钮
-                    return (
-                      <div
-                        key={index}
-                        className="group relative rounded-md text-foreground"
-                      >
-                        <Markdown className="text-xs leading-5">{part.text}</Markdown>
-                        <button
-                          type="button"
-                          title="全屏查看"
-                          onClick={() => setFullscreenText(part.text as string)}
-                          className="absolute -right-1 -top-1 rounded-md border bg-background p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100"
-                        >
-                          <Maximize2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "reasoning" &&
-                    typeof part.text === "string"
-                  ) {
-                    return (
-                      <ReasoningBlock
-                        key={index}
-                        text={part.text as string}
-                        state={typeof part.state === "string" ? part.state : undefined}
-                      />
-                    );
-                  }
-                  if (
-                    part.type === "data-code-source-approval" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    return (
-                      <CodeSourceApprovalCard
-                        key={index}
-                        data={
-                          part.data as {
-                            id: string;
-                            displayName: string;
-                            locator: string;
-                            approvalToken: string;
-                          }
-                        }
-                        onApproved={async () => {
-                          await (onFlushTarget ?? onFlushArticle)?.();
-                          await regenerate({ body: requestBody });
-                        }}
-                      />
-                    );
-                  }
-                  if (
-                    part.type === "data-code-source-ready" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div
-                        key={index}
-                        className="rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-2 text-[11px] text-emerald-900"
-                      >
-                        <div className="flex items-center gap-1.5 font-medium">
-                          <Check className="h-3.5 w-3.5 text-emerald-600" />
-                          代码源已就绪：{String(data.displayName ?? "")}
-                        </div>
-                        <div className="mt-1 truncate font-mono text-[10px] text-emerald-700">
-                          {String(data.locator ?? "")}
-                          {data.ref ? ` · ${String(data.ref)}` : ""}
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-git-range" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div
-                        key={index}
-                        className="rounded-md border border-violet-200 bg-violet-50/60 px-2.5 py-2 text-[11px]"
-                      >
-                        <div className="font-medium text-violet-950">
-                          Git 范围：{String(data.requestedRange ?? "")}
-                        </div>
-                        <div className="mt-1 font-mono text-[10px] text-violet-700">
-                          {String(data.baseCommit ?? "").slice(0, 10)} →{" "}
-                          {String(data.headCommit ?? "").slice(0, 10)}
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-commit-evidence" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div key={index} className="rounded-md border px-2.5 py-2 text-[11px]">
-                        <span className="mr-2 font-mono text-primary">
-                          {String(data.shortSha ?? data.sha ?? "").slice(0, 10)}
-                        </span>
-                        {String(data.subject ?? "")}
-                        <div className="mt-1 text-[10px] text-muted-foreground">
-                          {String(data.author ?? "")} · {String(data.authoredAt ?? "")}
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-change-evidence-summary" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div key={index} className="rounded-md border px-2.5 py-2 text-[11px]">
-                        已分析 {Number(data.commits ?? 0)} 个提交、{" "}
-                        {Number(data.changedFiles ?? 0)} 个文件，整理为{" "}
-                        {Number(data.featureGroups ?? 0)} 组功能变化
-                        {data.truncated ? " · 部分结果已截断" : ""}
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-agent-step" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    return (
-                      <AgentStepBlock
-                        key={index}
-                        data={part.data as Record<string, unknown>}
-                      />
-                    );
-                  }
-                  if (
-                    part.type === "data-context-usage" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div key={index} className="text-[10px] text-muted-foreground">
-                        上下文约 {Number(data.estimatedTokens ?? 0).toLocaleString()} /{" "}
-                        {Number(data.budgetTokens ?? 0).toLocaleString()} tokens
-                        {data.compressed ? " · 已压缩历史对话" : ""}
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-code-explore-step" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div
-                        key={index}
-                        className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-[11px]"
-                      >
-                        <FileSearch className="mt-0.5 h-3.5 w-3.5 text-blue-700" />
-                        <div>
-                          <div className="font-medium text-blue-950">
-                            {String(data.title ?? "代码探索")}
-                          </div>
-                          <div className="mt-0.5 text-blue-700">
-                            {String(data.detail ?? "")}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-project-snapshot" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div key={index} className="rounded-md border px-2.5 py-2 text-[11px]">
-                        代码快照 {String(data.snapshotHash ?? "").slice(0, 10)} ·{" "}
-                        {Number(data.symbols ?? 0)} 个符号 · {Number(data.edges ?? 0)} 条关系
-                        {data.truncated ? " · 部分结果已截断" : ""}
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "data-source-evidence" &&
-                    part.data &&
-                    typeof part.data === "object"
-                  ) {
-                    const data = part.data as Record<string, unknown>;
-                    return (
-                      <div key={index} className="truncate text-[10px] text-muted-foreground">
-                        {String(data.path ?? "")}#L{String(data.startLine ?? "")}
-                        {data.endLine !== data.startLine ? `-L${String(data.endLine ?? "")}` : ""}
-                      </div>
-                    );
-                  }
-                  if (
-                    part.type === "source-url" &&
-                    typeof part.url === "string"
-                  ) {
-                    return (
-                      <a
-                        key={index}
-                        href={part.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block truncate rounded-md border px-2 py-1.5 text-[11px] text-primary hover:bg-accent"
-                      >
-                        {typeof part.title === "string" ? part.title : part.url}
-                      </a>
-                    );
-                  }
-                  const toolName = toolNameFromPart(part);
-                  if (!toolName) return null;
-                  // 首次生成（direct 模式）：正文已直接写入编辑器，不渲染提案卡片
-                  const draftMode = (part.output as { mode?: unknown } | undefined)?.mode;
-                  if (toolName === "propose_article_revision" && draftMode === "direct") {
-                    return null;
-                  }
-                  const proposalId =
-                    (toolName === "propose_article_revision" ||
-                      toolName === "propose_technical_document_revision")
-                      ? proposalIdFromOutput(part.output)
-                      : "";
-                  if (proposalId) {
-                    return (
-                      <ProposalCard
-                        key={index}
-                        proposalId={proposalId}
-                        onApplied={(result) => {
-                          if (targetKind === "article") {
-                            onApplyArticle?.(
-                              result as {
-                                title: string;
-                                contentMd: string;
-                                digest: string | null;
-                              }
-                            );
-                          } else {
-                            onApplyTechnicalDocument?.(
-                              result as {
-                                title: string;
-                                markdown: string;
-                                snapshotHash: string;
-                              }
-                            );
-                          }
-                        }}
-                      />
-                    );
-                  }
-                  // 工具调用：用可展开的 ToolCallBlock（默认收起，点击查看输入输出）
-                  return <ToolCallBlock key={index} part={part} />;
+                  const ctx: RenderCtx = {
+                    role: message.role,
+                    targetKind,
+                    setFullscreenText,
+                    onApplyArticle,
+                    onApplyTechnicalDocument,
+                    resumeAfterApproval: async () => {
+                      await (onFlushTarget ?? onFlushArticle)?.();
+                      await regenerate({ body: requestBody });
+                    },
+                  };
+                  return (
+                    <Fragment key={index}>
+                      {renderAgentPart(rawPart as unknown as AgentPart, ctx)}
+                    </Fragment>
+                  );
                 })}
               </div>
             ))}
