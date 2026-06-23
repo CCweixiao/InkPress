@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send, Palette, ArrowLeft } from "lucide-react";
+import {
+  Sparkles,
+  Send,
+  Palette,
+  ArrowLeft,
+  PanelRightClose,
+  PanelRightOpen,
+} from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +62,8 @@ export function EditorWorkspace({
     article.themeId ?? defaultThemeId
   );
   const [publishOpen, setPublishOpen] = useState(false);
+  // 公众号预览折叠态：收起后按 4:6 将释放宽度分摊给写作助手(chat 模式)与编辑区
+  const [previewCollapsed, setPreviewCollapsed] = useState(false);
   const [aiMode, setAiMode] = useState<AIPanelMode>("chat");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
     "idle"
@@ -185,16 +194,37 @@ export function EditorWorkspace({
           返回
         </Link>
         <span className="text-muted-foreground/40">/</span>
-        <span className="text-sm font-medium truncate">
+        <span className="text-sm font-medium truncate min-w-0">
           {title || "无标题文章"}
         </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto h-8 gap-1.5 text-muted-foreground"
+          onClick={() => setPreviewCollapsed((v) => !v)}
+          title={previewCollapsed ? "展开公众号预览" : "收起公众号预览"}
+          aria-label={previewCollapsed ? "展开公众号预览" : "收起公众号预览"}
+        >
+          {previewCollapsed ? (
+            <PanelRightOpen className="h-4 w-4" />
+          ) : (
+            <PanelRightClose className="h-4 w-4" />
+          )}
+          <span className="hidden md:inline">
+            {previewCollapsed ? "展开预览" : "收起预览"}
+          </span>
+        </Button>
       </header>
       <div className="flex-1 flex overflow-hidden">
       {/* 左栏：AI 写作面板 */}
       <aside
         className={`${
-          aiMode === "chat" ? "w-[400px]" : "w-72"
-        } border-r border-border bg-muted/30 flex flex-col shrink-0 transition-[width] duration-200`}
+          previewCollapsed && aiMode === "chat"
+            ? "flex-[2] min-w-0"
+            : aiMode === "chat"
+            ? "w-[400px] shrink-0"
+            : "w-72 shrink-0"
+        } border-r border-border bg-muted/30 flex flex-col transition-[width] duration-200`}
       >
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-2 mb-1">
@@ -226,7 +256,11 @@ export function EditorWorkspace({
       </aside>
 
       {/* 中栏：编辑器 */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-background">
+      <main
+        className={`${
+          previewCollapsed && aiMode === "chat" ? "flex-[3]" : "flex-1"
+        } flex flex-col overflow-hidden bg-background`}
+      >
         <div className="px-6 py-3 border-b border-border flex items-center gap-3">
           <Input
             value={title}
@@ -254,7 +288,11 @@ export function EditorWorkspace({
       </main>
 
       {/* 右栏：公众号实时预览 */}
-      <aside className="w-[380px] border-l border-border bg-muted/30 overflow-y-auto shrink-0">
+      <aside
+        className={`${
+          previewCollapsed ? "hidden" : "w-[380px] shrink-0"
+        } border-l border-border bg-muted/30 overflow-y-auto transition-[width] duration-200`}
+      >
         <div className="px-4 py-2 border-b border-border flex items-center gap-2 bg-background/60">
           <Palette className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <Select value={themeId ?? undefined} onValueChange={setThemeId}>
