@@ -47,9 +47,16 @@ export function AgentErrorBlock({
               {expanded ? "收起原始错误" : "展开原始错误"}
             </button>
             {expanded && (
-              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-red-100/70 p-2 text-[10px] leading-5 font-mono text-red-800 dark:bg-red-950 dark:text-red-200">
-                {classified.raw}
-              </pre>
+              <div className="mt-1 space-y-1">
+                {classified.statusCode && (
+                  <div className="text-[10px] font-medium text-red-500 dark:text-red-400">
+                    HTTP {classified.statusCode} · {classified.category}
+                  </div>
+                )}
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-red-100/70 p-2 text-[10px] leading-5 font-mono text-red-800 dark:bg-red-950 dark:text-red-200">
+                  {classified.raw}
+                </pre>
+              </div>
             )}
           </>
         )}
