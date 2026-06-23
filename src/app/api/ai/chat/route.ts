@@ -18,6 +18,7 @@ import {
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
 import { createWritingAgent } from "@/lib/ai/writing-agent";
+import { classifyError } from "@/lib/ai/error-classify";
 import { getModel } from "@/lib/ai/provider";
 import { listSkills, loadSkill } from "@/lib/ai/skills";
 import { routeAgentRequest } from "@/lib/ai/agent-orchestrator";
@@ -121,63 +122,10 @@ function lastUserText(messages: UIMessage[]) {
 }
 
 function errorMessage(error: unknown) {
-  // 解包 AI_RetryError：取 lastError 的底层信息再归类
-  let raw =
-    error instanceof Error
-      ? error.message
-      : "写作助手执行失败，请稍后重试。";
-  const retryErr = error as {
-    name?: string;
-    lastError?: { message?: string } | Error;
-    errors?: Array<{ message?: string } | Error>;
-    cause?: { message?: string };
-  };
-  if (retryErr?.name === "AI_RetryError" || /RetryError/i.test(raw)) {
-    const inner =
-      (retryErr.lastError instanceof Error
-        ? retryErr.lastError.message
-        : retryErr.lastError?.message) ??
-      retryErr.errors?.find((e) => e)?.message ??
-      retryErr.cause?.message ??
-      raw;
-    raw = inner || raw;
-  }
-
-  // 余额不足 / 额度耗尽（智谱 1113、各厂商 402/429、quota 等）
-  if (
-    /余额不足|额度|配额|insufficient|quota|payment required|exceeded your current quota/i.test(
-      raw
-    )
-  ) {
-    return "模型余额不足或额度已用尽，请充值或在「设置 → 系统配置 → AI 模型」中切换供应商/模型。";
-  }
-  // 认证失败
-  if (/401|unauthorized|invalid api key|invalid_api_key|forbidden/i.test(raw)) {
-    return "API Key 无效或已过期，请检查「设置 → 系统配置 → AI 模型」中的配置。";
-  }
-  // 模型不存在 / 不支持
-  if (
-    /model.*not found|does not exist|未知模型|model_not_found/i.test(raw)
-  ) {
-    return "所选模型不存在或当前供应商未提供，请在「设置」中更换模型。";
-  }
-  // 工具调用不支持
-  if (
-    /tool.?call|function.?call|tools?.+(unsupported|not supported)|不支持.+工具/i.test(
-      raw
-    )
-  ) {
-    return "当前模型不支持 Agent 所需的工具调用，请切换到支持 Tool Calling 的模型。";
-  }
-  // 超时
-  if (/timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(raw)) {
-    return "请求超时，请检查网络后重试。";
-  }
-  // 速率限制（非余额类）
-  if (/rate limit|too many requests|429/i.test(raw)) {
-    return "请求过于频繁被限流，请稍后再试。";
-  }
-  return raw;
+  // 统一委托 classifyError（前后端共享同一份归类规则，含厂商中文限流文案与 statusCode 探测）。
+  // 注意：streamText 的 onError 返回值会被忽略；真正面向用户的归类展示由前端
+  // AgentErrorBlock 对 useChat 转发的 error 调用同一份 classifyError 完成。
+  return classifyError(error).label;
 }
 
 function writeStep(
