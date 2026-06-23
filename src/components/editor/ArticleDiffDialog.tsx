@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { diffChars, diffLines } from "diff";
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   Columns2,
   FoldVertical,
+  Loader2,
   Rows3,
+  X,
 } from "lucide-react";
 import {
   Dialog,
@@ -18,146 +20,32 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  buildRows,
+  foldRows,
+  InlineText,
+  type ProposalDetail,
+} from "./article-diff-utils";
 
-export type ProposalDetail = {
-  id: string;
-  proposalKind?: "article" | "technical-document";
-  targetId?: string;
-  baseTitle: string;
-  baseMarkdown: string;
-  baseDigest: string;
-  title: string | null;
-  markdown: string;
-  digest: string | null;
-  summary: string;
-  status: string;
-  stats: { oldLines: number; newLines: number; changedLines: number };
-};
-
-type DiffRow = {
-  oldNumber?: number;
-  newNumber?: number;
-  oldText?: string;
-  newText?: string;
-  kind: "same" | "added" | "removed" | "modified" | "fold";
-  foldedCount?: number;
-};
-
-function splitLines(value: string) {
-  const lines = value.split("\n");
-  return lines.at(-1) === "" ? lines.slice(0, -1) : lines;
-}
-
-function buildRows(oldText: string, newText: string): DiffRow[] {
-  const parts = diffLines(oldText, newText);
-  const rows: DiffRow[] = [];
-  let oldNumber = 1;
-  let newNumber = 1;
-  for (let index = 0; index < parts.length; index++) {
-    const part = parts[index];
-    if (part.removed && parts[index + 1]?.added) {
-      const removed = splitLines(part.value);
-      const added = splitLines(parts[index + 1].value);
-      const length = Math.max(removed.length, added.length);
-      for (let line = 0; line < length; line++) {
-        rows.push({
-          oldNumber: removed[line] !== undefined ? oldNumber++ : undefined,
-          newNumber: added[line] !== undefined ? newNumber++ : undefined,
-          oldText: removed[line],
-          newText: added[line],
-          kind:
-            removed[line] !== undefined && added[line] !== undefined
-              ? "modified"
-              : removed[line] !== undefined
-                ? "removed"
-                : "added",
-        });
-      }
-      index++;
-      continue;
-    }
-    for (const line of splitLines(part.value)) {
-      if (part.added) {
-        rows.push({ newNumber: newNumber++, newText: line, kind: "added" });
-      } else if (part.removed) {
-        rows.push({ oldNumber: oldNumber++, oldText: line, kind: "removed" });
-      } else {
-        rows.push({
-          oldNumber: oldNumber++,
-          newNumber: newNumber++,
-          oldText: line,
-          newText: line,
-          kind: "same",
-        });
-      }
-    }
-  }
-  return rows;
-}
-
-function foldRows(rows: DiffRow[], enabled: boolean) {
-  if (!enabled) return rows;
-  const result: DiffRow[] = [];
-  let index = 0;
-  while (index < rows.length) {
-    if (rows[index].kind !== "same") {
-      result.push(rows[index++]);
-      continue;
-    }
-    let end = index;
-    while (end < rows.length && rows[end].kind === "same") end++;
-    const run = rows.slice(index, end);
-    if (run.length > 10) {
-      result.push(
-        ...run.slice(0, 3),
-        { kind: "fold", foldedCount: run.length - 6 },
-        ...run.slice(-3)
-      );
-    } else {
-      result.push(...run);
-    }
-    index = end;
-  }
-  return result;
-}
-
-function InlineText({
-  oldText,
-  newText,
-  side,
-}: {
-  oldText: string;
-  newText: string;
-  side: "old" | "new";
-}) {
-  return diffChars(oldText, newText).map((part, index) => {
-    if (side === "old" && part.added) return null;
-    if (side === "new" && part.removed) return null;
-    const changed = side === "old" ? part.removed : part.added;
-    return (
-      <span
-        key={index}
-        className={cn(
-          changed &&
-            (side === "old"
-              ? "bg-red-300/70 text-red-950"
-              : "bg-emerald-300/70 text-emerald-950")
-        )}
-      >
-        {part.value}
-      </span>
-    );
-  });
-}
+// 保持向后兼容：ProposalDetail 已迁移到 article-diff-utils，此处 re-export
+// 避免下游（如 WritingAssistant）的 import 断裂。
+export type { ProposalDetail } from "./article-diff-utils";
 
 export function ArticleDiffDialog({
   open,
   onOpenChange,
   proposal,
+  onApply,
+  onReject,
+  applying = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   proposal: ProposalDetail | null;
+  /** 在弹窗内就地应用/放弃（审查即操作），由 ProposalCard 传入。 */
+  onApply?: () => void;
+  onReject?: () => void;
+  applying?: boolean;
 }) {
   const [view, setView] = useState<"split" | "unified">("split");
   const [fold, setFold] = useState(true);
@@ -177,6 +65,8 @@ export function ArticleDiffDialog({
         .filter(({ row }) => !["same", "fold"].includes(row.kind)),
     [rows]
   );
+  const canDecide =
+    proposal?.status === "pending" && (!!onApply || !!onReject);
 
   useEffect(() => {
     if (open && window.innerWidth < 768) setView("unified");
@@ -192,6 +82,40 @@ export function ArticleDiffDialog({
       block: "center",
     });
   }
+
+  // 键盘快捷键：↑↓ 跳改动、A 应用、R 放弃、F 折叠。仅在弹窗打开时挂载。
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (key === "a" && onApply) {
+        e.preventDefault();
+        onApply();
+      } else if (key === "r" && onReject) {
+        e.preventDefault();
+        onReject();
+      } else if (key === "f") {
+        e.preventDefault();
+        setFold((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeChange, changeRows, onApply, onReject]);
 
   if (!proposal) return null;
 
@@ -237,18 +161,37 @@ export function ArticleDiffDialog({
             onClick={() => setFold((value) => !value)}
           >
             <FoldVertical className="h-4 w-4" />
-            {fold ? "展开未修改内容" : "折叠未修改内容"}
+            {fold ? "展开未修改" : "折叠未修改"}
           </Button>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-2">
             <span className="mr-1 text-xs text-muted-foreground">
               {changeRows.length ? activeChange + 1 : 0}/{changeRows.length}
             </span>
-            <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => navigate(-1)}>
+            <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => navigate(-1)} title="上一处 (↑)">
               <ArrowUp className="h-4 w-4" />
             </Button>
-            <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => navigate(1)}>
+            <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => navigate(1)} title="下一处 (↓)">
               <ArrowDown className="h-4 w-4" />
             </Button>
+            {canDecide && (
+              <>
+                <div className="mx-1 h-5 w-px bg-border" />
+                <Button size="sm" onClick={onApply} disabled={applying} title="应用 (A)">
+                  {applying ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  应用
+                  <span className="ml-1 opacity-60">A</span>
+                </Button>
+                <Button size="sm" variant="outline" onClick={onReject} disabled={applying} title="放弃 (R)">
+                  <X className="h-3.5 w-3.5" />
+                  放弃
+                  <span className="ml-1 opacity-60">R</span>
+                </Button>
+              </>
+            )}
           </div>
         </div>
 
@@ -291,7 +234,10 @@ export function ArticleDiffDialog({
                       </div>
                     ) : (
                       <>
-                        <div className={cn("grid grid-cols-[48px_1fr] border-r border-slate-800", row.kind === "removed" || row.kind === "modified" ? "bg-red-950/45" : "")}>
+                        <div className={cn(
+                          "grid grid-cols-[48px_1fr] border-r border-slate-800",
+                          (row.kind === "removed" || row.kind === "modified") && "bg-red-950/40 border-l-2 border-l-red-500/60"
+                        )}>
                           <span className="select-none border-r border-slate-800 px-2 text-right text-slate-600">{row.oldNumber ?? ""}</span>
                           <pre className="whitespace-pre-wrap break-words px-3">
                             {row.kind === "modified" ? (
@@ -299,7 +245,10 @@ export function ArticleDiffDialog({
                             ) : row.oldText}
                           </pre>
                         </div>
-                        <div className={cn("grid grid-cols-[48px_1fr]", row.kind === "added" || row.kind === "modified" ? "bg-emerald-950/45" : "")}>
+                        <div className={cn(
+                          "grid grid-cols-[48px_1fr]",
+                          (row.kind === "added" || row.kind === "modified") && "bg-emerald-950/40 border-l-2 border-l-emerald-500/60"
+                        )}>
                           <span className="select-none border-r border-slate-800 px-2 text-right text-slate-600">{row.newNumber ?? ""}</span>
                           <pre className="whitespace-pre-wrap break-words px-3">
                             {row.kind === "modified" ? (
@@ -327,8 +276,8 @@ export function ArticleDiffDialog({
                 const lines =
                   row.kind === "modified"
                     ? [
-                        { side: "old" as const, sign: "-", number: row.oldNumber, text: row.oldText ?? "", tone: "bg-red-950/45" },
-                        { side: "new" as const, sign: "+", number: row.newNumber, text: row.newText ?? "", tone: "bg-emerald-950/45" },
+                        { side: "old" as const, sign: "-", number: row.oldNumber, text: row.oldText ?? "", tone: "bg-red-950/40 border-l-2 border-l-red-500/60" },
+                        { side: "new" as const, sign: "+", number: row.newNumber, text: row.newText ?? "", tone: "bg-emerald-950/40 border-l-2 border-l-emerald-500/60" },
                       ]
                     : [
                         {
@@ -336,7 +285,7 @@ export function ArticleDiffDialog({
                           sign: row.kind === "removed" ? "-" : row.kind === "added" ? "+" : " ",
                           number: row.oldNumber ?? row.newNumber,
                           text: row.oldText ?? row.newText ?? "",
-                          tone: row.kind === "removed" ? "bg-red-950/45" : row.kind === "added" ? "bg-emerald-950/45" : "",
+                          tone: row.kind === "removed" ? "bg-red-950/40 border-l-2 border-l-red-500/60" : row.kind === "added" ? "bg-emerald-950/40 border-l-2 border-l-emerald-500/60" : "",
                         },
                       ];
                 return lines.map((line, lineIndex) => (
@@ -360,6 +309,12 @@ export function ArticleDiffDialog({
             </div>
           )}
         </div>
+
+        {canDecide && (
+          <div className="border-t px-4 py-1.5 text-center text-[10px] text-muted-foreground">
+            快捷键 ↑↓ 跳改动 · A 应用 · R 放弃 · F 折叠
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
