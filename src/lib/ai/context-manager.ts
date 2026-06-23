@@ -43,6 +43,70 @@ function compactTranscript(messages: UIMessage[]) {
     .slice(-MAX_SUMMARY_SOURCE_CHARS);
 }
 
+const SUMMARY_SYSTEM = `你负责压缩写作对话历史。输出简洁的结构化中文摘要，严格保留：
+- 用户最终目标与受众
+- 已确认的写作要求
+- 已验证事实和来源 URL
+- 已做出的文章决策
+- 用户透露的偏好、约定与经验（写作风格、术语、禁忌）
+- 尚未完成或待确认事项
+不要保留工具执行噪声、寒暄或已经被推翻的方案。`;
+
+/**
+ * 压缩对话历史为摘要（auto 自动触发与 /compact 手动触发共用）。
+ * 保留最近 keepRecent 条消息不压缩，将其余未压缩历史并入 session.summary，
+ * 持久化 summary + summaryUpToPosition。返回压缩条数（0 = 无可压缩）。
+ */
+export async function summarizeConversation(input: {
+  model: LanguageModel;
+  sessionId: string;
+  summary: string;
+  summaryUpToPosition: number;
+  uiMessages: UIMessage[];
+  keepRecent?: number;
+}): Promise<{
+  summary: string;
+  summaryUpToPosition: number;
+  summarizedCount: number;
+}> {
+  const keepRecent = input.keepRecent ?? RECENT_MESSAGE_COUNT;
+  const cutoff = Math.max(0, input.uiMessages.length - keepRecent);
+  if (cutoff === 0) {
+    return {
+      summary: input.summary,
+      summaryUpToPosition: input.summaryUpToPosition,
+      summarizedCount: 0,
+    };
+  }
+  const newHistorical = input.uiMessages.slice(
+    Math.max(0, input.summaryUpToPosition + 1),
+    cutoff
+  );
+  if (newHistorical.length === 0) {
+    return {
+      summary: input.summary,
+      summaryUpToPosition: input.summaryUpToPosition,
+      summarizedCount: 0,
+    };
+  }
+  const transcript = compactTranscript(newHistorical);
+  const result = await generateText({
+    model: input.model,
+    system: SUMMARY_SYSTEM,
+    prompt: `已有摘要：\n${input.summary || "（无）"}\n\n新增历史：\n${transcript}`,
+    temperature: 0,
+    maxOutputTokens: 1200,
+    maxRetries: 1,
+  });
+  const summary = result.text.trim();
+  const summaryUpToPosition = cutoff - 1;
+  await prisma.agentChatSession.update({
+    where: { id: input.sessionId },
+    data: { summary, summaryUpToPosition },
+  });
+  return { summary, summaryUpToPosition, summarizedCount: newHistorical.length };
+}
+
 export async function prepareAgentContext(input: {
   model: LanguageModel;
   sessionId: string;
@@ -74,34 +138,15 @@ export async function prepareAgentContext(input: {
   let recentMessages = input.uiMessages;
 
   if (shouldSummarize && input.uiMessages.length > RECENT_MESSAGE_COUNT) {
-    const cutoff = input.uiMessages.length - RECENT_MESSAGE_COUNT;
-    const newHistorical = input.uiMessages.slice(
-      Math.max(0, input.summaryUpToPosition + 1),
-      cutoff
-    );
-    if (newHistorical.length > 0) {
-      const transcript = compactTranscript(newHistorical);
-      const result = await generateText({
-        model: input.model,
-        system: `你负责压缩写作对话历史。输出简洁的结构化中文摘要，严格保留：
-- 用户最终目标与受众
-- 已确认的写作要求
-- 已验证事实和来源 URL
-- 已做出的文章决策
-- 尚未完成或待确认事项
-不要保留工具执行噪声、寒暄或已经被推翻的方案。`,
-        prompt: `已有摘要：\n${summary || "（无）"}\n\n新增历史：\n${transcript}`,
-        temperature: 0,
-        maxOutputTokens: 1200,
-        maxRetries: 1,
-      });
-      summary = result.text.trim();
-      summaryUpToPosition = cutoff - 1;
-      await prisma.agentChatSession.update({
-        where: { id: input.sessionId },
-        data: { summary, summaryUpToPosition },
-      });
-    }
+    const compressed = await summarizeConversation({
+      model: input.model,
+      sessionId: input.sessionId,
+      summary: input.sessionSummary,
+      summaryUpToPosition: input.summaryUpToPosition,
+      uiMessages: input.uiMessages,
+    });
+    summary = compressed.summary;
+    summaryUpToPosition = compressed.summaryUpToPosition;
     recentMessages = input.uiMessages.slice(-RECENT_MESSAGE_COUNT);
   }
 
