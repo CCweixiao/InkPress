@@ -8,32 +8,46 @@ import { cn } from "@/lib/utils";
 
 type LogFile = { name: string; size: number; mtime: string };
 
-/** 把 pino JSON 行渲染为可读的单行（带级别着色） */
+/** 按东八区（Asia/Shanghai）格式化日志时间，输出 YYYY/MM/DD HH:mm:ss。
+ *  存储侧为 UTC iso（无歧义），展示统一锁定 GMT+8，避免随容器/浏览器时区漂移；带上日期便于跨天排查。 */
+function formatLogTime(time: unknown): string {
+  const d = new Date(typeof time === "string" ? time : Number(time));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/** 把 pino JSON 行渲染为可读的单行（带级别着色，适配日间/夜间） */
 function renderLine(line: string) {
   let parsed: Record<string, unknown> | null = null;
   try {
     parsed = JSON.parse(line);
   } catch {
-    return { level: "raw", text: line, time: "", msg: line, color: "text-muted-foreground" };
+    return { level: "raw", text: line, time: "", msg: line, color: "text-zinc-700 dark:text-zinc-300" };
   }
   const level = String(parsed?.level ?? "info");
   const msg = String(parsed?.msg ?? "");
-  const time = parsed?.time
-    ? new Date(
-        typeof parsed.time === "string" ? parsed.time : Number(parsed.time)
-      ).toLocaleTimeString("zh-CN", { hour12: false })
-    : "";
+  const time = parsed?.time ? formatLogTime(parsed.time) : "";
   // 简化展示：时间 [级别] module msg
   const module = parsed?.module ? `[${parsed.module}]` : "";
   const text = `${time} ${level.toUpperCase().padEnd(5)} ${module} ${msg}`;
+  // 日间：亮底 + 黑灰常规字（异常标红、warn 标黄）；夜间：暗底 + 浅灰字另配一套
   const color =
     level === "error"
-      ? "text-red-600"
+      ? "text-red-600 dark:text-red-400"
       : level === "warn"
-        ? "text-amber-600"
+        ? "text-amber-600 dark:text-amber-400"
         : level === "debug" || level === "trace"
-          ? "text-slate-400"
-          : "text-foreground";
+          ? "text-slate-500 dark:text-slate-400"
+          : "text-zinc-700 dark:text-zinc-300";
   return { level, text, time, msg, color, module: parsed?.module };
 }
 
@@ -188,10 +202,10 @@ export function LogsViewer() {
         {/* 日志内容 */}
         <div
           ref={containerRef}
-          className="rounded-md border border-border bg-zinc-950 p-3 h-[480px] overflow-auto font-mono text-xs leading-relaxed"
+          className="rounded-md border border-border bg-zinc-50 dark:bg-zinc-950 p-3 h-[480px] overflow-auto font-mono text-xs leading-relaxed"
         >
           {rendered.length === 0 ? (
-            <div className="text-zinc-500 text-center py-8">
+            <div className="text-zinc-400 dark:text-zinc-500 text-center py-8">
               {loading ? "加载中…" : "暂无日志记录"}
             </div>
           ) : (
