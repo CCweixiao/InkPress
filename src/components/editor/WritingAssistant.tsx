@@ -486,21 +486,21 @@ function CodeSourceApprovalCard({
   }
 
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-xs">
+    <div className="rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-xs dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
       <div className="flex items-start gap-2">
-        <FileSearch className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+        <FileSearch className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-amber-950">授权只读代码探索</div>
-          <div className="mt-1 text-amber-900">{data.displayName}</div>
-          <div className="mt-1 break-all font-mono text-[10px] text-amber-700">
+          <div className="font-semibold text-amber-950 dark:text-amber-100">授权只读代码探索</div>
+          <div className="mt-1 text-amber-900 dark:text-amber-200">{data.displayName}</div>
+          <div className="mt-1 break-all font-mono text-[10px] text-amber-700 dark:text-amber-400">
             {data.locator}
           </div>
-          <p className="mt-2 leading-5 text-amber-800">
+          <p className="mt-2 leading-5 text-amber-800 dark:text-amber-200">
             仅允许读取源码、符号与 Git 历史；不会修改、构建或执行项目。
           </p>
         </div>
       </div>
-      {error && <p className="mt-2 text-red-600">{error}</p>}
+      {error && <p className="mt-2 text-red-600 dark:text-red-400">{error}</p>}
       {sourceStatus === "pending" ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           <Button
@@ -616,12 +616,12 @@ export type PartRenderer = {
 /** 代码源就绪提示（② 就绪阶段）。 */
 function CodeSourceReadyNotice({ data }: { data: Record<string, unknown> }) {
   return (
-    <div className="rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-2 text-[11px] text-emerald-900">
+    <div className="rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-2 text-[11px] text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
       <div className="flex items-center gap-1.5 font-medium">
-        <Check className="h-3.5 w-3.5 text-emerald-600" />
+        <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
         代码源已就绪：{String(data.displayName ?? "")}
       </div>
-      <div className="mt-1 truncate font-mono text-[10px] text-emerald-700">
+      <div className="mt-1 truncate font-mono text-[10px] text-emerald-700 dark:text-emerald-400">
         {String(data.locator ?? "")}
         {data.ref ? ` · ${String(data.ref)}` : ""}
       </div>
@@ -643,8 +643,8 @@ function ContextUsageLine({ data }: { data: Record<string, unknown> }) {
 /** 首次直写提示（⑦ 产出阶段，direct 模式：正文已直接写入编辑器）。 */
 function DirectWriteNotice() {
   return (
-    <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] text-emerald-800">
-      <Check className="h-3.5 w-3.5 text-emerald-600" />
+    <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+      <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
       已写入正文（首次生成）
     </div>
   );
@@ -669,11 +669,11 @@ function EvidenceChip({
   switch (kind) {
     case "git-range":
       return (
-        <div className="rounded-md border border-violet-200 bg-violet-50/60 px-2.5 py-2 text-[11px]">
-          <div className="font-medium text-violet-950">
+        <div className="rounded-md border border-violet-200 bg-violet-50/60 px-2.5 py-2 text-[11px] dark:border-violet-900 dark:bg-violet-950/40">
+          <div className="font-medium text-violet-950 dark:text-violet-100">
             Git 范围：{String(data.requestedRange ?? "")}
           </div>
-          <div className="mt-1 font-mono text-[10px] text-violet-700">
+          <div className="mt-1 font-mono text-[10px] text-violet-700 dark:text-violet-300">
             {String(data.baseCommit ?? "").slice(0, 10)} →{" "}
             {String(data.headCommit ?? "").slice(0, 10)}
           </div>
@@ -702,13 +702,13 @@ function EvidenceChip({
       );
     case "explore":
       return (
-        <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-[11px]">
-          <FileSearch className="mt-0.5 h-3.5 w-3.5 text-blue-700" />
+        <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-[11px] dark:border-blue-900 dark:bg-blue-950/40">
+          <FileSearch className="mt-0.5 h-3.5 w-3.5 text-blue-700 dark:text-blue-400" />
           <div>
-            <div className="font-medium text-blue-950">
+            <div className="font-medium text-blue-950 dark:text-blue-100">
               {String(data.title ?? "代码探索")}
             </div>
-            <div className="mt-0.5 text-blue-700">
+            <div className="mt-0.5 text-blue-700 dark:text-blue-300">
               {String(data.detail ?? "")}
             </div>
           </div>
@@ -1306,7 +1306,7 @@ export function WritingAssistant({
                 void submit();
               }
             }}
-            placeholder="让 Agent 研究、创作或调整文章…"
+            placeholder="让 Agent 研究、创作或调整文章…（Enter 发送 · Shift+Enter 换行）"
             className="min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none"
           />
           <div className="flex items-center gap-1.5">
@@ -1325,9 +1325,7 @@ export function WritingAssistant({
                   ?.models.find((m) => m.id === modelId)?.name ?? modelId
               }
             />
-            <span className="ml-auto hidden text-[10px] text-muted-foreground sm:inline">
-              Enter 发送 · Shift+Enter 换行
-            </span>
+            <div className="ml-auto" aria-hidden />
             {busy ? (
               <Button
                 size="sm"
