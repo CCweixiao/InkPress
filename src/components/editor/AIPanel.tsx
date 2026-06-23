@@ -1,28 +1,12 @@
 "use client";
 
 import { Bot, FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { ArticleMaterialsPanel } from "./ArticleMaterialsPanel";
 import { WritingAssistant } from "./WritingAssistant";
 
 export type AIPanelMode = "chat" | "materials";
-
-type Model = { id: string; name: string; isDefault: boolean };
-type Provider = {
-  id: string;
-  name: string;
-  models: Model[];
-  isDefault: boolean;
-};
 
 export function AIPanel({
   onApply,
@@ -53,33 +37,11 @@ export function AIPanel({
   onApplyDigest?: (digest: string) => void;
 }) {
   const [mode, setModeState] = useState<AIPanelMode>("chat");
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [providerId, setProviderId] = useState("");
-  const [modelId, setModelId] = useState("");
 
   function setMode(next: AIPanelMode) {
     setModeState(next);
     onModeChange?.(next);
   }
-
-  useEffect(() => {
-    fetch("/api/ai/providers")
-      .then((response) => response.json())
-      .then((data: { providers: Provider[] }) => {
-        const list = data.providers ?? [];
-        setProviders(list);
-        const provider = list.find((item) => item.isDefault) ?? list[0];
-        if (!provider) return;
-        setProviderId(provider.id);
-        setModelId(
-          (provider.models.find((model) => model.isDefault) ?? provider.models[0])
-            ?.id ?? ""
-        );
-      })
-      .catch(() => {});
-  }, []);
-
-  const activeProvider = providers.find((provider) => provider.id === providerId);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -108,56 +70,10 @@ export function AIPanel({
         </div>
       </div>
 
-      {mode !== "materials" && providers.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 px-3 pt-3">
-          <Select
-            value={providerId}
-            onValueChange={(value) => {
-              setProviderId(value);
-              const provider = providers.find((item) => item.id === value);
-              setModelId(
-                (provider?.models.find((model) => model.isDefault) ??
-                  provider?.models[0])
-                  ?.id ?? ""
-              );
-            }}
-          >
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="供应商" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {providers.map((provider) => (
-                  <SelectItem key={provider.id} value={provider.id}>
-                    {provider.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Select value={modelId} onValueChange={setModelId}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="模型" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {activeProvider?.models.map((model) => (
-                  <SelectItem key={model.id} value={model.id}>
-                    {model.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
       {mode === "chat" && (
         <WritingAssistant
           articleId={articleId}
           currentMarkdown={currentMarkdown}
-          providerId={providerId}
-          modelId={modelId}
           onApplyArticle={onApplyArticle}
           onApplyDigest={onApplyDigest}
           onFlushArticle={onFlushArticle}
