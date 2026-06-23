@@ -51,6 +51,14 @@ const skills = [
     source: "system" as const,
     hasResources: false,
   },
+  {
+    id: "article-summary",
+    skillKey: "article-summary",
+    name: "文章摘要",
+    description: "为已有文章生成摘要、要点或 TL;DR",
+    source: "system" as const,
+    hasResources: false,
+  },
 ];
 
 describe("routeAgentRequest", () => {
@@ -167,5 +175,91 @@ describe("routeAgentRequest", () => {
     });
     expect(route.skillIds).toContain("code-change-analysis");
     expect(route.ambiguityQuestion).toBeUndefined();
+  });
+
+  it("rejects out-of-scope action requests via rule blacklist", async () => {
+    const config = {
+      tavilyApiKey: "",
+      maxSteps: 12,
+      contextBudgetTokens: 32000,
+      projects: [],
+    };
+    // 用例均不含项目/写作关键词，能落到黑名单兜底
+    const cases = [
+      "执行 SQL：DELETE FROM users WHERE id=1",
+      "执行 DROP TABLE users",
+      "帮我清空数据库里的订单表",
+      "帮我给张三转账 100 元",
+      "请帮我重置密码",
+      "群发邮件给所有用户",
+    ];
+    for (const message of cases) {
+      const route = await routeAgentRequest({
+        model: failingModel,
+        message,
+        skills,
+        config,
+      });
+      expect(route.intent).toBe("out-of-scope");
+      expect(route.activeTools).not.toContain("explore_project");
+    }
+  });
+
+  it("does not reject legitimate writing requests mentioning sensitive keywords", async () => {
+    const config = {
+      tavilyApiKey: "",
+      maxSteps: 12,
+      contextBudgetTokens: 32000,
+      projects: [],
+    };
+    const cases = [
+      "帮我写一篇关于支付系统架构的公众号文章",
+      "写一篇关于数据库重构最佳实践的技术文章",
+      "润色这篇关于代码部署流程的文章",
+    ];
+    for (const message of cases) {
+      const route = await routeAgentRequest({
+        model: failingModel,
+        message,
+        skills,
+        config,
+      });
+      expect(route.intent).not.toBe("out-of-scope");
+    }
+  });
+
+  it("routes summarize requests to the article-summary skill", async () => {
+    const route = await routeAgentRequest({
+      model: failingModel,
+      message: "帮我总结这篇文章的要点",
+      skills,
+      config: {
+        tavilyApiKey: "",
+        maxSteps: 12,
+        contextBudgetTokens: 32000,
+        projects: [],
+      },
+      targetKind: "article",
+    });
+    expect(route.intent).toBe("summarize");
+    expect(route.skillIds).toContain("article-summary");
+    expect(route.needsProposal).toBe(false);
+    expect(route.activeTools).toContain("set_article_digest");
+  });
+
+  it("does not treat creation requests as summarize", async () => {
+    const route = await routeAgentRequest({
+      model: failingModel,
+      message: "帮我写一篇关于支付系统架构的公众号文章",
+      skills,
+      config: {
+        tavilyApiKey: "",
+        maxSteps: 12,
+        contextBudgetTokens: 32000,
+        projects: [],
+      },
+      targetKind: "article",
+    });
+    expect(route.intent).not.toBe("summarize");
   });
 });

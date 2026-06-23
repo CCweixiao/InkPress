@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildCandidateFromLocator,
   extractCodeSourceCandidate,
   validateLocalCodeSource,
 } from "../../src/lib/ai/code-source";
@@ -70,5 +71,45 @@ describe("dynamic code source detection", () => {
     await expect(validateLocalCodeSource(root)).resolves.toBe(
       await fs.realpath(root)
     );
+  });
+});
+
+describe("buildCandidateFromLocator (LLM locator fallback)", () => {
+  it("builds a local-path candidate from a validated absolute path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "inkpress-llm-"));
+    roots.push(root);
+    const candidate = await buildCandidateFromLocator(root);
+    expect(candidate).toMatchObject({
+      kind: "local-path",
+      root: await fs.realpath(root),
+    });
+  });
+
+  it("returns null for non-existent, blocked, or home paths", async () => {
+    expect(
+      await buildCandidateFromLocator("/nonexistent/missing/path")
+    ).toBeNull();
+    expect(await buildCandidateFromLocator(os.homedir())).toBeNull();
+    expect(
+      await buildCandidateFromLocator(path.join(os.homedir(), ".ssh"))
+    ).toBeNull();
+  });
+
+  it("builds a github-repository candidate from a URL", async () => {
+    const candidate = await buildCandidateFromLocator(
+      "https://github.com/openai/codex/tree/main"
+    );
+    expect(candidate).toMatchObject({
+      kind: "github-repository",
+      owner: "openai",
+      repo: "codex",
+      ref: "main",
+    });
+  });
+
+  it("returns null for empty or relative input", async () => {
+    expect(await buildCandidateFromLocator("")).toBeNull();
+    expect(await buildCandidateFromLocator("   ")).toBeNull();
+    expect(await buildCandidateFromLocator("relative/path")).toBeNull();
   });
 });
