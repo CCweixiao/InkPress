@@ -51,6 +51,7 @@ type ProposalSummary = {
   title?: string | null;
   summary: string;
   status: string;
+  createdAt?: string;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -1219,12 +1220,15 @@ export function WritingAssistant({
           </div>
         ) : (
           <>
-            {messages.map((message) => (
+            {messages.map((message, idx) => (
               <div
                 key={message.id}
                 className={cn(
                   "space-y-2",
-                  message.role === "user" && "flex flex-col items-end"
+                  message.role === "user" && "flex flex-col items-end",
+                  idx > 0 &&
+                    message.role === "user" &&
+                    "mt-3 border-t border-dashed border-border/60 pt-3"
                 )}
               >
                 {message.parts.map((rawPart, index) => {
@@ -1248,7 +1252,16 @@ export function WritingAssistant({
               </div>
             ))}
             {proposals
-              .filter((proposal) => !proposalIdsInMessages.has(proposal.id))
+              .filter(
+                (proposal) =>
+                  // 仅渲染未在内联位置出现、且仍待处理的提案；已应用/放弃的历史提案
+                  // 不再堆积在底部。按创建时间升序，保证紧随对应对话尾部、不串序。
+                  !proposalIdsInMessages.has(proposal.id) &&
+                  proposal.status === "pending"
+              )
+              .sort((a, b) =>
+                (a.createdAt ?? "").localeCompare(b.createdAt ?? "")
+              )
               .map((proposal) => (
                 <ProposalCard
                   key={proposal.id}
