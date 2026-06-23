@@ -121,15 +121,17 @@ export function ToolCallBlock({
         className="px-2.5 py-2 text-[11px] hover:bg-muted/40 rounded-md"
       >
         {running ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
         ) : failed ? (
-          <X className="h-3.5 w-3.5 text-red-600" />
+          <X className="h-3.5 w-3.5 shrink-0 text-red-600" />
         ) : (
-          <ToolIcon name={toolName} />
+          <span className="shrink-0">
+            <ToolIcon name={toolName} />
+          </span>
         )}
-        <span className="font-medium">{label}</span>
+        <span className="shrink-0 font-medium">{label}</span>
         {!running && !failed && hasDetail && (
-          <span className="text-muted-foreground truncate">
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">
             {summarizeTool(toolName, part.output, part.errorText)}
           </span>
         )}
