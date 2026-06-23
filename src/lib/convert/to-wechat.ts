@@ -163,19 +163,19 @@ async function replaceImageUrls(
 /** 微信公众号基础排版下限样式（与 doocs base 类似） */
 const BASE_CSS = `
 #nice{font-size:16px;color:#2b2f36;line-height:1.82;letter-spacing:0.035em;word-break:break-word;text-align:left;}
-#nice p{margin:1.05em 0;}
+#nice p{margin:0.75em 0;}
 #nice a{color:#576b95;text-decoration:none;border-bottom:1px solid #576b95;}
 #nice strong{font-weight:bold;}
-#nice hr{border:none;border-top:1px solid #e5e7eb;margin:2.2em 0;}
-#nice ul,#nice ol{padding-left:1.4em;margin:0.85em 0;}
-#nice li{margin:0.38em 0;line-height:1.75;}
-#nice li>p{margin:0.2em 0;}
-#nice blockquote{margin:1.4em 0;padding:0.9em 1.1em;border-left:4px solid #d1d5db;color:#606875;background:#f8fafc;}
-#nice table{border-collapse:separate;border-spacing:0;width:100%;margin:1.5em 0;display:table;overflow:hidden;}
+#nice hr{border:none;border-top:1px solid #e5e7eb;margin:1.5em 0;}
+#nice ul,#nice ol{padding-left:1.4em;margin:0.6em 0;}
+#nice li{margin:0.26em 0;line-height:1.75;}
+#nice li>p{margin:0.1em 0;}
+#nice blockquote{margin:1em 0;padding:0.9em 1.1em;border-left:4px solid #d1d5db;color:#606875;background:#f8fafc;}
+#nice table{border-collapse:separate;border-spacing:0;width:100%;margin:1.05em 0;display:table;overflow:hidden;}
 #nice th,#nice td{border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:0.65em 0.8em;text-align:left;}
 #nice th{background:#f6f8fa;font-weight:600;}
-#nice img{display:block;max-width:100%;height:auto;margin:1.5em auto;}
-#nice .code-block{display:block;margin:1.5em 0;border-radius:10px;overflow:hidden;background:#0d1117;box-shadow:0 8px 24px rgba(15,23,42,.14);}
+#nice img{display:block;max-width:100%;height:auto;margin:1.05em auto;}
+#nice .code-block{display:block;margin:1.05em 0;border-radius:10px;overflow:hidden;background:#0d1117;box-shadow:0 8px 24px rgba(15,23,42,.14);}
 #nice .code__header{display:flex;align-items:center;justify-content:space-between;height:34px;padding:0 14px;background:#161b22;border-bottom:1px solid rgba(255,255,255,.08);}
 #nice .code__dots{display:inline-block;line-height:0;}
 #nice .code__dots i{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%;background:#ff5f57;}
