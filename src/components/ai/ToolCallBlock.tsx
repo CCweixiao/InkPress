@@ -113,7 +113,8 @@ export function ToolCallBlock({
       onOpenChange={setOpen}
       className={cn(
         "rounded-md border bg-muted/25",
-        failed && "border-red-200 bg-red-50"
+        failed &&
+          "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
       )}
     >
       <CollapsibleTrigger
@@ -154,8 +155,8 @@ export function ToolCallBlock({
             )}
             {errorText && (
               <div>
-                <div className="mb-1 font-medium text-red-600">错误</div>
-                <pre className="overflow-x-auto rounded bg-red-50 p-2 text-[10px] leading-5 font-mono text-red-700">
+                <div className="mb-1 font-medium text-red-600 dark:text-red-400">错误</div>
+                <pre className="overflow-x-auto rounded bg-red-50 p-2 text-[10px] leading-5 font-mono text-red-700 dark:bg-red-950 dark:text-red-300">
                   {errorText}
                 </pre>
               </div>
