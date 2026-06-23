@@ -184,7 +184,20 @@ export async function GET(req: NextRequest) {
   const loaded = await loadTarget(target);
   if (!loaded) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
   const session = await getOrCreateAgentSession(target);
-  const messages = await loadAgentMessages(session.id);
+  const search = new URL(req.url).searchParams;
+  const beforeRaw = search.get("before");
+  const beforePosition =
+    beforeRaw && Number.isFinite(Number(beforeRaw))
+      ? Number(beforeRaw)
+      : undefined;
+  const limitRaw = search.get("limit");
+  const limit =
+    limitRaw && Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : undefined;
+  const page = await loadAgentMessages(session.id, { limit, beforePosition });
+  // 分页追加请求（带 before）：只返回消息页，避免重复拉 proposals/session/userInputs
+  if (beforePosition !== undefined) {
+    return NextResponse.json(page);
+  }
   const proposals =
     target.kind === "article"
       ? await prisma.agentArticleProposal.findMany({
@@ -237,7 +250,9 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     session,
-    messages,
+    messages: page.messages,
+    hasMore: page.hasMore,
+    oldestPosition: page.oldestPosition,
     proposals: proposals.map((proposal) => ({
       ...proposal,
       proposalKind: target.kind,
@@ -690,14 +705,13 @@ export async function DELETE(req: NextRequest) {
   if (session) {
     await prisma.$transaction([
       prisma.agentChatMessage.deleteMany({ where: { sessionId: session.id } }),
+      // 提案硬删（防 DB 膨胀）：应用过的正文已在文章文件/技术文档版本里，不依赖提案行
       target.kind === "article"
-        ? prisma.agentArticleProposal.updateMany({
-            where: { sessionId: session.id, status: "pending" },
-            data: { status: "rejected", decidedAt: new Date() },
+        ? prisma.agentArticleProposal.deleteMany({
+            where: { sessionId: session.id },
           })
-        : prisma.agentTechnicalDocumentProposal.updateMany({
-            where: { sessionId: session.id, status: "pending" },
-            data: { status: "rejected", decidedAt: new Date() },
+        : prisma.agentTechnicalDocumentProposal.deleteMany({
+            where: { sessionId: session.id },
           }),
       prisma.agentChatSession.update({
         where: { id: session.id },
