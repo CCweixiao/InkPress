@@ -8,15 +8,15 @@ import {
   Check,
   ChevronDown,
   Clipboard,
+  Copy,
   Eye,
   FileSearch,
   Loader2,
   Maximize2,
-  RefreshCcw,
+  RotateCcw,
   Send,
   Sparkles,
   Square,
-  Trash2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,16 @@ import {
   type ContextUsage,
   type LastTurnUsage,
 } from "./agent-composer-parts";
+import {
+  BUILTIN_SLASH_COMMANDS,
+  SlashMenu,
+  buildSkillCommands,
+  filterSlashCommands,
+  parseSlashCommand,
+  slashQuery,
+  type SlashCommand,
+} from "./slash-commands";
+import type { SkillCatalogItem } from "@/lib/ai/skills";
 import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
 
@@ -540,7 +550,7 @@ function CodeSourceApprovalCard({
         <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {sourceStatus === "approved" ? (
             <>
-              <Check className="h-3.5 w-3.5 text-emerald-600" />
+              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
               已授权
             </>
           ) : (
@@ -606,6 +616,12 @@ export type RenderCtx = {
     snapshotHash: string;
   }) => void;
   resumeAfterApproval: () => Promise<void>;
+  /** 当前消息在 messages 中的下标（用户消息重新执行需据此截断）。 */
+  messageIndex: number;
+  /** 重新执行用户消息：编辑后丢弃其后消息并重跑（codex edit & retry）。 */
+  rerun?: (index: number, editedText: string) => void;
+  /** Agent 是否忙碌（忙碌时禁用重新执行）。 */
+  busy: boolean;
 };
 
 export type PartRenderer = {
@@ -647,6 +663,122 @@ function DirectWriteNotice() {
     <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
       <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
       已写入正文（首次生成）
+    </div>
+  );
+}
+
+/**
+ * 用户消息气泡 + 右下角操作（codex 式）：复制 / 重新执行（编辑后重发）。
+ * 重新执行进入内联编辑态，提交时由 ctx.rerun 截断其后消息并重跑。
+ */
+function UserMessageBubble({
+  text,
+  messageIndex,
+  onRerun,
+  busy,
+}: {
+  text: string;
+  messageIndex: number;
+  onRerun?: (index: number, editedText: string) => void;
+  busy: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  useEffect(() => {
+    setDraft(text);
+  }, [text]);
+
+  if (editing) {
+    return (
+      <div className="flex w-full max-w-[88%] flex-col items-end">
+        <textarea
+          value={draft}
+          autoFocus
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              if (!busy && draft.trim()) {
+                setEditing(false);
+                onRerun?.(messageIndex, draft.trim());
+              }
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setEditing(false);
+              setDraft(text);
+            }
+          }}
+          className="min-h-16 w-full resize-none rounded-xl rounded-br-sm border bg-background px-3 py-2 text-xs leading-5 outline-none focus:ring-2 focus:ring-ring"
+        />
+        <div className="mt-1 flex gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 text-[11px]"
+            onClick={() => {
+              setEditing(false);
+              setDraft(text);
+            }}
+          >
+            取消
+          </Button>
+          <Button
+            size="sm"
+            className="h-6 text-[11px]"
+            disabled={busy || !draft.trim()}
+            onClick={() => {
+              setEditing(false);
+              onRerun?.(messageIndex, draft.trim());
+            }}
+          >
+            <RotateCcw className="h-3 w-3" />
+            重新发送
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group flex flex-col items-end">
+      <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground">
+        {text}
+      </div>
+      {onRerun && (
+        <div className="mt-0.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            title="复制"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(text);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1200);
+              } catch {
+                /* 剪贴板不可用时静默 */
+              }
+            }}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {copied ? (
+              <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+          </button>
+          <button
+            type="button"
+            title="重新执行（编辑后重发）"
+            disabled={busy}
+            onClick={() => setEditing(true)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+          >
+            <RotateCcw className="h-3 w-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -776,6 +908,49 @@ function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
   return <ToolCallBlock part={part} />;
 }
 
+/** AI 输出文本的操作按钮：复制原文 + 全屏放大（hover 显露，与用户消息操作行风格一致）。 */
+function AiOutputActions({
+  text,
+  onFullscreen,
+}: {
+  text: string;
+  onFullscreen: (text: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="absolute -right-1 -top-1 flex items-center gap-0.5 rounded-md border bg-background p-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+      <button
+        type="button"
+        title="复制原文"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          } catch {
+            /* 剪贴板不可用时静默 */
+          }
+        }}
+        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        {copied ? (
+          <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+        ) : (
+          <Copy className="h-3 w-3" />
+        )}
+      </button>
+      <button
+        type="button"
+        title="全屏查看"
+        onClick={() => onFullscreen(text)}
+        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        <Maximize2 className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
 // 顺序即优先级：特化 matcher（text/reasoning/data-*）必须在通用 tool matcher 之前。
 export const PART_RENDERERS: PartRenderer[] = [
   {
@@ -785,22 +960,18 @@ export const PART_RENDERERS: PartRenderer[] = [
       const text = p.text as string;
       if (ctx.role === "user") {
         return (
-          <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground">
-            {text}
-          </div>
+          <UserMessageBubble
+            text={text}
+            messageIndex={ctx.messageIndex}
+            onRerun={ctx.rerun}
+            busy={ctx.busy}
+          />
         );
       }
       return (
         <div className="group relative rounded-md text-foreground">
           <Markdown className="text-xs leading-5">{text}</Markdown>
-          <button
-            type="button"
-            title="全屏查看"
-            onClick={() => ctx.setFullscreenText(text)}
-            className="absolute -right-1 -top-1 rounded-md border bg-background p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100"
-          >
-            <Maximize2 className="h-3 w-3" />
-          </button>
+          <AiOutputActions text={text} onFullscreen={ctx.setFullscreenText} />
         </div>
       );
     },
@@ -929,6 +1100,7 @@ export function WritingAssistant({
   articleId,
   targetKind = "article",
   targetId,
+  currentMarkdown,
   onApplyArticle,
   onApplyTechnicalDocument,
   onFlushArticle,
@@ -979,6 +1151,46 @@ export function WritingAssistant({
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
     []
   );
+
+  // 斜杠命令：拉取已注册 Skill，与内置命令合并（无 Skill 则只显示内置命令）。
+  const [skills, setSkills] = useState<SkillCatalogItem[]>([]);
+  const slashCommands = useMemo<SlashCommand[]>(
+    () => [...BUILTIN_SLASH_COMMANDS, ...buildSkillCommands(skills)],
+    [skills]
+  );
+  useEffect(() => {
+    let active = true;
+    fetch("/api/ai/skills")
+      .then((response) => response.json())
+      .then((data: { skills?: SkillCatalogItem[] }) => {
+        if (active && Array.isArray(data.skills)) setSkills(data.skills);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // 斜杠菜单：输入以 / 开头且尚未输入空格时打开，随输入过滤；Esc 临时关闭（再输入恢复）。
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashForcedClosed, setSlashForcedClosed] = useState(false);
+  const slashQ = slashQuery(input);
+  const slashFiltered = useMemo(
+    () =>
+      slashQ && !slashForcedClosed
+        ? filterSlashCommands(slashCommands, slashQ)
+        : [],
+    [slashQ, slashForcedClosed, slashCommands]
+  );
+  const slashOpen = slashFiltered.length > 0;
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQ]);
+
+  // /compact 反馈与进行态
+  const [slashNotice, setSlashNotice] = useState("");
+  const [compacting, setCompacting] = useState(false);
+
 
   const refresh = useCallback(async () => {
     const response = await fetch(
@@ -1105,28 +1317,20 @@ export function WritingAssistant({
     target: { kind: targetKind, id: resolvedTargetId },
     providerId: providerId || null,
     modelId: modelId || null,
+    // 实时编辑区正文：作为权威正文随每次发送/重跑带给后端，避免 DB 读取时序导致 Agent 拿到空/旧正文。
+    currentMarkdown: currentMarkdown ?? "",
   };
 
-  async function submit() {
-    const text = input.trim();
-    if (!text || status === "streaming" || status === "submitted") return;
-    await (onFlushTarget ?? onFlushArticle)?.();
-    setInput("");
-    // 追加到历史缓存（与上一条相同则跳过，避免连续重复），并重置上下键导航位置
-    setInputHistory((prev) =>
-      prev[prev.length - 1] === text ? prev : [...prev, text]
-    );
-    historyIndex.current = null;
-    await sendMessage({ text }, { body: requestBody });
-  }
+  const busy = status === "streaming" || status === "submitted";
 
   async function clearConversation() {
+    if (compacting) return; // 压缩进行中禁止清空，避免与压缩写入竞态
     if (!window.confirm("清空当前目标的 Agent 对话与未处理提案？")) return;
     await stop();
     const response = await fetch(
       `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`,
       {
-      method: "DELETE",
+        method: "DELETE",
       }
     );
     if (response.ok) {
@@ -1139,7 +1343,135 @@ export function WritingAssistant({
     }
   }
 
-  const busy = status === "streaming" || status === "submitted";
+  /** 发送一条普通消息：清空输入、记录历史、可选强制 Skill（/skill 命令）。 */
+  async function sendText(text: string, forceSkillIds?: string[]) {
+    if (!text || busy) return;
+    await (onFlushTarget ?? onFlushArticle)?.();
+    setInput("");
+    setSlashForcedClosed(false);
+    setInputHistory((prev) =>
+      prev[prev.length - 1] === text ? prev : [...prev, text]
+    );
+    historyIndex.current = null;
+    await sendMessage(
+      { text },
+      {
+        body: forceSkillIds?.length
+          ? { ...requestBody, forceSkillIds }
+          : requestBody,
+      }
+    );
+  }
+
+  /** /compact：手动把历史压缩为摘要，刷新会话与计量，给反馈提示。 */
+  async function runCompact() {
+    if (compacting) return; // 防重入
+    setCompacting(true);
+    setSlashNotice("正在压缩对话…"); // 即时进行态反馈（不让用户以为没反应）
+    try {
+      const response = await fetch("/api/ai/chat/compact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: { kind: targetKind, id: resolvedTargetId },
+          providerId: providerId || null,
+          modelId: modelId || null,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.ok) {
+        await refresh();
+        setSlashNotice(
+          data.summarizedCount > 0
+            ? `已压缩 ${data.summarizedCount} 条历史，约省 ${Math.max(
+                0,
+                (data.beforeTokens ?? 0) - (data.afterTokens ?? 0)
+              )} tokens`
+            : "对话较短，暂无需压缩"
+        );
+      } else {
+        setSlashNotice(data.error || "压缩失败，请稍后重试。");
+      }
+    } catch {
+      setSlashNotice("压缩失败，请稍后重试。");
+    } finally {
+      setCompacting(false);
+      window.setTimeout(() => setSlashNotice(""), 4000);
+    }
+  }
+
+  /** 重新执行用户消息：编辑后丢弃其后消息并重跑（codex edit & retry）。
+   *  setMessages 同步写内部消息（改写该用户消息文本 + 截断其后），
+   *  随后 regenerate() 重跑最后一条（此刻即该用户消息）。 */
+  async function rerun(index: number, editedText: string) {
+    if (busy) return;
+    const targetMsg = messages[index];
+    if (!targetMsg || targetMsg.role !== "user" || !editedText.trim()) return;
+    await (onFlushTarget ?? onFlushArticle)?.();
+    setMessages((prev) => {
+      const next = prev.slice(0, index + 1);
+      next[index] = {
+        ...next[index],
+        parts: [{ type: "text", text: editedText.trim() }],
+      };
+      return next;
+    });
+    await regenerate({ body: requestBody });
+  }
+
+  /** 斜杠菜单选中：内置命令立即执行，Skill 插入 token + 空格待补参数。 */
+  function slashSelect(command: SlashCommand) {
+    setSlashForcedClosed(false);
+    if (command.kind === "clear") {
+      setInput("");
+      void clearConversation();
+      return;
+    }
+    if (command.kind === "compact") {
+      setInput("");
+      void runCompact();
+      return;
+    }
+    // skill：插入 /skillKey + 空格，保持焦点继续输入参数（空格后菜单自动关闭）
+    setInput(`${command.token} `);
+  }
+
+  async function submit() {
+    const text = input.trim();
+    // 压缩进行中禁用一切发送（普通消息与斜杠命令），直至压缩完成
+    if (!text || busy || compacting) return;
+    const parsed = parseSlashCommand(text, slashCommands);
+    if (parsed) {
+      if (parsed.command.kind === "clear") {
+        setInput("");
+        setSlashForcedClosed(false);
+        await clearConversation();
+        return;
+      }
+      if (parsed.command.kind === "compact") {
+        setInput("");
+        setSlashForcedClosed(false);
+        await runCompact();
+        return;
+      }
+      // skill：发送完整 "/skillKey 文本" 作为可见消息（斜杠命令在用户气泡中可见），
+      // 同时强制加载该 Skill；仅 /skill 无正文时提示并不发送。
+      if (!parsed.args.trim()) {
+        setSlashNotice(
+          `请输入要发送的内容，例如：${parsed.command.token} 写一篇关于…`
+        );
+        window.setTimeout(() => setSlashNotice(""), 4000);
+        return;
+      }
+      await sendText(
+        text,
+        parsed.command.skillKey ? [parsed.command.skillKey] : undefined
+      );
+      return;
+    }
+    await sendText(text);
+  }
+
 
   // 扫描最近的 data-context-usage，取最新一条（composer token 计量用）。
   const latestContextUsage = useMemo<ContextUsage>(() => {
@@ -1209,6 +1541,15 @@ export function WritingAssistant({
     return null;
   }, [messages]);
 
+  // 最新一条助手消息的索引：过程步骤（意图/代码源/Skill/素材 + 上下文计量）
+  // 仅在此轮展示，历史轮次折叠掉这些过程块，避免多轮时「步骤重复、中间夹着上下文 tokens」。
+  const lastAssistantIndex = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  }, [messages]);
+
   // 记录已应用过的 direct 文章 markdown，避免重复写入（流式期间多次 messages 更新）。
   const appliedDirectRef = useRef<string | null>(null);
 
@@ -1256,31 +1597,9 @@ export function WritingAssistant({
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold">专业写作 Agent</div>
             <div className="text-[11px] text-muted-foreground">
-              自动识别意图、加载 Skill、研究并扫描素材
+              自动识别意图、加载 Skill、研究并扫描素材 · 输入 / 查看命令
             </div>
           </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            title="重新生成上一条回复"
-            disabled={!messages.length || busy}
-            onClick={async () => {
-              await (onFlushTarget ?? onFlushArticle)?.();
-              await regenerate({ body: requestBody });
-            }}
-          >
-            <RefreshCcw className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7 text-muted-foreground"
-            title="清空会话"
-            onClick={clearConversation}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
         </div>
       </div>
 
@@ -1319,6 +1638,13 @@ export function WritingAssistant({
                 )}
               >
                 {message.parts.map((rawPart, index) => {
+                  const part = rawPart as unknown as AgentPart;
+                  // 过程块（意图/代码源/Skill/素材步骤 + 上下文计量）只在最新一轮助手消息展示，
+                  // 历史轮次不再重复堆叠这些过程块，消除「步骤重复、中间夹着上下文 tokens」的噪音。
+                  const isProcessPart =
+                    part.type === "data-agent-step" ||
+                    part.type === "data-context-usage";
+                  if (isProcessPart && idx !== lastAssistantIndex) return null;
                   const ctx: RenderCtx = {
                     role: message.role,
                     targetKind,
@@ -1329,10 +1655,13 @@ export function WritingAssistant({
                       await (onFlushTarget ?? onFlushArticle)?.();
                       await regenerate({ body: requestBody });
                     },
+                    messageIndex: idx,
+                    rerun,
+                    busy,
                   };
                   return (
                     <Fragment key={index}>
-                      {renderAgentPart(rawPart as unknown as AgentPart, ctx)}
+                      {renderAgentPart(part, ctx)}
                     </Fragment>
                   );
                 })}
@@ -1396,11 +1725,53 @@ export function WritingAssistant({
       </div>
 
       <div className="border-t p-3">
-        <div className="rounded-xl border bg-background p-2 focus-within:ring-2 focus-within:ring-ring">
+        <div className="relative rounded-xl border bg-background p-2 focus-within:ring-2 focus-within:ring-ring">
+          {slashOpen && (
+            <SlashMenu
+              commands={slashFiltered}
+              activeIndex={slashIndex}
+              onSelect={slashSelect}
+            />
+          )}
+          {slashNotice && (
+            <div className="pointer-events-none absolute -top-2 left-2 flex -translate-y-full items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-[11px] text-muted-foreground shadow-sm">
+              {compacting && <Loader2 className="h-3 w-3 animate-spin" />}
+              {slashNotice}
+            </div>
+          )}
           <textarea
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => {
+              setInput(event.target.value);
+              setSlashForcedClosed(false);
+            }}
             onKeyDown={(event) => {
+              // 斜杠菜单打开时：↑↓ 选择、Enter/Tab 确认、Esc 关闭，优先于发送与历史导航。
+              if (slashOpen) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSlashIndex((i) =>
+                    Math.min(slashFiltered.length - 1, i + 1)
+                  );
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSlashIndex((i) => Math.max(0, i - 1));
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  const cmd = slashFiltered[slashIndex] ?? slashFiltered[0];
+                  if (cmd) slashSelect(cmd);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setSlashForcedClosed(true);
+                  return;
+                }
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void submit();
@@ -1437,7 +1808,7 @@ export function WritingAssistant({
                 }
               }
             }}
-            placeholder="让 Agent 研究、创作或调整文章…（Enter 发送 · Shift+Enter 换行）"
+            placeholder="让 Agent 研究、创作或调整文章…（输入 / 查看命令 · Enter 发送 · Shift+Enter 换行）"
             className="min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none"
           />
           <div className="flex items-center gap-1.5">
@@ -1471,7 +1842,8 @@ export function WritingAssistant({
               <Button
                 size="icon"
                 className="h-8 w-8"
-                disabled={!input.trim()}
+                disabled={!input.trim() || compacting}
+                title={compacting ? "正在压缩对话…" : undefined}
                 onClick={() => void submit()}
               >
                 <Send className="h-4 w-4" />
