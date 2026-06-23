@@ -6,6 +6,7 @@ import type {
 } from "@/lib/ai/agent-config";
 import type { SkillCatalogItem } from "@/lib/ai/skills";
 import {
+  buildCandidateFromLocator,
   extractCodeSourceCandidate,
   type CodeSourceCandidate,
   type CodeSourceReference,
@@ -26,19 +27,24 @@ export const agentIntentSchema = z.enum([
   "project-change-analysis",
   "write-change-document",
   "change-to-article",
+  "summarize",
+  "out-of-scope",
 ]);
 export type AgentIntent = z.infer<typeof agentIntentSchema>;
 
+// schema 宽松：intent 接收任意字符串（后处理归一化），其余字段 .catch 兜底，
+// 避免 LLM 返回的结构化对象因严格 zod 校验（enum/类型/缺字段）被判 "did not match schema"。
 const routeSchema = z.object({
-  intent: agentIntentSchema,
-  skillIds: z.array(z.string()).max(4),
-  needsWeb: z.boolean(),
-  needsAssets: z.boolean(),
-  needsProject: z.boolean(),
-  needsGitHistory: z.boolean().default(false),
-  needsProposal: z.boolean(),
-  projectId: z.string().nullable(),
-  rationale: z.string().max(300),
+  intent: z.string(),
+  skillIds: z.array(z.string()).max(4).catch([]),
+  needsWeb: z.boolean().catch(false),
+  needsAssets: z.boolean().catch(false),
+  needsProject: z.boolean().catch(false),
+  needsGitHistory: z.boolean().catch(false),
+  needsProposal: z.boolean().catch(false),
+  projectId: z.string().nullable().catch(null),
+  projectLocator: z.string().nullable().catch(null),
+  rationale: z.string().catch(""),
 });
 
 export type AgentRoute = z.infer<typeof routeSchema> & {
@@ -49,67 +55,190 @@ export type AgentRoute = z.infer<typeof routeSchema> & {
   activeTools: string[];
 };
 
-function fallbackRoute(message: string): z.infer<typeof routeSchema> {
+// 动作性黑名单：仅作为 LLM 不可用时的兜底拒绝规则。关键词强制带「动词 + 受控对象」组合，
+// 避免误伤「写一篇关于支付/重构的文章」这类合法写作需求（写作类意图优先级高于本黑名单）。
+const OUT_OF_SCOPE_PATTERN =
+  /(支付|转账|汇款|退款|提现)(?:给|到|至|一笔|订单)?|(?:修改|改动|更新|编写|开发|实现|重构|删除|清理|清空|执行|运行|部署|发布)(?:代码|源码|程序|脚本|SQL|命令|数据库|表|记录|数据|文件|配置|依赖|包)|(?:执行|跑|运行|启动)\s*(?:SQL|脚本|命令|迁移|migration)|(?:drop\s+table|drop\s+database|truncate)|(?:查库|查询数据库|导出数据|导出报表|跑报表|拉数据)|(?:重启|关机|停服|kill|杀进程|改密码|重置密码)|(?:发短信|发邮件|推送通知|群发|批量发送)/i;
+
+/**
+ * 意图路由的声明式注册表（吸收 opencode 数据驱动分发的理念）。
+ * 关键词正则集中到 computeContext，意图判定集中到 INTENT_RULES（数组顺序即优先级），
+ * 能力需求集中到 deriveNeeds。加一个 intent = 加一条 INTENT_RULES，无需改 switch/三元链。
+ */
+type IntentContext = {
+  text: string;
+  isProject: boolean;
+  isGitHistory: boolean;
+  isArticle: boolean;
+  isTechnicalDoc: boolean;
+  isResearch: boolean;
+  isReview: boolean;
+  isPolish: boolean;
+  isSummarize: boolean;
+  isCreate: boolean;
+};
+
+function computeContext(message: string): IntentContext {
   const text = message.toLowerCase();
-  const project =
-    /项目|代码|源码|仓库|repo|repository|模块|架构|调用链|调用栈/.test(text);
-  const technicalDoc =
-    /(技术文档|架构文档|调用链文档|模块文档|依赖分析文档|实现说明)/.test(text);
-  const projectArticle =
-    project && /(公众号|文章|博客|写成文章|技术文章)/.test(text);
-  const gitHistory =
-    /git\s*(?:diff|log)|commit|提交(?:记录|历史)?|版本区间|更新日志|变更记录|release\s*note|pr\b|v?\d+(?:\.\d+)+\s*(?:到|至|~|～|→|\.\.)\s*v?\d+(?:\.\d+)+/i.test(
-      text
-    );
-  const changeArticle =
-    gitHistory && /(公众号|文章|博客|功能介绍|版本复盘|写成文章)/.test(text);
-  const changeDocument =
-    gitHistory && /(技术文档|变更文档|更新文档|实现说明)/.test(text);
-  const research = /搜索|查找|联网|资料|最新|事实|调研|来源/.test(text);
-  const review = /审校|校对|检查|错别字|逻辑问题|事实核查/.test(text);
-  const polish =
-    /润色|改写|优化|精简|扩写|调整文章|修改文章|去\s*ai\s*味|去除ai|机器味|机器人味|像真人|人味/.test(
-      text
-    );
-  const create = /写一篇|生成文章|创作|撰写|写成文章/.test(text);
-  const intent: AgentIntent = changeArticle
-    ? "change-to-article"
-    : changeDocument
-      ? "write-change-document"
-      : gitHistory
-        ? "project-change-analysis"
-        : projectArticle
-          ? "project-to-article"
-          : technicalDoc
-            ? "write-technical-doc"
-            : project
-              ? "project-explore"
-        : review
-          ? "review"
-          : polish
-            ? "polish"
-            : research
-              ? "research"
-              : create
-                ? "create-article"
-                : "question";
+  return {
+    text,
+    isProject:
+      /项目|代码|源码|仓库|repo|repository|模块|架构|调用链|调用栈/.test(text),
+    isGitHistory:
+      /git\s*(?:diff|log)|commit|提交(?:记录|历史)?|版本区间|更新日志|变更记录|release\s*note|pr\b|v?\d+(?:\.\d+)+\s*(?:到|至|~|～|→|\.\.)\s*v?\d+(?:\.\d+)+/i.test(
+        text
+      ),
+    isArticle: /公众号|文章|博客|写成文章|技术文章|功能介绍|版本复盘/.test(text),
+    isTechnicalDoc:
+      /(技术文档|架构文档|调用链文档|模块文档|依赖分析文档|实现说明)/.test(text),
+    isResearch: /搜索|查找|联网|资料|最新|事实|调研|来源/.test(text),
+    isReview: /审校|校对|检查|错别字|逻辑问题|事实核查/.test(text),
+    isPolish:
+      /润色|改写|优化|精简|扩写|调整文章|修改文章|去\s*ai\s*味|去除ai|机器味|机器人味|像真人|人味/.test(
+        text
+      ),
+    isSummarize:
+      /总结|摘要|概括|提炼|要点|归纳|梗概|digest|小结|tldr|tl;?dr/i.test(text),
+    isCreate: /写一篇|生成文章|创作|撰写|写成文章/.test(text),
+  };
+}
+
+type IntentRule = {
+  intent: AgentIntent;
+  when: (ctx: IntentContext) => boolean;
+  skills: string[];
+};
+
+// 顺序即优先级（等价原 fallbackRoute 三元链从高到低）。
+const INTENT_RULES: IntentRule[] = [
+  {
+    intent: "change-to-article",
+    when: (c) => c.isGitHistory && c.isArticle,
+    skills: ["code-change-analysis", "project-to-article", "wechat-writing"],
+  },
+  {
+    intent: "write-change-document",
+    when: (c) => c.isGitHistory && c.isTechnicalDoc,
+    skills: ["code-change-analysis", "technical-documentation"],
+  },
+  {
+    intent: "project-change-analysis",
+    when: (c) => c.isGitHistory,
+    skills: ["code-change-analysis"],
+  },
+  {
+    intent: "project-to-article",
+    when: (c) => c.isProject && c.isArticle,
+    skills: ["codebase-exploration", "project-to-article", "wechat-writing"],
+  },
+  {
+    intent: "write-technical-doc",
+    when: (c) => c.isTechnicalDoc,
+    skills: ["codebase-exploration", "technical-documentation"],
+  },
+  {
+    intent: "project-explore",
+    when: (c) => c.isProject,
+    skills: ["codebase-exploration"],
+  },
+  { intent: "review", when: (c) => c.isReview, skills: ["editorial-review"] },
+  { intent: "polish", when: (c) => c.isPolish, skills: ["de-ai-writing"] },
+  { intent: "research", when: (c) => c.isResearch, skills: ["web-research"] },
+  { intent: "summarize", when: (c) => c.isSummarize, skills: ["article-summary"] },
+  { intent: "create-article", when: (c) => c.isCreate, skills: ["wechat-writing"] },
+  {
+    intent: "out-of-scope",
+    when: (c) => OUT_OF_SCOPE_PATTERN.test(c.text),
+    skills: [],
+  },
+];
+
+function deriveNeeds(ctx: IntentContext) {
   const needsProposal =
-    create ||
-    polish ||
-    technicalDoc ||
-    projectArticle ||
-    changeDocument ||
-    changeArticle ||
-    /修改|重写|写成|生成文章|撰写/.test(text);
+    ctx.isCreate ||
+    ctx.isPolish ||
+    ctx.isTechnicalDoc ||
+    (ctx.isProject && ctx.isArticle) ||
+    (ctx.isGitHistory && ctx.isTechnicalDoc) ||
+    (ctx.isGitHistory && ctx.isArticle) ||
+    /修改|重写|写成|生成文章|撰写/.test(ctx.text);
+  return {
+    needsWeb: ctx.isResearch,
+    needsAssets: ctx.isCreate || ctx.isPolish || needsProposal,
+    needsProject: ctx.isProject || ctx.isTechnicalDoc || ctx.isGitHistory,
+    needsGitHistory: ctx.isGitHistory,
+    needsProposal,
+  };
+}
+
+/**
+ * 把意图路由 LLM 失败的 err 归类为中文短句，供前端步骤展示根因。
+ * dev 模式 pino logger 可能静默失效，把原因写进 rationale 可绕过 logger 直接诊断。
+ */
+function classifyRouteError(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "意图路由失败";
+  // 解包 AI_RetryError：取底层错误信息再归类
+  const retryErr = err as {
+    name?: string;
+    lastError?: { message?: string } | Error;
+    errors?: Array<{ message?: string } | Error>;
+    cause?: { message?: string };
+  };
+  let text = raw;
+  if (retryErr?.name === "AI_RetryError" || /RetryError/i.test(raw)) {
+    const inner =
+      (retryErr.lastError instanceof Error
+        ? retryErr.lastError.message
+        : retryErr.lastError?.message) ??
+      retryErr.errors?.find((e) => e)?.message ??
+      retryErr.cause?.message ??
+      raw;
+    text = inner || raw;
+  }
+  if (
+    /余额不足|额度|配额|insufficient|quota|payment required|exceeded your current quota/i.test(
+      text
+    )
+  ) {
+    return "模型余额不足或额度已尽";
+  }
+  if (/401|unauthorized|invalid api key|invalid_api_key|forbidden/i.test(text)) {
+    return "API Key 无效或已过期";
+  }
+  if (/model.*not found|does not exist|未知模型|model_not_found/i.test(text)) {
+    return "所选模型不存在";
+  }
+  if (
+    /tool.?call|function.?call|tools?.+(unsupported|not supported)|不支持.+工具|structured|json.?schema|no tool call/i.test(
+      text
+    )
+  ) {
+    return "模型不支持结构化输出";
+  }
+  if (/timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(text)) {
+    return "请求超时";
+  }
+  if (/rate limit|too many requests|429/i.test(text)) {
+    return "请求被限流";
+  }
+  return text.slice(0, 80);
+}
+
+function fallbackRoute(message: string): z.infer<typeof routeSchema> {
+  const ctx = computeContext(message);
+  const matched = INTENT_RULES.find((rule) => rule.when(ctx));
+  const intent: AgentIntent = matched?.intent ?? "question";
   return {
     intent,
     skillIds: [],
-    needsWeb: research,
-    needsAssets: create || polish || needsProposal,
-    needsProject: project || technicalDoc || gitHistory,
-    needsGitHistory: gitHistory,
-    needsProposal,
+    ...deriveNeeds(ctx),
     projectId: null,
+    projectLocator: null,
     rationale: "使用规则路由完成意图识别。",
   };
 }
@@ -127,31 +256,8 @@ function matchProjectFromText(
   });
 }
 
-function defaultSkillsForIntent(intent: AgentIntent) {
-  switch (intent) {
-    case "create-article":
-      return ["wechat-writing"];
-    case "polish":
-      return ["de-ai-writing"];
-    case "review":
-      return ["editorial-review"];
-    case "research":
-      return ["web-research"];
-    case "project-explore":
-      return ["codebase-exploration"];
-    case "write-technical-doc":
-      return ["codebase-exploration", "technical-documentation"];
-    case "project-to-article":
-      return ["codebase-exploration", "project-to-article", "wechat-writing"];
-    case "project-change-analysis":
-      return ["code-change-analysis"];
-    case "write-change-document":
-      return ["code-change-analysis", "technical-documentation"];
-    case "change-to-article":
-      return ["code-change-analysis", "project-to-article", "wechat-writing"];
-    default:
-      return [];
-  }
+function defaultSkillsForIntent(intent: string): string[] {
+  return INTENT_RULES.find((rule) => rule.intent === intent)?.skills ?? [];
 }
 
 export async function routeAgentRequest(input: {
@@ -171,6 +277,7 @@ export async function routeAgentRequest(input: {
 
   let routed: z.infer<typeof routeSchema>;
   let llmRouted = true;
+  let routeErrorReason = "";
   try {
     const result = await generateObject({
       model: input.model,
@@ -182,6 +289,19 @@ export async function routeAgentRequest(input: {
 创作、扩写、润色需要扫描文章素材；普通问答和纯审校不强制扫描。
 只有用户要求创建或修改文章正文时才启用文章提案。
 技术文档与公众号文章是不同目标：代码证据整理成内部文档属于 write-technical-doc；面向公众号读者写文章属于 project-to-article。
+
+【能力范围（仅支持以下方向）】
+- 公众号/技术文章的创作、扩写、润色、审校、改写
+- 为已有文章生成摘要、要点清单或 TL;DR（intent=summarize）：压缩已有正文，不创建或修改正文，不调用文章提案工具
+- 围绕代码项目做只读分析（架构、调用链、模块说明），整理成技术文档或公众号文章
+- Git 提交/Diff/版本区间的只读变更分析，整理成变更文档或文章
+- 联网搜索与资料调研，辅助写作
+
+【拒绝策略】
+当用户请求明显超出上述能力范围时（例如：修改/编写源代码、执行命令、支付/转账/退款、操作数据库增删改、发短信邮件、系统运维、查库导出报表、破解/攻击），必须返回 intent="out-of-scope"，并在 rationale 中用中文说明为何拒绝、引导用户回到支持的能力。注意：用户请求「写一篇关于支付/重构/某技术的文章」属于合法写作需求，不得拒绝。
+
+【代码源定位 projectLocator】
+若用户消息包含明确的本地绝对路径（如 /Users/.../ProjectName）或 GitHub 仓库地址（https://github.com/owner/repo），将其原样填入 projectLocator 字段（去掉前后空白和标点）。若用户未提及任何代码源，projectLocator 填 null。
 
 可用 Skill：
 ${skillCatalog || "（无）"}
@@ -195,31 +315,45 @@ ${projectCatalog || "（无）"}`,
     routed = result.object;
   } catch (err) {
     llmRouted = false;
-    log.warn({ err }, "意图路由 LLM 失败，回退到规则路由");
+    routeErrorReason = classifyRouteError(err);
+    log.warn(
+      { err, routeErrorReason },
+      "意图路由 LLM 失败，回退到规则路由"
+    );
     routed = fallbackRoute(input.message);
   }
   const deterministic = fallbackRoute(input.message);
-  if (deterministic.intent !== "question") {
-    routed = {
-      ...routed,
-      intent: deterministic.intent,
-      needsWeb: routed.needsWeb || deterministic.needsWeb,
-      needsAssets: routed.needsAssets || deterministic.needsAssets,
-      needsProject: routed.needsProject || deterministic.needsProject,
-      needsGitHistory:
-        routed.needsGitHistory || deterministic.needsGitHistory,
-      needsProposal: routed.needsProposal || deterministic.needsProposal,
-      rationale:
-        routed.intent === deterministic.intent
-          ? routed.rationale
-          : `${routed.rationale}；确定性规则校正为 ${deterministic.intent}。`,
-    };
-  }
+  // 决策 A：LLM 优先。但 LLM 返回的 intent 必须是合法枚举值，否则回落规则；
+  // needs* 永远取「规则 ∪ LLM」并集（能力只多不少）。
+  const validIntents = new Set<string>(agentIntentSchema.options);
+  const llmIntentOk = llmRouted && validIntents.has(routed.intent);
+  const finalIntent: AgentIntent = llmIntentOk
+    ? (routed.intent as AgentIntent)
+    : (deterministic.intent as AgentIntent);
+  routed = {
+    ...routed,
+    intent: finalIntent,
+    needsWeb: routed.needsWeb || deterministic.needsWeb,
+    needsAssets: routed.needsAssets || deterministic.needsAssets,
+    needsProject: routed.needsProject || deterministic.needsProject,
+    needsGitHistory: routed.needsGitHistory || deterministic.needsGitHistory,
+    needsProposal: routed.needsProposal || deterministic.needsProposal,
+    rationale: llmIntentOk
+      ? routed.rationale
+      : routeErrorReason
+        ? `${routed.rationale}；LLM 不可用（${routeErrorReason}），已用规则路由。`
+        : `${routed.rationale}；LLM 返回的意图不在支持范围，已用规则路由。`,
+  };
 
-  const codeSourceCandidate = extractCodeSourceCandidate(
+  // 优先级：正则识别 > LLM projectLocator > 已配置项目兜底。
+  // 正则会漏掉中文紧贴的路径（LOCAL_PATH_PATTERN 前导白名单不含 CJK），LLM projectLocator 兜底。
+  let codeSourceCandidate = extractCodeSourceCandidate(
     input.message,
     input.config.projects
   );
+  if (!codeSourceCandidate && routed.projectLocator) {
+    codeSourceCandidate = await buildCandidateFromLocator(routed.projectLocator);
+  }
   if (codeSourceCandidate) {
     routed.needsProject = true;
     if (routed.intent === "question") {
@@ -255,7 +389,13 @@ ${projectCatalog || "（无）"}`,
     project = input.config.projects.find(
       (candidate) => candidate.id === input.previousProjectId
     );
-  } else if (routed.needsProject && input.config.projects.length === 1) {
+  } else if (
+    routed.needsProject &&
+    !codeSourceCandidate &&
+    input.config.projects.length === 1
+  ) {
+    // 仅当没有任何明确的代码源候选时，才兜底选中唯一信任项目，
+    // 避免用户给了新项目路径却被静默替换成长期信任项目（如 aiwaji 误选）。
     project = input.config.projects[0];
   }
 
@@ -290,7 +430,9 @@ ${projectCatalog || "（无）"}`,
       : "propose_article_revision",
     // 文章目标的素材工具始终可用：让模型能查看并按需插图，
     // 不再受 needsAssets 门控（避免写作请求误判为 question 时素材缺失）。
-    ...(input.targetKind === "article" ? ["article_assets"] : []),
+    ...(input.targetKind === "article"
+      ? ["article_assets", "set_article_digest"]
+      : []),
     ...(routed.needsWeb ? ["web_search", "web_extract"] : []),
     ...(project ? ["explore_project"] : []),
     ...(routed.needsGitHistory && project ? ["analyze_code_changes"] : []),

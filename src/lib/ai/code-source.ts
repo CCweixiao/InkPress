@@ -190,6 +190,58 @@ export async function validateLocalCodeSource(rootInput: string) {
   return normalized;
 }
 
+/**
+ * 从 LLM 抽出的 locator 字符串构造 CodeSourceCandidate，作为正则识别失败时的兜底。
+ * - GitHub 地址：复用 GITHUB_URL_PATTERN 解析。
+ * - 本地绝对路径：走 validateLocalCodeSource 严格校验（拒绝不存在/系统目录/凭证目录/整个 home）。
+ *
+ * 校验失败一律返回 null（不抛错），让上层继续走已配置项目兜底，而非中断流程。
+ * local-path 首次仍需用户 approval（人在回路），由 createOrReuseCodeSourceGrant 处理。
+ */
+export async function buildCandidateFromLocator(
+  locator: string
+): Promise<CodeSourceCandidate | null> {
+  const trimmed = locator.trim();
+  if (!trimmed) return null;
+
+  const github = trimmed.match(GITHUB_URL_PATTERN);
+  if (github) {
+    const repo = github[2].replace(/\.git$/i, "");
+    return {
+      kind: "github-repository",
+      locator: `https://github.com/${github[1]}/${repo}`,
+      owner: github[1],
+      repo,
+      ...(github[4]
+        ? {
+            ref:
+              github[3] === "pull" ? `pull/${github[4]}/head` : github[4],
+          }
+        : {}),
+      ...(github[3]
+        ? { selectorKind: github[3] as "tree" | "commit" | "pull" }
+        : {}),
+      displayName: `${github[1]}/${repo}`,
+    };
+  }
+
+  if (path.isAbsolute(trimmed)) {
+    try {
+      const validated = await validateLocalCodeSource(trimmed);
+      return {
+        kind: "local-path",
+        locator: validated,
+        root: validated,
+        displayName: path.basename(validated) || validated,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 export function codeSourceKey(candidate: CodeSourceCandidate) {
   const stable =
     candidate.kind === "github-repository"
