@@ -98,6 +98,38 @@ describe("routeAgentRequest — LLM 优先裁决（决策 A）", () => {
   });
 });
 
+describe("routeAgentRequest — clarify 反问（不硬猜）", () => {
+  it("LLM 判定需要澄清时，输出 ambiguityQuestion（route.ts 会据此反问、不跑 Agent）", async () => {
+    vi.mocked(generateObject).mockResolvedValue({
+      object: {
+        intent: "question",
+        skillIds: [],
+        needsWeb: false,
+        needsAssets: false,
+        needsProject: false,
+        needsGitHistory: false,
+        needsProposal: false,
+        projectId: null,
+        projectLocator: null,
+        rationale: "输入含糊，信息不足。",
+        clarify: "你想让我做什么呢？可以告诉我主题和要求。",
+      },
+    } as never);
+
+    const route = await routeAgentRequest({
+      model: {} as never,
+      message: "那个",
+      skills: [],
+      config: baseConfig,
+    });
+
+    expect(route.ambiguityQuestion).toBe(
+      "你想让我做什么呢？可以告诉我主题和要求。"
+    );
+    expect(route.intent).toBe("question");
+  });
+});
+
 describe("routeAgentRequest — projectLocator 兜底（根治 aiwaji 误选）", () => {
   it("正则漏掉中文紧贴路径时，用 LLM projectLocator 兜底且不误选唯一信任项目", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "inkpress-loc-"));

@@ -46,6 +46,8 @@ const routeSchema = z.object({
   projectId: z.string().nullable().catch(null),
   projectLocator: z.string().nullable().catch(null),
   rationale: z.string().catch(""),
+  // 含糊/信息不足/无法判断意图时的一句中文反问；非空则不跑 Agent，直接反问用户补充。
+  clarify: z.string().nullable().catch(null),
 });
 
 export type AgentRoute = z.infer<typeof routeSchema> & {
@@ -183,6 +185,7 @@ function fallbackRoute(message: string): z.infer<typeof routeSchema> {
     projectId: null,
     projectLocator: null,
     rationale: "使用规则路由完成意图识别。",
+    clarify: null,
   };
 }
 
@@ -240,8 +243,18 @@ export async function routeAgentRequest(input: {
 - Git 提交/Diff/版本区间的只读变更分析，整理成变更文档或文章
 - 联网搜索与资料调研，辅助写作
 
+【能力边界判定原则】
+区分「合法写作」与「越界做事」的关键看动词与对象，而非关键词：
+- 合法：用户要把某主题**写成文章/文档**（创作、扩写、润色、审校、总结、复盘）。例：「写一篇关于支付系统架构的文章」「把这次重构整理成复盘」「总结这篇文章」。
+- 越界：用户要你**直接执行现实操作**（改/写源码、跑命令、操作数据库、支付转账、发短信邮件、系统运维、查库导报表、破解攻击）。例：「把登录改成 OAuth」「跑一下这个 SQL」「帮我退款」。
+即：产出物是「文章/文本」=合法；产出物是「代码改动/系统操作/资金动作」=越界。
+
 【拒绝策略】
-当用户请求明显超出上述能力范围时（例如：修改/编写源代码、执行命令、支付/转账/退款、操作数据库增删改、发短信邮件、系统运维、查库导出报表、破解/攻击），必须返回 intent="out-of-scope"，并在 rationale 中用中文说明为何拒绝、引导用户回到支持的能力。注意：用户请求「写一篇关于支付/重构/某技术的文章」属于合法写作需求，不得拒绝。
+当用户请求属于上述越界情形时，必须返回 intent="out-of-scope"，并在 rationale 中用中文说明为何拒绝、引导用户回到支持的能力。
+
+【需要澄清 clarify】
+当输入**无法明确判断意图**时——信息严重不足、过于含糊（如「那个」「帮个忙」）、明显是键盘乱敲或只言片语、自相矛盾——**不要硬猜、不要随意选 intent**。在 clarify 字段写一句简短中文反问，引导用户补充具体需求（可举一两个能力方向作例子）；此时 intent 填 "question"，其余字段留空/null/false。
+注意区分：明确越界（改代码/执行命令/支付）走 intent="out-of-scope" 拒绝；只是信息不足/含糊才走 clarify 反问。两者不要混用。
 
 【代码源定位 projectLocator】
 若用户消息包含明确的本地绝对路径（如 /Users/.../ProjectName）或 GitHub 仓库地址（https://github.com/owner/repo），将其原样填入 projectLocator 字段（去掉前后空白和标点）。若用户未提及任何代码源，projectLocator 填 null。
@@ -342,8 +355,12 @@ ${projectCatalog || "（无）"}`,
     project = input.config.projects[0];
   }
 
+  // 优先级：LLM 判定「需要澄清」(clarify) > 项目选择澄清。route.ts 会把 ambiguityQuestion
+  // 流式回给用户并跳过 Agent 执行——即「分析不准就反问，不硬猜」。
   let ambiguityQuestion: string | undefined;
-  if (routed.needsProject && !project) {
+  if (routed.clarify) {
+    ambiguityQuestion = routed.clarify;
+  } else if (routed.needsProject && !project) {
     if (
       codeSourceCandidate?.kind === "local-path" ||
       codeSourceCandidate?.kind === "github-repository"
@@ -376,7 +393,11 @@ ${projectCatalog || "（无）"}`,
     ...(input.targetKind === "article"
       ? ["article_assets", "set_article_digest"]
       : []),
-    ...(routed.needsWeb ? ["web_search", "web_extract"] : []),
+    // 联网工具：配置了 Tavily Key 即常驻可用，让模型按需搜索；不再仅由 needsWeb 门控
+    //（否则用户没用到「搜索/联网」等关键词时，即便配了 Key 模型也调不到 web_search）。
+    ...(routed.needsWeb || input.config.tavilyApiKey.trim()
+      ? ["web_search", "web_extract"]
+      : []),
     ...(project ? ["explore_project"] : []),
     ...(routed.needsGitHistory && project ? ["analyze_code_changes"] : []),
   ];

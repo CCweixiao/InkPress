@@ -17,6 +17,7 @@ import {
   type CodeChangeEvidencePackage,
 } from "@/lib/ai/git-analysis";
 import { moduleLogger } from "@/lib/logger";
+import { extractArticleOutline } from "@/lib/ai/current-article";
 
 const log = moduleLogger("ai.agent");
 
@@ -97,6 +98,22 @@ async function tavilyRequest(
   return data;
 }
 
+/** 省略全文时的轻量正文概要：标题 + 摘要 + 篇幅 + 大纲（让模型知道文章存在与结构，但不耗全文 token）。 */
+function articleDescriptor(target: AgentTargetContext): string {
+  const outline = extractArticleOutline(target.markdown ?? "");
+  const outlineText = outline.length
+    ? outline.map((h) => `    ${h}`).join("\n")
+    : "    （无标题）";
+  return [
+    "（本轮按需未载入全文，仅概要）",
+    `  - 标题：${target.title || "（未填写）"}`,
+    `  - 摘要：${target.digest || target.documentType || "（未填写）"}`,
+    `  - 篇幅：约 ${(target.markdown ?? "").length.toLocaleString()} 字`,
+    `  - 大纲：`,
+    outlineText,
+  ].join("\n");
+}
+
 export async function createWritingAgent(input: {
   target: AgentTargetContext;
   sessionId: string;
@@ -122,6 +139,8 @@ export async function createWritingAgent(input: {
     tags: string[];
   }>;
   conversationSummary?: string;
+  /** 是否把文章全文注入系统提示。默认 true；与正文无关的任务（联网/代码）可省略只带摘要，省 token。 */
+  includeArticleBody?: boolean;
   onFinishUsage?: (usage: {
     inputTokens: number;
     outputTokens: number;
@@ -503,7 +522,11 @@ ${skill.manual}
 - 摘要/类型：${input.target.digest || input.target.documentType || "（未填写）"}
 - 项目快照：${input.target.snapshotHash || "（无）"}
 - 正文：
-${input.target.markdown || "（空内容）"}
+${
+  input.includeArticleBody === false
+    ? `${articleDescriptor(input.target)}\n（本轮任务与现有正文无直接关系，已按需省略全文，仅保留上方概要；若用户其实想操作当前文章，请提示其明确指代「当前文章」，下一轮会自动载入全文。）`
+    : `${input.target.markdown || "（空内容）"}\n\n（上方「正文」即用户当前正在编辑的文章/文档。规则：\n- 用户说的「当前文章/本文/这篇/当前编辑区/当前文档」一律指上方正文，直接基于它处理；\n- 若用户指代某个标题/章节下方的段落（如「第三节」「X 标题下方」），从上方正文中定位对应章节后再操作；\n- 正文非空时禁止反问用户索要正文或文件路径；\n- 若正文显示「（空内容）」，说明当前文章为空，应直接告知用户先在编辑器写入内容或粘贴正文，不要臆造内容。）`
+}
 
 当前代码源：${input.codeSource ? `${input.codeSource.displayName} | ${input.codeSource.kind} | ${input.codeSource.locator}` : input.project ? `${input.project.name}（只读）` : "未选择"}
 本轮意图：${input.route.intent}
