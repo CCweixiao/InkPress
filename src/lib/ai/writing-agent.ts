@@ -163,11 +163,15 @@ export async function createWritingAgent(input: {
     input.modelId
   );
   const skillCatalog = await listSkills();
-  const baseHash = articleVersionHash({
+  // baseHash/currentDigest 为可变变量：set_article_digest 在同一 agent 执行期间会更新 digest，
+  // 必须同步重算 hash，否则后续 propose_*_revision 写入的 baseVersionHash 会与前端自动保存后的 DB 状态不匹配，
+  // 导致 apply 时 409 superseded。
+  let baseHash = articleVersionHash({
     title: input.target.title,
     markdown: input.target.markdown,
     digest: input.target.digest ?? input.target.snapshotHash ?? "",
   });
+  let currentDigest = input.target.digest ?? input.target.snapshotHash ?? "";
   const tools = {
     set_task_plan: tool({
       title: "制定写作计划",
@@ -359,6 +363,14 @@ export async function createWritingAgent(input: {
         }
         // 对齐 /api/ai/digest 的 ≤120 字约束
         const trimmed = digest.trim().slice(0, 120);
+        currentDigest = trimmed;
+        // 同步重算 baseHash，使后续 propose_article_revision 写入的 baseVersionHash
+        // 与服务端即时落盘后的 DB 状态保持一致，避免 apply 时 409 superseded。
+        baseHash = articleVersionHash({
+          title: input.target.title,
+          markdown: input.target.markdown,
+          digest: currentDigest,
+        });
         await input.onArticleDigest?.({ digest: trimmed });
         return { ok: true, digest: trimmed };
       }),
@@ -402,7 +414,7 @@ export async function createWritingAgent(input: {
               baseVersionHash: baseHash,
               baseTitle: input.target.title,
               baseMarkdown: input.target.markdown,
-              baseDigest: input.target.digest ?? "",
+              baseDigest: currentDigest,
               title: title ?? null,
               markdown,
               digest: digest ?? null,

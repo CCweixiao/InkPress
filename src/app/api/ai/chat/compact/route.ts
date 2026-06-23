@@ -69,6 +69,7 @@ export const POST = withApiLog("POST /api/ai/chat/compact", async (req: NextRequ
       summaryUpToPosition: session.summaryUpToPosition,
       uiMessages: messages,
       keepRecent: COMPACT_KEEP_RECENT,
+      deleteSummarized: true,
     });
 
     const kept = messages.slice(-COMPACT_KEEP_RECENT);

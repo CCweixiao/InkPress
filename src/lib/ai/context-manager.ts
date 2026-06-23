@@ -20,13 +20,40 @@ export function estimateTokens(text: string) {
   return Math.ceil(cjk / 1.5 + nonCjk / 4);
 }
 
+/** 提取消息的可估算文本（用于 token 估算）。
+ *  包含 text part + 工具调用的 input/output 文本，使 conversationTokens 更接近实际上下文大小，
+ *  让 shouldSummarize 阈值在工具调用密集的对话中也能正确触发。 */
 function messageText(message: UIMessage) {
   return (message.parts ?? [])
-    .filter(
-      (part): part is { type: "text"; text: string } =>
-        part.type === "text" && typeof part.text === "string"
-    )
-    .map((part) => part.text)
+    .map((part) => {
+      const p = part as Record<string, unknown>;
+      if (p.type === "text" && typeof p.text === "string") {
+        return p.text;
+      }
+      // 工具调用 / 结果 part：提取 input 和 output 中的大文本字段
+      if (
+        (typeof p.type === "string" && p.type.startsWith("tool-")) ||
+        p.type === "dynamic-tool"
+      ) {
+        const segments: string[] = [];
+        const input = p.input;
+        if (input && typeof input === "object") {
+          for (const key of ["markdown", "summary", "text", "digest", "title"]) {
+            const val = (input as Record<string, unknown>)[key];
+            if (typeof val === "string") segments.push(val);
+          }
+        }
+        const output = p.output;
+        if (output && typeof output === "object") {
+          for (const key of ["markdown", "summary", "text", "digest", "title"]) {
+            const val = (output as Record<string, unknown>)[key];
+            if (typeof val === "string") segments.push(val);
+          }
+        }
+        return segments.join("\n");
+      }
+      return "";
+    })
     .join("\n")
     .trim();
 }
@@ -56,6 +83,10 @@ const SUMMARY_SYSTEM = `你负责压缩写作对话历史。输出简洁的结�
  * 压缩对话历史为摘要（auto 自动触发与 /compact 手动触发共用）。
  * 保留最近 keepRecent 条消息不压缩，将其余未压缩历史并入 session.summary，
  * 持久化 summary + summaryUpToPosition。返回压缩条数（0 = 无可压缩）。
+ *
+ * deleteSummarized（默认 false）：当 true 时，删除已被摘要覆盖的旧消息并对剩余消息
+ * position 重编号（从 0 连续）。仅手动 /compact 使用——自动压缩路径不能删消息，
+ * 因为后续 onFinish 的 saveAgentMessages 会用压缩前的完整列表覆盖 DB。
  */
 export async function summarizeConversation(input: {
   model: LanguageModel;
@@ -64,6 +95,7 @@ export async function summarizeConversation(input: {
   summaryUpToPosition: number;
   uiMessages: UIMessage[];
   keepRecent?: number;
+  deleteSummarized?: boolean;
 }): Promise<{
   summary: string;
   summaryUpToPosition: number;
@@ -99,6 +131,26 @@ export async function summarizeConversation(input: {
     maxRetries: 1,
   });
   const summary = result.text.trim();
+
+  if (input.deleteSummarized) {
+    // 删除已被摘要覆盖的旧消息，剩余消息 position 批量减 cutoff 使其从 0 开始连续。
+    // summaryUpToPosition 重置为 -1（所有保留消息都已在 DB 中，无跳过的前缀）。
+    await prisma.$transaction([
+      prisma.agentChatMessage.deleteMany({
+        where: { sessionId: input.sessionId, position: { lte: cutoff - 1 } },
+      }),
+      prisma.agentChatMessage.updateMany({
+        where: { sessionId: input.sessionId },
+        data: { position: { decrement: cutoff } },
+      }),
+      prisma.agentChatSession.update({
+        where: { id: input.sessionId },
+        data: { summary, summaryUpToPosition: -1 },
+      }),
+    ]);
+    return { summary, summaryUpToPosition: -1, summarizedCount: newHistorical.length };
+  }
+
   const summaryUpToPosition = cutoff - 1;
   await prisma.agentChatSession.update({
     where: { id: input.sessionId },
@@ -127,11 +179,12 @@ export async function prepareAgentContext(input: {
     (total, message) => total + estimateTokens(messageText(message)),
     0
   );
-  const estimatedTokens =
-    articleTokens + estimateTokens(input.sessionSummary) + conversationTokens;
+  // 阈值判断基于全量消息（判断是否需要压缩），不使用 retained——否则压缩后 estimatedTokens
+  // 下降会导致 shouldSummarize 为 false，永远无法触发自动压缩。
   const shouldSummarize =
     input.uiMessages.length > 24 ||
-    estimatedTokens > input.contextBudgetTokens * 0.7;
+    articleTokens + estimateTokens(input.sessionSummary) + conversationTokens >
+      input.contextBudgetTokens * 0.7;
 
   let summary = input.sessionSummary;
   let summaryUpToPosition = input.summaryUpToPosition;
@@ -150,13 +203,53 @@ export async function prepareAgentContext(input: {
     recentMessages = input.uiMessages.slice(-RECENT_MESSAGE_COUNT);
   }
 
+  // estimatedTokens 基于实际将发送给 LLM 的 retained messages + summary + article，
+  // 反映压缩后真实占用（而非全量历史），使前端 TokenMeter 在压缩后正确下降。
+  const retainedTokens = recentMessages.reduce(
+    (total, message) => total + estimateTokens(messageText(message)),
+    0
+  );
+  const estimatedTokens =
+    articleTokens + estimateTokens(summary) + retainedTokens;
+
   const converted = await convertToModelMessages(recentMessages);
+  // 选择性裁剪：只对「重型工具」裁剪旧调用，其余工具全部保留。
+  //
+  // propose_article_revision 的 input.markdown 包含完整正文，web_extract 的 output 包含整页内容。
+  // 若全部保留（"none"），N 轮修改 = N 份完整正文副本 + 系统提示词 1 份 → 上下文膨胀。
+  //
+  // 选择性裁剪策略：
+  // - propose_*_revision / web_extract：仅保留最近 2 条消息中的调用，更早的裁剪
+  //   （旧的正文副本被移除，但系统提示词始终有当前正文兜底）
+  // - explore_project / web_search / 等轻量工具：全部保留（"none" 效果），不丢多轮上下文
+  // - 非 tool-call part（text / reasoning）：始终保留
   const messages = pruneMessages({
     messages: converted,
     reasoning: "all",
-    toolCalls: "before-last-2-messages",
+    toolCalls: [
+      {
+        type: "before-last-2-messages",
+        tools: [
+          "propose_article_revision",
+          "propose_technical_document_revision",
+          "web_extract",
+        ],
+      },
+    ],
     emptyMessages: "remove",
   }) as ModelMessage[];
+
+  // 诊断日志：追踪消息在各阶段的数量变化
+  log.debug(
+    {
+      sessionId: input.sessionId,
+      uiMessagesCount: input.uiMessages.length,
+      recentMessagesCount: recentMessages.length,
+      convertedCount: converted.length,
+      prunedCount: messages.length,
+    },
+    "prepareAgentContext 消息流"
+  );
 
   const compressed =
     shouldSummarize && input.uiMessages.length > RECENT_MESSAGE_COUNT;

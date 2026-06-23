@@ -1,79 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Check,
-  ChevronRight,
-  FileSearch,
-  Globe2,
-  Loader2,
-  Sparkles,
-  Wrench,
-  X,
-} from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import {
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-
-const TOOL_LABELS: Record<string, string> = {
-  set_task_plan: "制定执行计划",
-  load_skill: "补充加载 Skill",
-  read_skill_resource: "读取 Skill 资源",
-  web_search: "搜索网络资料",
-  web_extract: "读取网页正文",
-  project_search: "搜索本地代码项目",
-  project_read: "读取项目文件",
-  explore_project: "只读探索代码项目",
-  analyze_code_changes: "分析 Git 提交与代码差异",
-  github_pull_request: "读取 GitHub Pull Request",
-  article_assets: "筛选文章素材",
-  propose_article_revision: "生成文章修改提案",
-  propose_technical_document_revision: "生成技术文档提案",
-};
-
-function ToolIcon({ name }: { name: string }) {
-  if (name.startsWith("web_")) return <Globe2 className="h-3.5 w-3.5" />;
-  if (name.startsWith("project_")) return <FileSearch className="h-3.5 w-3.5" />;
-  if (name === "load_skill") return <Sparkles className="h-3.5 w-3.5" />;
-  return <Wrench className="h-3.5 w-3.5" />;
-}
-
-function summarizeTool(toolName: string, output: unknown, errorText?: unknown) {
-  if (typeof errorText === "string") return errorText;
-  if (!output || typeof output !== "object") return "执行完成";
-  const value = output as Record<string, unknown>;
-  if (toolName === "set_task_plan" && Array.isArray(value.steps)) {
-    return `${value.intent ?? "任务"} · ${value.steps.length} 个步骤`;
-  }
-  if (toolName === "load_skill") return `已加载 ${value.name ?? value.id ?? "Skill"}`;
-  if (toolName === "web_search") {
-    return `获得 ${Array.isArray(value.results) ? value.results.length : 0} 条搜索结果`;
-  }
-  if (toolName === "project_search") {
-    return `找到 ${Array.isArray(value.matches) ? value.matches.length : 0} 个匹配`;
-  }
-  if (toolName === "project_read") return `已读取 ${value.path ?? "项目文件"}`;
-  if (toolName === "explore_project") {
-    return `证据包包含 ${Array.isArray(value.symbols) ? value.symbols.length : 0} 个符号、${Array.isArray(value.edges) ? value.edges.length : 0} 条关系`;
-  }
-  if (toolName === "article_assets") {
-    return `读取 ${Array.isArray(value.assets) ? value.assets.length : 0} 项素材`;
-  }
-  if (toolName === "propose_article_revision") return "文章修改提案已生成";
-  return "执行完成";
-}
-
-function formatJson(value: unknown): string {
-  if (value === undefined || value === null) return "";
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
+import {
+  TOOL_LABELS,
+  ToolIcon,
+  summarizeTool,
+  formatJson,
+  getToolName,
+} from "@/components/ai/tool-helpers";
 
 /**
  * 工具调用块（Codex 风格）。
@@ -86,14 +27,7 @@ export function ToolCallBlock({
 }) {
   const [open, setOpen] = useState(false);
 
-  const toolName =
-    part.type === "dynamic-tool" && typeof part.toolName === "string"
-      ? part.toolName
-      : typeof part.type === "string" && part.type.startsWith("tool-")
-        ? part.type.slice(5)
-        : typeof part.toolName === "string"
-          ? part.toolName
-          : "";
+  const toolName = getToolName(part);
 
   if (!toolName) return null;
 

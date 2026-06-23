@@ -1,5 +1,8 @@
 import type { UIMessage } from "ai";
 import { prisma } from "@/lib/db";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("ai.chat-persistence");
 
 export type AgentTarget =
   | { kind: "article"; id: string }
@@ -102,4 +105,80 @@ export async function saveAgentMessages(sessionId: string, messages: UIMessage[]
       })
     ),
   ]);
+}
+
+/**
+ * 合并前端消息与 DB 历史，避免分页/remount 导致的消息丢失。
+ *
+ * 问题背景：WritingAssistant 组件因 tab 切换（条件渲染）remount 时只从 DB 分页加载 10 条消息，
+ * 下次发送时前端只传这些消息。若后端用 delete-all-recreate 语义，被分页出去的旧消息会被永久删除。
+ *
+ * 策略：
+ * - 新会话或 DB 已空：直接写入前端消息。
+ * - truncate 场景（rerun/regenerate）：前端最后一条消息 ID 在 DB 中存在 → 前端列表是权威子集，截断。
+ * - append 场景：前端最后一条消息 ID 不在 DB 中 → 找分歧点（前端最后一条存在于 DB 的消息），用 DB 补全前缀。
+ * - 无交集（异常）：直接写入前端消息，保守不丢数据。
+ *
+ * 返回合并后的完整消息列表，供后续 originalMessages / prepareAgentContext 使用。
+ */
+export async function mergeAndPersistMessages(
+  sessionId: string,
+  uiMessages: UIMessage[]
+): Promise<UIMessage[]> {
+  const dbMessages = await loadAllAgentMessages(sessionId);
+
+  log.debug(
+    {
+      sessionId,
+      frontendCount: uiMessages.length,
+      dbCount: dbMessages.length,
+    },
+    "mergeAndPersistMessages 输入"
+  );
+  if (dbMessages.length === 0) {
+    // 新会话或已清空：直接写入前端消息
+    await saveAgentMessages(sessionId, uiMessages);
+    return uiMessages;
+  }
+
+  const dbIds = new Set(dbMessages.map((m) => m.id));
+  const lastFrontendId = uiMessages[uiMessages.length - 1]?.id;
+
+  if (lastFrontendId && dbIds.has(lastFrontendId)) {
+    // truncate/rerun/regenerate：前端消息是 DB 的前缀子集 → 截断
+    await saveAgentMessages(sessionId, uiMessages);
+    return uiMessages;
+  }
+
+  // append：找分歧点（前端最后一条在 DB 中的消息），用 DB 补全前缀
+  let divergence = -1;
+  for (let i = uiMessages.length - 1; i >= 0; i--) {
+    if (dbIds.has(uiMessages[i].id)) {
+      divergence = i;
+      break;
+    }
+  }
+  if (divergence === -1) {
+    // 无交集（异常）：直接写入前端消息
+    await saveAgentMessages(sessionId, uiMessages);
+    return uiMessages;
+  }
+
+  const dbDivIdx = dbMessages.findIndex((m) => m.id === uiMessages[divergence].id);
+  const merged = [
+    ...dbMessages.slice(0, dbDivIdx + 1),
+    ...uiMessages.slice(divergence + 1),
+  ];
+  log.debug(
+    {
+      sessionId,
+      branch: "append",
+      divergence,
+      dbDivIdx,
+      mergedCount: merged.length,
+    },
+    "mergeAndPersistMessages 合并结果"
+  );
+  await saveAgentMessages(sessionId, merged);
+  return merged;
 }

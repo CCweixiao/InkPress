@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PART_RENDERERS,
   STAGE_ORDER,
+  aggregateParts,
   type Stage,
 } from "../../src/components/editor/WritingAssistant";
 
@@ -85,5 +86,143 @@ describe("agent part 渲染注册表", () => {
   it("无 type 的未知 part 不命中任何 renderer", () => {
     const matched = PART_RENDERERS.filter((r) => r.match({ foo: "bar" }));
     expect(matched.length).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// aggregateParts：工具调用分组聚合
+// ────────────────────────────────────────────────────────────────────────────
+
+const explorePart = (tool: string) => ({
+  type: "dynamic-tool",
+  toolName: tool,
+  state: "output",
+});
+const webPart = (tool: string) => ({
+  type: "dynamic-tool",
+  toolName: tool,
+  state: "output",
+});
+const writePart = () => ({
+  type: "dynamic-tool",
+  toolName: "propose_article_revision",
+  state: "output",
+});
+const evidencePart = () => ({ type: "data-source-evidence", data: {} });
+const textPart = () => ({ type: "text", text: "hi" });
+
+describe("aggregateParts", () => {
+  it("空输入返回空数组", () => {
+    expect(aggregateParts([])).toEqual([]);
+  });
+
+  it("单个探索工具不分组，回退为 single", () => {
+    const items = aggregateParts([explorePart("project_search")]);
+    expect(items.length).toBe(1);
+    expect(items[0].kind).toBe("single");
+  });
+
+  it("连续 2+ 个探索工具合并为 tool-group", () => {
+    const items = aggregateParts([
+      explorePart("project_search"),
+      explorePart("project_read"),
+      explorePart("explore_project"),
+    ]);
+    expect(items.length).toBe(1);
+    expect(items[0].kind).toBe("tool-group");
+    if (items[0].kind === "tool-group") {
+      expect(items[0].groupType).toBe("explore");
+      expect(items[0].parts.length).toBe(3);
+      expect(items[0].key).toBe("group-0-2");
+    }
+  });
+
+  it("跨类型（explore → web）时 flush 前一组", () => {
+    const items = aggregateParts([
+      explorePart("project_search"),
+      explorePart("project_read"),
+      webPart("web_search"),
+      webPart("web_extract"),
+    ]);
+    expect(items.length).toBe(2);
+    expect(items[0].kind).toBe("tool-group");
+    expect(items[1].kind).toBe("tool-group");
+    if (items[0].kind === "tool-group" && items[1].kind === "tool-group") {
+      expect(items[0].groupType).toBe("explore");
+      expect(items[0].parts.length).toBe(2);
+      expect(items[1].groupType).toBe("web");
+      expect(items[1].parts.length).toBe(2);
+    }
+  });
+
+  it("写入类工具不进入分组，作为 single 独立渲染", () => {
+    const items = aggregateParts([
+      explorePart("project_search"),
+      explorePart("project_read"),
+      writePart(),
+      explorePart("project_read"),
+      explorePart("project_read"),
+    ]);
+    expect(items.length).toBe(3);
+    expect(items[0].kind).toBe("tool-group");
+    expect(items[1].kind).toBe("single");
+    expect(items[2].kind).toBe("tool-group");
+  });
+
+  it("evidence data part 归入探索组，不打断分组", () => {
+    const items = aggregateParts([
+      explorePart("project_search"),
+      explorePart("project_read"),
+      evidencePart(),
+      explorePart("explore_project"),
+      explorePart("project_read"),
+    ]);
+    // evidence (data-source-evidence) 属于探索组，5 个 part 全部合并为 1 组
+    expect(items.length).toBe(1);
+    expect(items[0].kind).toBe("tool-group");
+    if (items[0].kind === "tool-group") {
+      expect(items[0].parts.length).toBe(5);
+    }
+  });
+
+  it("text part 穿插打断分组，落入 single 分支", () => {
+    const items = aggregateParts([
+      explorePart("project_search"),
+      explorePart("project_read"),
+      textPart(),
+      explorePart("explore_project"),
+      explorePart("project_read"),
+    ]);
+    // text 不属于任何分组：前 2 个成组，text 单独，后 2 个成组
+    expect(items.length).toBe(3);
+    expect(items[0].kind).toBe("tool-group");
+    expect(items[1].kind).toBe("single");
+    expect(items[2].kind).toBe("tool-group");
+  });
+
+  it("text part 在探索工具之前不触发分组", () => {
+    const items = aggregateParts([
+      textPart(),
+      explorePart("project_search"),
+      explorePart("project_read"),
+    ]);
+    expect(items.length).toBe(2);
+    expect(items[0].kind).toBe("single");
+    expect(items[1].kind).toBe("tool-group");
+  });
+
+  it("组 key 编码首末索引，保证流式 reconciliation 稳定", () => {
+    const items = aggregateParts([
+      textPart(),
+      explorePart("project_search"),
+      explorePart("project_read"),
+      explorePart("explore_project"),
+    ]);
+    const group = items[1];
+    expect(group?.kind).toBe("tool-group");
+    if (group?.kind === "tool-group") {
+      // 首索引=1（text 占了 0），末索引=3
+      expect(group.key).toBe("group-1-3");
+    }
   });
 });
