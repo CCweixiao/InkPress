@@ -962,6 +962,10 @@ export function WritingAssistant({
   const [initializing, setInitializing] = useState(true);
   const [fullscreenText, setFullscreenText] = useState<string | null>(null);
   const [lastTurnUsage, setLastTurnUsage] = useState<LastTurnUsage>(null);
+  // 用户历史输入缓存：打开会话时从后端全量加载（仅文本，轻量），新发送的输入追加。
+  // 上下键在此列表前后历。与消息分页解耦。
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const historyIndex = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transport = useMemo(
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
@@ -975,6 +979,12 @@ export function WritingAssistant({
     const data = await response.json();
     if (response.ok) {
       setProposals(data.proposals ?? []);
+      setInputHistory(
+        Array.isArray(data.userInputs)
+          ? (data.userInputs as string[]).filter((t) => typeof t === "string")
+          : []
+      );
+      historyIndex.current = null;
       const session = data.session as
         | {
             lastInputTokens?: number;
@@ -1039,6 +1049,11 @@ export function WritingAssistant({
     if (!text || status === "streaming" || status === "submitted") return;
     await (onFlushTarget ?? onFlushArticle)?.();
     setInput("");
+    // 追加到历史缓存（与上一条相同则跳过，避免连续重复），并重置上下键导航位置
+    setInputHistory((prev) =>
+      prev[prev.length - 1] === text ? prev : [...prev, text]
+    );
+    historyIndex.current = null;
     await sendMessage({ text }, { body: requestBody });
   }
 
@@ -1054,6 +1069,8 @@ export function WritingAssistant({
     if (response.ok) {
       setMessages([]);
       setProposals([]);
+      setInputHistory([]);
+      historyIndex.current = null;
     }
   }
 
@@ -1317,6 +1334,37 @@ export function WritingAssistant({
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void submit();
+                return;
+              }
+              // 上下键历史导航：仅在首行按 ↑ / 末行按 ↓ 触发（多行编辑时让位给光标移动）。
+              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                const el = event.currentTarget;
+                const atFirstLine =
+                  el.value.slice(0, el.selectionStart).indexOf("\n") === -1;
+                const atLastLine =
+                  el.value.slice(el.selectionStart).indexOf("\n") === -1;
+                if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
+                  event.preventDefault();
+                  const next =
+                    historyIndex.current === null
+                      ? inputHistory.length - 1
+                      : Math.max(0, historyIndex.current - 1);
+                  historyIndex.current = next;
+                  setInput(inputHistory[next]);
+                } else if (
+                  event.key === "ArrowDown" &&
+                  atLastLine &&
+                  historyIndex.current !== null
+                ) {
+                  event.preventDefault();
+                  if (historyIndex.current < inputHistory.length - 1) {
+                    historyIndex.current += 1;
+                    setInput(inputHistory[historyIndex.current]);
+                  } else {
+                    historyIndex.current = null;
+                    setInput("");
+                  }
+                }
               }
             }}
             placeholder="让 Agent 研究、创作或调整文章…（Enter 发送 · Shift+Enter 换行）"
