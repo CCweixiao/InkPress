@@ -966,6 +966,14 @@ export function WritingAssistant({
   // 上下键在此列表前后历。与消息分页解耦。
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const historyIndex = useRef<number | null>(null);
+  // 消息分页懒加载
+  const [hasMore, setHasMore] = useState(false);
+  const [oldestPosition, setOldestPosition] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // 标记本次 messages 变更是「prepend 更早消息」，需保持视觉位置而非滚到底
+  const isLoadingMore = useRef(false);
+  const prevScrollHeight = useRef(0);
+  const prevScrollTop = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transport = useMemo(
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
@@ -1023,7 +1031,13 @@ export function WritingAssistant({
     let active = true;
     refresh()
       .then((data) => {
-        if (active) setMessages(data.messages ?? []);
+        if (active) {
+          setMessages(data.messages ?? []);
+          setHasMore(Boolean(data.hasMore));
+          setOldestPosition(
+            data.oldestPosition == null ? null : Number(data.oldestPosition)
+          );
+        }
       })
       .finally(() => active && setInitializing(false));
     return () => {
@@ -1032,11 +1046,60 @@ export function WritingAssistant({
   }, [refresh, setMessages]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: status === "streaming" ? "auto" : "smooth",
-    });
+    const el = scrollRef.current;
+    if (!el) return;
+    if (isLoadingMore.current) {
+      // 刚 prepend 更早消息：补偿新增高度，保持视觉位置（不跳到顶部）
+      el.scrollTop = el.scrollHeight - prevScrollHeight.current + prevScrollTop.current;
+      isLoadingMore.current = false;
+    } else {
+      // 初始进入 / 新消息 / 流式：自动滚到最新一条
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: status === "streaming" ? "auto" : "smooth",
+      });
+    }
   }, [messages, status, proposals]);
+
+  // 滚动到顶部时懒加载更早一页消息（游标 = 当前最旧 position）
+  const loadMore = useCallback(async () => {
+    if (oldestPosition == null || loadingMore) return;
+    const el = scrollRef.current;
+    if (el) {
+      prevScrollHeight.current = el.scrollHeight;
+      prevScrollTop.current = el.scrollTop;
+    }
+    isLoadingMore.current = true;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(
+        `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}&before=${oldestPosition}&limit=10`
+      );
+      const data = await response.json();
+      if (response.ok && Array.isArray(data.messages)) {
+        const older = data.messages as UIMessage[];
+        if (older.length) setMessages((prev) => [...older, ...prev]);
+        setHasMore(Boolean(data.hasMore));
+        setOldestPosition(
+          data.oldestPosition == null ? null : Number(data.oldestPosition)
+        );
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [oldestPosition, loadingMore, resolvedTargetId, targetKind, setMessages]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    function onScroll() {
+      if (el && el.scrollTop < 40 && hasMore && !loadingMore) {
+        void loadMore();
+      }
+    }
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [hasMore, loadingMore, loadMore]);
 
   const requestBody = {
     target: { kind: targetKind, id: resolvedTargetId },
@@ -1071,6 +1134,8 @@ export function WritingAssistant({
       setProposals([]);
       setInputHistory([]);
       historyIndex.current = null;
+      setHasMore(false);
+      setOldestPosition(null);
     }
   }
 
@@ -1237,6 +1302,11 @@ export function WritingAssistant({
           </div>
         ) : (
           <>
+            {loadingMore && (
+              <div className="flex items-center justify-center py-2 text-[11px] text-muted-foreground">
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> 加载更早消息…
+              </div>
+            )}
             {messages.map((message, idx) => (
               <div
                 key={message.id}
