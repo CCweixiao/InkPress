@@ -76,3 +76,6 @@ next-env.d.ts
 # Docker 数据卷（持久化数据，不入库）
 /inkpress-data/
 .e2e-data/
+
+# graphify 知识图谱产物（`graphify update .` 生成的 AST 图谱，不入库）
+/graphify-out/
