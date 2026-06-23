@@ -66,6 +66,23 @@ export async function loadAgentMessages(
   };
 }
 
+/**
+ * 加载会话全部消息（按 position 升序），用于 /compact 全量压缩。
+ * 与 loadAgentMessages 不同：不分页、不带哨兵，返回完整历史。
+ */
+export async function loadAllAgentMessages(sessionId: string): Promise<UIMessage[]> {
+  const rows = await prisma.agentChatMessage.findMany({
+    where: { sessionId },
+    orderBy: { position: "asc" },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    role: row.role as UIMessage["role"],
+    parts: JSON.parse(row.partsJson) as UIMessage["parts"],
+    ...(row.metadataJson ? { metadata: JSON.parse(row.metadataJson) } : {}),
+  }));
+}
+
 export async function saveAgentMessages(sessionId: string, messages: UIMessage[]) {
   await prisma.$transaction([
     prisma.agentChatMessage.deleteMany({ where: { sessionId } }),
