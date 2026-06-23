@@ -28,6 +28,27 @@ describe("classifyError", () => {
     expect(classifyError("429 Too Many Requests").category).toBe("rate-limit");
   });
 
+  it("归类厂商中文限流文案（智谱「访问量过大」），即使消息里没有 429", () => {
+    // 客户端只拿到消息文本的场景
+    const r = classifyError(new Error("该模型当前访问量过大，请您稍后再试"));
+    expect(r.category).toBe("rate-limit");
+    expect(r.label).toBe("请求被限流");
+  });
+
+  it("AI_RetryError 包裹的 AI_APICallError（带 statusCode 429）→ 限流并保留状态码", () => {
+    const r = classifyError({
+      name: "AI_RetryError",
+      message: "Failed after 2 attempts. Last error: 该模型当前访问量过大",
+      lastError: {
+        message: "该模型当前访问量过大，请您稍后再试",
+        statusCode: 429,
+      },
+    });
+    expect(r.category).toBe("rate-limit");
+    expect(r.statusCode).toBe(429);
+    expect(r.raw).toContain("访问量过大");
+  });
+
   it("归类超时", () => {
     expect(classifyError("ETIMEDOUT").category).toBe("timeout");
   });
