@@ -213,6 +213,28 @@ export async function GET(req: NextRequest) {
             decidedAt: true,
           },
         });
+  // 用户历史输入缓存（轻量：仅取 user 消息的文本，供对话框上下键导航；
+  // 与消息分页解耦——消息含证据/工具输出较重需分页，而用户输入文本很轻可全量）。
+  const userMessages = await prisma.agentChatMessage.findMany({
+    where: { sessionId: session.id, role: "user" },
+    orderBy: { position: "asc" },
+    select: { partsJson: true },
+  });
+  const userInputs = userMessages.flatMap((row) => {
+    try {
+      const parts = JSON.parse(row.partsJson) as Array<{
+        type?: string;
+        text?: unknown;
+      }>;
+      return parts
+        .filter((p) => p.type === "text")
+        .map((p) => (typeof p.text === "string" ? p.text : ""))
+        .filter((t) => t.trim() !== "");
+    } catch {
+      return [];
+    }
+  });
+
   return NextResponse.json({
     session,
     messages,
@@ -220,6 +242,7 @@ export async function GET(req: NextRequest) {
       ...proposal,
       proposalKind: target.kind,
     })),
+    userInputs,
   });
 }
 
