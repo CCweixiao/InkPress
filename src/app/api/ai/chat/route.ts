@@ -197,6 +197,37 @@ function writeStep(
   } as never);
 }
 
+// 意图枚举 → 中文标签，供「识别任务意图」步骤展示，避免直接露出英文枚举。
+const INTENT_LABEL: Record<string, string> = {
+  question: "问答",
+  "create-article": "创作文章",
+  polish: "润色",
+  review: "审校",
+  research: "调研",
+  "project-explore": "项目探索",
+  "write-technical-doc": "技术文档",
+  "project-to-article": "项目转文章",
+  "project-change-analysis": "变更分析",
+  "write-change-document": "变更文档",
+  "change-to-article": "变更转文章",
+  summarize: "生成摘要",
+  "out-of-scope": "超出能力范围",
+};
+
+function intentLabel(intent: string) {
+  return INTENT_LABEL[intent] ?? intent;
+}
+
+// 超范围请求的兜底拒绝文案（优先使用 LLM 给出的 rationale）。
+const OUT_OF_SCOPE_REPLY =
+  "抱歉，这个请求超出了我的能力范围。我是公众号与技术文档写作助手，擅长：\n" +
+  "- 创作、润色、审校公众号文章\n" +
+  "- 围绕代码项目做只读分析，整理成技术文档或公众号文章\n" +
+  "- 分析 Git 提交与变更，写成版本复盘文章\n" +
+  "- 联网调研辅助写作\n\n" +
+  "我不能修改或编写源代码、执行命令、操作数据库、处理支付转账或执行系统运维。" +
+  "如果你希望把这个主题写成文章，请告诉我，我很乐意帮忙。";
+
 export async function GET(req: NextRequest) {
   const target = targetFromQuery(req);
   if (!target) {
@@ -448,7 +479,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           id: "intent",
           kind: "intent",
           title: "识别任务意图",
-          detail: `${route.intent} · ${route.rationale}`,
+          detail: `${intentLabel(route.intent)} · ${route.rationale}`,
         });
         writeStep(writer, {
           id: "project",
@@ -522,6 +553,18 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             retainedMessages: context.retainedMessages,
           },
         } as never);
+
+        if (route.intent === "out-of-scope") {
+          const textId = crypto.randomUUID();
+          writer.write({ type: "text-start", id: textId } as never);
+          writer.write({
+            type: "text-delta",
+            id: textId,
+            delta: route.rationale || OUT_OF_SCOPE_REPLY,
+          } as never);
+          writer.write({ type: "text-end", id: textId } as never);
+          return;
+        }
 
         if (approval) {
           const textId = crypto.randomUUID();
@@ -635,15 +678,11 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               },
             });
           },
-          onArticleDraft: async (draft) => {
+          onArticleDigest: async ({ digest }) => {
             writer.write({
-              type: "data-article-draft",
+              type: "data-article-digest",
               id: crypto.randomUUID(),
-              data: {
-                markdown: draft.markdown,
-                title: draft.title ?? null,
-                mode: draft.mode,
-              },
+              data: { digest },
             } as never);
           },
         });

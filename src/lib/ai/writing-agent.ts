@@ -136,12 +136,8 @@ export async function createWritingAgent(input: {
   onChangeEvidence?: (
     evidence: CodeChangeEvidencePackage
   ) => Promise<void> | void;
-  /** 文章提案生成时，把正文实时镜像到对话区。mode=direct 首次直写，mode=diff 后续预览。 */
-  onArticleDraft?: (draft: {
-    markdown: string;
-    title?: string;
-    mode: "direct" | "diff";
-  }) => Promise<void> | void;
+  /** 摘要生成时，把短摘要镜像到编辑器（复用编辑器 digest 自动保存链路落盘）。 */
+  onArticleDigest?: (input: { digest: string }) => Promise<void> | void;
 }) {
   const { model, config: modelConfig } = await getModel(
     input.providerId,
@@ -331,6 +327,23 @@ export async function createWritingAgent(input: {
         };
       },
     }),
+    set_article_digest: tool({
+      title: "更新文章摘要",
+      description:
+        "为当前文章生成或更新一句话短摘要（≤120 字），写回文章摘要字段并同步到编辑器。用于「总结/概括/生成摘要」类请求；要点清单、TL;DR 等较长形态作为对话文本展示，不要调用本工具。",
+      inputSchema: z.object({
+        digest: z.string().min(1).max(200),
+      }),
+      execute: withToolLog("set_article_digest", async ({ digest }) => {
+        if (input.target.kind !== "article") {
+          throw new Error("当前目标不是公众号文章。");
+        }
+        // 对齐 /api/ai/digest 的 ≤120 字约束
+        const trimmed = digest.trim().slice(0, 120);
+        await input.onArticleDigest?.({ digest: trimmed });
+        return { ok: true, digest: trimmed };
+      }),
+    }),
     propose_article_revision: tool({
       title: "提交文章修改提案",
       description:
@@ -347,16 +360,8 @@ export async function createWritingAgent(input: {
           if (input.target.kind !== "article") {
             throw new Error("当前目标不是公众号文章。");
           }
-          // 实时镜像正文到编辑器：首次直写，后续仅预览
-          const isEmptyArticle = input.target.markdown.trim() === "";
-          const draftMode = isEmptyArticle ? "direct" : "diff";
-          await input.onArticleDraft?.({
-            markdown,
-            title: title ?? undefined,
-            mode: draftMode,
-          });
-
           // 首次生成（编辑器为空，无对比源）：跳过提案创建，前端直接写入编辑器
+          const isEmptyArticle = input.target.markdown.trim() === "";
           if (isEmptyArticle) {
             return {
               mode: "direct" as const,
@@ -488,6 +493,7 @@ ${skill.manual}
 2. 研究类任务必须先调用工具获取事实；分析源码时调用 explore_project；分析 Commit、版本、PR 或 Diff 时先调用 analyze_code_changes 获取独立只读证据包。
 3. 清楚区分事实、来源和推断。联网信息在最终回答中保留来源 URL。
 4. **关键**：当前目标为文章时，凡是产出或修改正文（创作、扩写、重写、润色、补充段落），都必须调用 propose_article_revision 提交完整 Markdown，**绝不把正文直接输出为对话文本**——正文只有通过该工具才能落到编辑器。当前目标为技术文档时同理必须调用 propose_technical_document_revision。
+4b. **摘要**：当意图为 summarize（总结/摘要/要点/TL;DR）时，必须调用 set_article_digest 提交一句话短摘要（≤120 字）写回摘要字段；要点清单、TL;DR 作为对话文本展示，不要塞进 digest。summarize 意图不得调用 propose_article_revision（不创建或修改正文）。
 5. **素材使用**：公众号文章创作、重写或扩充时，若素材列表非空，必须按素材描述/标签的相关性在合适位置插图，使用 \`![简短图注](素材URL)\` 语法，URL 必须取自素材列表，不得编造。无关素材不硬塞。技术文档不调用文章素材工具。
 6. 不输出隐藏思维链，只提供简洁计划、执行结果、来源和可操作结论。
 7. 避免无意义重复工具调用；工具失败时最多调整方案重试一次。
