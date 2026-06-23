@@ -12,6 +12,7 @@ import {
   type CodeSourceReference,
 } from "@/lib/ai/code-source";
 import { moduleLogger } from "@/lib/logger";
+import { classifyError } from "@/lib/ai/error-classify";
 
 const log = moduleLogger("ai.router");
 
@@ -171,64 +172,6 @@ function deriveNeeds(ctx: IntentContext) {
   };
 }
 
-/**
- * 把意图路由 LLM 失败的 err 归类为中文短句，供前端步骤展示根因。
- * dev 模式 pino logger 可能静默失效，把原因写进 rationale 可绕过 logger 直接诊断。
- */
-function classifyRouteError(err: unknown): string {
-  const raw =
-    err instanceof Error
-      ? err.message
-      : typeof err === "string"
-        ? err
-        : "意图路由失败";
-  // 解包 AI_RetryError：取底层错误信息再归类
-  const retryErr = err as {
-    name?: string;
-    lastError?: { message?: string } | Error;
-    errors?: Array<{ message?: string } | Error>;
-    cause?: { message?: string };
-  };
-  let text = raw;
-  if (retryErr?.name === "AI_RetryError" || /RetryError/i.test(raw)) {
-    const inner =
-      (retryErr.lastError instanceof Error
-        ? retryErr.lastError.message
-        : retryErr.lastError?.message) ??
-      retryErr.errors?.find((e) => e)?.message ??
-      retryErr.cause?.message ??
-      raw;
-    text = inner || raw;
-  }
-  if (
-    /余额不足|额度|配额|insufficient|quota|payment required|exceeded your current quota/i.test(
-      text
-    )
-  ) {
-    return "模型余额不足或额度已尽";
-  }
-  if (/401|unauthorized|invalid api key|invalid_api_key|forbidden/i.test(text)) {
-    return "API Key 无效或已过期";
-  }
-  if (/model.*not found|does not exist|未知模型|model_not_found/i.test(text)) {
-    return "所选模型不存在";
-  }
-  if (
-    /tool.?call|function.?call|tools?.+(unsupported|not supported)|不支持.+工具|structured|json.?schema|no tool call/i.test(
-      text
-    )
-  ) {
-    return "模型不支持结构化输出";
-  }
-  if (/timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(text)) {
-    return "请求超时";
-  }
-  if (/rate limit|too many requests|429/i.test(text)) {
-    return "请求被限流";
-  }
-  return text.slice(0, 80);
-}
-
 function fallbackRoute(message: string): z.infer<typeof routeSchema> {
   const ctx = computeContext(message);
   const matched = INTENT_RULES.find((rule) => rule.when(ctx));
@@ -315,7 +258,7 @@ ${projectCatalog || "（无）"}`,
     routed = result.object;
   } catch (err) {
     llmRouted = false;
-    routeErrorReason = classifyRouteError(err);
+    routeErrorReason = classifyError(err).label;
     log.warn(
       { err, routeErrorReason },
       "意图路由 LLM 失败，回退到规则路由"

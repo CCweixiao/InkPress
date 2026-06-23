@@ -34,6 +34,7 @@ import {
 import { ReasoningBlock } from "@/components/ai/ReasoningBlock";
 import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
 import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
+import { AgentErrorBlock } from "@/components/ai/AgentErrorBlock";
 import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
 
@@ -1233,10 +1234,14 @@ export function WritingAssistant({
           </div>
         )}
         {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-            <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span className="break-words">{error.message || "请求失败，请稍后重试。"}</span>
-          </div>
+          <AgentErrorBlock
+            error={error}
+            retrying={busy}
+            onRetry={async () => {
+              await (onFlushTarget ?? onFlushArticle)?.();
+              await regenerate({ body: requestBody });
+            }}
+          />
         )}
       </div>
 
