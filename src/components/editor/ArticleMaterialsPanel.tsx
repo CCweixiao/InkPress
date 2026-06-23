@@ -50,7 +50,7 @@ export function ArticleMaterialsPanel({
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/materials?articleId=${articleId}`);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     setAssets(data.assets ?? []);
     setLoading(false);
   }, [articleId]);

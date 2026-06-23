@@ -70,7 +70,9 @@ export function AIPanel({
         </div>
       </div>
 
-      {mode === "chat" && (
+      {/* 切 tab 不卸载 WritingAssistant：条件渲染会导致 useChat 的 Chat 实例被 GC，
+          流式状态全丢。改用 CSS hidden 让组件常驻，切回来立刻恢复。 */}
+      <div className={mode === "chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
         <WritingAssistant
           articleId={articleId}
           currentMarkdown={currentMarkdown}
@@ -78,7 +80,7 @@ export function AIPanel({
           onApplyDigest={onApplyDigest}
           onFlushArticle={onFlushArticle}
         />
-      )}
+      </div>
 
       {mode === "materials" && (
         <div className="flex-1 overflow-y-auto p-3">
