@@ -6,6 +6,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import {
   Bot,
   Check,
+  ChevronDown,
   Clipboard,
   Eye,
   FileSearch,
@@ -24,6 +25,12 @@ import {
   ArticleDiffDialog,
   type ProposalDetail,
 } from "./ArticleDiffDialog";
+import {
+  InlineText,
+  buildRows,
+  foldRows,
+  summarizeRows,
+} from "./article-diff-utils";
 import { ReasoningBlock } from "@/components/ai/ReasoningBlock";
 import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
 import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
@@ -116,6 +123,65 @@ async function materializeMermaid(markdown: string, articleId: string) {
   return result;
 }
 
+function DiffPreview({
+  detail,
+  onOpenFull,
+}: {
+  detail: ProposalDetail;
+  onOpenFull: () => void;
+}) {
+  const shown = useMemo(() => {
+    const rows = foldRows(buildRows(detail.baseMarkdown, detail.markdown), true);
+    return rows.filter((row) => row.kind !== "same");
+  }, [detail]);
+  const changeCount = shown.filter((row) => row.kind !== "fold").length;
+  const capped = shown.slice(0, 30);
+  return (
+    <div className="overflow-hidden rounded-md border border-slate-800 bg-slate-950 font-mono text-[11px] leading-5 text-slate-100">
+      <div className="max-h-64 overflow-y-auto">
+        {capped.length === 0 ? (
+          <div className="px-3 py-2 text-slate-500">无明显改动</div>
+        ) : (
+          capped.map((row, i) =>
+            row.kind === "fold" ? (
+              <div key={i} className="border-y border-slate-800 bg-slate-900/80 py-0.5 text-center text-slate-500">
+                … 已折叠 {row.foldedCount} 行 …
+              </div>
+            ) : (
+              <div
+                key={i}
+                className={cn(
+                  "grid grid-cols-[16px_1fr] px-2",
+                  row.kind === "added" && "border-l-2 border-l-emerald-500/60 bg-emerald-950/40",
+                  row.kind === "removed" && "border-l-2 border-l-red-500/60 bg-red-950/40",
+                  row.kind === "modified" && "border-l-2 border-l-amber-500/60 bg-amber-950/30"
+                )}
+              >
+                <span className="select-none text-center text-slate-500">
+                  {row.kind === "added" ? "+" : row.kind === "removed" ? "-" : "~"}
+                </span>
+                <pre className="whitespace-pre-wrap break-words pr-2">
+                  {row.kind === "modified" ? (
+                    <InlineText oldText={row.oldText ?? ""} newText={row.newText ?? ""} side="new" />
+                  ) : (
+                    row.newText ?? row.oldText ?? ""
+                  )}
+                </pre>
+              </div>
+            )
+          )
+        )}
+      </div>
+      <div className="border-t border-slate-800 px-3 py-1 text-center text-slate-500">
+        {changeCount > 30 && `还有 ${changeCount - 30} 处改动 · `}
+        <button type="button" onClick={onOpenFull} className="text-primary hover:underline">
+          查看完整 diff
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProposalCard({
   proposalId,
   fallback,
@@ -131,6 +197,7 @@ function ProposalCard({
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const response = await fetch(`/api/ai/proposals/${proposalId}`);
@@ -181,6 +248,7 @@ function ProposalCard({
     }
     setStatus("applied");
     setDetail((current) => (current ? { ...current, status: "applied" } : current));
+    setDiffOpen(false);
     const applied = data.article ?? data.technicalDocument;
     if (applied && typeof applied === "object") {
       onApplied(applied as Record<string, unknown>);
@@ -205,6 +273,7 @@ function ProposalCard({
     }
     setStatus("rejected");
     setDetail((current) => (current ? { ...current, status: "rejected" } : current));
+    setDiffOpen(false);
   }
 
   const statusTone =
@@ -238,9 +307,49 @@ function ProposalCard({
         </div>
 
         {detail && (
-          <div className="rounded-md border bg-background px-2.5 py-2 text-[11px] text-muted-foreground">
-            {detail.stats.oldLines} → {detail.stats.newLines} 行，约{" "}
-            {detail.stats.changedLines} 行变化
+          <div className="space-y-2">
+            {(() => {
+              const { added, removed, modified } = summarizeRows(
+                buildRows(detail.baseMarkdown, detail.markdown)
+              );
+              const additions = added + modified;
+              const deletions = removed + modified;
+              const total = additions + deletions || 1;
+              return (
+                <div className="rounded-md border bg-background px-2.5 py-2 text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-emerald-600">+{additions} 新增</span>
+                    <span className="font-medium text-red-600">-{deletions} 删除</span>
+                    <span className="ml-auto text-muted-foreground">
+                      {detail.stats.oldLines}→{detail.stats.newLines} 行
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="bg-emerald-500"
+                      style={{ width: `${(additions / total) * 100}%` }}
+                    />
+                    <div
+                      className="bg-red-500"
+                      style={{ width: `${(deletions / total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+            <button
+              type="button"
+              onClick={() => setPreviewOpen((v) => !v)}
+              className="flex w-full items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+            >
+              <ChevronDown
+                className={cn("h-3.5 w-3.5 transition-transform", previewOpen && "rotate-180")}
+              />
+              {previewOpen ? "收起改动预览" : "展开改动预览"}
+            </button>
+            {previewOpen && (
+              <DiffPreview detail={detail} onOpenFull={() => setDiffOpen(true)} />
+            )}
           </div>
         )}
         {error && <p className="text-xs text-red-600">{error}</p>}
@@ -307,6 +416,9 @@ function ProposalCard({
         open={diffOpen}
         onOpenChange={setDiffOpen}
         proposal={detail}
+        onApply={apply}
+        onReject={reject}
+        applying={busy}
       />
     </>
   );
@@ -444,7 +556,7 @@ export function WritingAssistant({
   onApplyTechnicalDocument,
   onFlushArticle,
   onFlushTarget,
-  onDraftPreview,
+  onApplyDigest,
 }: {
   articleId?: string;
   targetKind?: "article" | "technical-document";
@@ -464,10 +576,8 @@ export function WritingAssistant({
   }) => void;
   onFlushArticle?: () => Promise<void>;
   onFlushTarget?: () => Promise<void>;
-  /** Agent 正文实时预览（后续修改模式，镜像到预览面板）。首次直写不走此回调。 */
-  onDraftPreview?: (
-    draft: { markdown: string; title?: string; mode: "direct" | "diff" } | null
-  ) => void;
+  /** Agent 摘要生成后镜像到编辑器 digest 字段（复用编辑器自动保存链路落盘）。 */
+  onApplyDigest?: (digest: string) => void;
 }) {
   const resolvedTargetId = targetId ?? articleId ?? "";
   const [input, setInput] = useState("");
@@ -553,30 +663,6 @@ export function WritingAssistant({
 
   const busy = status === "streaming" || status === "submitted";
 
-  // 扫描最近的 data-article-draft part（用于 diff 模式的实时预览）。
-  const latestDraftPreview = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
-        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
-        if (p.type === "data-article-draft" && p.data && typeof p.data === "object") {
-          const d = p.data as {
-            markdown?: unknown;
-            title?: unknown;
-            mode?: unknown;
-          };
-          if (typeof d.markdown === "string") {
-            return {
-              markdown: d.markdown,
-              title: typeof d.title === "string" ? d.title : undefined,
-              mode: d.mode === "direct" ? "direct" : ("diff" as "direct" | "diff"),
-            };
-          }
-        }
-      }
-    }
-    return null;
-  }, [messages]);
-
   // 扫描已完成的 propose_article_revision 工具结果，取最新的 direct 模式输出。
   // 工具 output 是可靠来源（part.state 为 output/output-streaming 即已就绪），
   // 不依赖 data-article-draft 流式 part 的时序。
@@ -601,6 +687,24 @@ export function WritingAssistant({
     return null;
   }, [messages]);
 
+  // 扫描 set_article_digest 推送的摘要事件，取最新一条。
+  const latestDigest = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
+        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
+        if (
+          p.type === "data-article-digest" &&
+          p.data &&
+          typeof p.data === "object"
+        ) {
+          const d = (p.data as { digest?: unknown }).digest;
+          if (typeof d === "string") return d;
+        }
+      }
+    }
+    return null;
+  }, [messages]);
+
   // 记录已应用过的 direct 文章 markdown，避免重复写入（流式期间多次 messages 更新）。
   const appliedDirectRef = useRef<string | null>(null);
 
@@ -615,22 +719,18 @@ export function WritingAssistant({
       contentMd: latestDirectArticle.markdown,
       digest: latestDirectArticle.digest ?? null,
     });
-    // 写入后清空预览面板（内容已在编辑器）
-    onDraftPreview?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestDirectArticle, busy]);
 
-  // diff 模式：流式期间把草稿镜像到预览面板。
+  // 摘要：工具结果就绪后直接写入编辑器 digest（仅流式期间应用，避免历史会话覆盖）。
+  const appliedDigestRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!busy) {
-      if (latestDraftPreview?.mode === "diff") onDraftPreview?.(latestDraftPreview);
-      return;
-    }
-    if (latestDraftPreview?.mode === "diff") {
-      onDraftPreview?.(latestDraftPreview);
-    }
+    if (!busy || !latestDigest || !onApplyDigest) return;
+    if (appliedDigestRef.current === latestDigest) return;
+    appliedDigestRef.current = latestDigest;
+    onApplyDigest(latestDigest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestDraftPreview, busy]);
+  }, [latestDigest, busy]);
 
   const proposalIdsInMessages = new Set(
     messages.flatMap((message) =>
