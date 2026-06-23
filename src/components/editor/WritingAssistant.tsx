@@ -33,8 +33,13 @@ import {
 } from "./article-diff-utils";
 import { ReasoningBlock } from "@/components/ai/ReasoningBlock";
 import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
+import { ToolGroupBlock } from "@/components/ai/ToolGroupBlock";
 import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
 import { AgentErrorBlock } from "@/components/ai/AgentErrorBlock";
+import {
+  getToolName,
+  getPartGroupType,
+} from "@/components/ai/tool-helpers";
 import {
   ModelSelector,
   TokenMeter,
@@ -71,16 +76,6 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: "已放弃",
   superseded: "已失效",
 };
-
-function toolNameFromPart(part: Record<string, unknown>) {
-  if (part.type === "dynamic-tool" && typeof part.toolName === "string") {
-    return part.toolName;
-  }
-  if (typeof part.type === "string" && part.type.startsWith("tool-")) {
-    return part.type.slice(5);
-  }
-  return typeof part.toolName === "string" ? part.toolName : "";
-}
 
 function proposalIdFromOutput(value: unknown) {
   if (!value || typeof value !== "object") return "";
@@ -869,7 +864,7 @@ function EvidenceChip({
 
 /** 工具类 part 渲染：direct 直写提示 / 提案卡片 / 通用工具块。 */
 function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
-  const toolName = toolNameFromPart(part);
+  const toolName = getToolName(part);
   const draftMode = (part.output as { mode?: unknown } | undefined)?.mode;
   if (toolName === "propose_article_revision" && draftMode === "direct") {
     return <DirectWriteNotice />;
@@ -1083,7 +1078,7 @@ export const PART_RENDERERS: PartRenderer[] = [
   },
   {
     stage: "tool",
-    match: (p) => toolNameFromPart(p) !== "",
+    match: (p) => getToolName(p) !== "",
     render: (p, ctx) => renderToolPart(p, ctx),
   },
 ];
@@ -1094,6 +1089,70 @@ export function renderAgentPart(part: AgentPart, ctx: RenderCtx): ReactNode {
     if (renderer.match(part)) return renderer.render(part, ctx);
   }
   return null;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 工具调用分组聚合
+// 将连续的只读探索 / 网络搜索工具合并为 ToolGroupBlock，其余按原序独立渲染。
+// 阈值：同类连续 ≥2 才分组，单工具走 ToolCallBlock 避免过度包装。
+// ────────────────────────────────────────────────────────────────────────────
+
+export type RenderItem =
+  | {
+      kind: "tool-group";
+      groupType: "explore" | "web";
+      parts: AgentPart[];
+      key: string;
+    }
+  | { kind: "single"; part: AgentPart; key: string };
+
+export function aggregateParts(parts: AgentPart[]): RenderItem[] {
+  const items: RenderItem[] = [];
+  let bucket: {
+    groupType: "explore" | "web";
+    parts: AgentPart[];
+    start: number;
+  } | null = null;
+
+  const flush = () => {
+    if (!bucket) return;
+    // 阈值 <2 不分组，回退为独立 single 渲染。
+    if (bucket.parts.length < 2) {
+      for (let j = 0; j < bucket.parts.length; j++) {
+        items.push({
+          kind: "single",
+          part: bucket.parts[j],
+          key: `single-${bucket.start + j}`,
+        });
+      }
+    } else {
+      const end = bucket.start + bucket.parts.length - 1;
+      items.push({
+        kind: "tool-group",
+        groupType: bucket.groupType,
+        parts: bucket.parts,
+        key: `group-${bucket.start}-${end}`,
+      });
+    }
+    bucket = null;
+  };
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const groupType = getPartGroupType(part);
+    if (!groupType) {
+      flush();
+      items.push({ kind: "single", part, key: `single-${i}` });
+      continue;
+    }
+    if (!bucket || bucket.groupType !== groupType) {
+      flush();
+      bucket = { groupType, parts: [], start: i };
+    }
+    bucket.parts.push(part);
+  }
+  flush();
+  return items;
 }
 
 export function WritingAssistant({
@@ -1193,13 +1252,16 @@ export function WritingAssistant({
   // /compact 反馈与进行态
   const [slashNotice, setSlashNotice] = useState("");
   const [compacting, setCompacting] = useState(false);
+  // 恢复被中断的回复：页面级导航导致组件重挂载后，服务端可能仍在处理上一轮
+  // （客户端断连不中断服务端 onFinish 持久化）。轮询 DB 直到出现 assistant 回复。
+  const [recovering, setRecovering] = useState(false);
 
 
   const refresh = useCallback(async () => {
     const response = await fetch(
       `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`
     );
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (response.ok) {
       setProposals(data.proposals ?? []);
       setInputHistory(
@@ -1261,6 +1323,47 @@ export function WritingAssistant({
       active = false;
     };
   }, [refresh, setMessages]);
+
+  // 恢复轮询：最后一条是 user 消息时，服务端可能仍在处理上一轮（客户端断连导致），
+  // 周期性拉取直到出现 assistant 回复或超时。
+  useEffect(() => {
+    if (status !== "ready") return; // 客户端正在流式输出时不轮询
+    if (messages.length === 0) return;
+    if (messages[messages.length - 1].role !== "user") return;
+
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    setRecovering(true);
+
+    const poll = async () => {
+      if (!active) return;
+      const data = await refresh();
+      if (!active) return;
+      const msgs = (data.messages ?? []) as UIMessage[];
+      if (msgs.length > 0 && msgs[msgs.length - 1].role !== "user") {
+        setMessages(msgs);
+        setHasMore(Boolean(data.hasMore));
+        setOldestPosition(
+          data.oldestPosition == null ? null : Number(data.oldestPosition)
+        );
+        setRecovering(false);
+        return; // assistant 回复到达，停止轮询
+      }
+      timer = setTimeout(poll, 5000); // 5s 间隔
+    };
+
+    timer = setTimeout(poll, 5000);
+    const stopTimer = setTimeout(() => {
+      active = false;
+      setRecovering(false);
+    }, 120000); // 最长 120s（24 次）
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      clearTimeout(stopTimer);
+    };
+  }, [messages, status, refresh, setMessages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -1406,7 +1509,13 @@ export function WritingAssistant({
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok && data.ok) {
-        await refresh();
+        const sessionData = await refresh();
+        // 压缩后 DB 消息已减少，必须重新加载前端消息列表
+        setMessages(sessionData.messages ?? []);
+        setHasMore(Boolean(sessionData.hasMore));
+        setOldestPosition(
+          sessionData.oldestPosition == null ? null : Number(sessionData.oldestPosition)
+        );
         setSlashNotice(
           data.summarizedCount > 0
             ? `已压缩 ${data.summarizedCount} 条历史，约省 ${Math.max(
@@ -1532,7 +1641,7 @@ export function WritingAssistant({
     for (let i = messages.length - 1; i >= 0; i--) {
       for (let j = messages[i].parts.length - 1; j >= 0; j--) {
         const p = messages[i].parts[j] as unknown as Record<string, unknown>;
-        const name = toolNameFromPart(p);
+        const name = getToolName(p);
         if (name !== "propose_article_revision") continue;
         const out = p.output as
           | { mode?: unknown; markdown?: unknown; title?: unknown; digest?: unknown }
@@ -1663,14 +1772,9 @@ export function WritingAssistant({
                     "mt-3 border-t border-dashed border-border/60 pt-3"
                 )}
               >
-                {message.parts.map((rawPart, index) => {
-                  const part = rawPart as unknown as AgentPart;
-                  // 过程块（意图/代码源/Skill/素材步骤 + 上下文计量）只在最新一轮助手消息展示，
-                  // 历史轮次不再重复堆叠这些过程块，消除「步骤重复、中间夹着上下文 tokens」的噪音。
-                  const isProcessPart =
-                    part.type === "data-agent-step" ||
-                    part.type === "data-context-usage";
-                  if (isProcessPart && idx !== lastAssistantIndex) return null;
+                {(() => {
+                  const parts = message.parts as unknown as AgentPart[];
+                  const items = aggregateParts(parts);
                   const ctx: RenderCtx = {
                     role: message.role,
                     targetKind,
@@ -1685,12 +1789,30 @@ export function WritingAssistant({
                     rerun,
                     busy,
                   };
-                  return (
-                    <Fragment key={index}>
-                      {renderAgentPart(part, ctx)}
-                    </Fragment>
-                  );
-                })}
+                  return items.map((item) => {
+                    if (item.kind === "tool-group") {
+                      return (
+                        <ToolGroupBlock
+                          key={item.key}
+                          parts={item.parts}
+                          groupType={item.groupType}
+                        />
+                      );
+                    }
+                    const part = item.part;
+                    // 过程块（意图/上下文计量）只在最新一轮助手消息展示，
+                    // 历史轮次不再重复堆叠这些过程块，消除噪音。
+                    const isProcessPart =
+                      part.type === "data-agent-step" ||
+                      part.type === "data-context-usage";
+                    if (isProcessPart && idx !== lastAssistantIndex) return null;
+                    return (
+                      <Fragment key={item.key}>
+                        {renderAgentPart(part, ctx)}
+                      </Fragment>
+                    );
+                  });
+                })()}
               </div>
             ))}
             {proposals
@@ -1732,10 +1854,10 @@ export function WritingAssistant({
               ))}
           </>
         )}
-        {busy && (
+        {(busy || recovering) && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Agent 正在规划并执行…
+            {recovering ? "正在恢复上一轮对话…" : "Agent 正在规划并执行…"}
           </div>
         )}
         {error && (

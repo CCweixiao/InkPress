@@ -14,6 +14,7 @@ import { getAgentConfig } from "@/lib/ai/agent-config";
 import {
   getOrCreateAgentSession,
   loadAgentMessages,
+  mergeAndPersistMessages,
   saveAgentMessages,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
@@ -297,14 +298,15 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   const referencesArticle = referencesCurrentArticle(userText);
   const session = await getOrCreateAgentSession(target);
   const config = await getAgentConfig();
-  await saveAgentMessages(session.id, uiMessages);
+  // 合并前端（可能因 remount/分页截断）与 DB 历史，避免 delete-all-recreate 永久丢失旧消息。
+  const mergedMessages = await mergeAndPersistMessages(session.id, uiMessages);
 
   log.info(
     {
       sessionId: session.id,
       targetKind: target.kind,
       targetId: target.id,
-      messages: uiMessages.length,
+      messages: mergedMessages.length,
       providerId: parsed.data.providerId ?? null,
       modelId: parsed.data.modelId ?? null,
     },
@@ -315,7 +317,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   // 省 token、零延迟、文案稳定；未命中则照常进入下方意图路由（question 兜底即普通对话）。
   if (isCapabilityQuestion(userText)) {
     const stream = createUIMessageStream<UIMessage>({
-      originalMessages: uiMessages,
+      originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
         await saveAgentMessages(session.id, messages);
       },
@@ -343,7 +345,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   // 误触/乱码输入（纯符号、空内容、误触特殊字符）：预路由短路，反问引导补充，不浪费 LLM 去硬猜。
   if (isAccidentalInput(userText)) {
     const stream = createUIMessageStream<UIMessage>({
-      originalMessages: uiMessages,
+      originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
         await saveAgentMessages(session.id, messages);
       },
@@ -372,7 +374,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   // 兼顾两种成因（编辑区确实空 / 内容尚未同步过来），都引导用户先写入或粘贴。
   if (referencesArticle && articleMarkdown.trim() === "") {
     const stream = createUIMessageStream<UIMessage>({
-      originalMessages: uiMessages,
+      originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
         await saveAgentMessages(session.id, messages);
       },
@@ -402,7 +404,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     const skills = await listSkills();
     const route = await routeAgentRequest({
       model,
-      message: lastUserText(uiMessages),
+      message: lastUserText(mergedMessages),
       skills,
       config,
       previousProjectId: session.selectedProjectId,
@@ -559,7 +561,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       sessionId: session.id,
       sessionSummary: session.summary,
       summaryUpToPosition: session.summaryUpToPosition,
-      uiMessages,
+      uiMessages: mergedMessages,
       articleText: includeArticleBody
         ? `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
         : "",
@@ -575,7 +577,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         }
       | undefined;
     const stream = createUIMessageStream<UIMessage>({
-      originalMessages: uiMessages,
+      originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
         const persisted = messages.map((message, index) => {
           if (
@@ -812,6 +814,14 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             });
           },
           onArticleDigest: async ({ digest }) => {
+            // 服务端即时落盘，避免前端 5s 防抖延迟导致 baseVersionHash 与 DB 不一致，
+            // 进而使 apply 时 currentHash ≠ baseVersionHash → 409 superseded。
+            if (target.kind === "article") {
+              await prisma.article.update({
+                where: { id: target.id },
+                data: { digest },
+              });
+            }
             writer.write({
               type: "data-article-digest",
               id: crypto.randomUUID(),
