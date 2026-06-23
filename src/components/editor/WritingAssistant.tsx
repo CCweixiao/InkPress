@@ -35,6 +35,13 @@ import { ReasoningBlock } from "@/components/ai/ReasoningBlock";
 import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
 import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
 import { AgentErrorBlock } from "@/components/ai/AgentErrorBlock";
+import {
+  ModelSelector,
+  TokenMeter,
+  useModelSelection,
+  type ContextUsage,
+  type LastTurnUsage,
+} from "./agent-composer-parts";
 import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
 
@@ -921,8 +928,6 @@ export function WritingAssistant({
   articleId,
   targetKind = "article",
   targetId,
-  providerId,
-  modelId,
   onApplyArticle,
   onApplyTechnicalDocument,
   onFlushArticle,
@@ -933,8 +938,6 @@ export function WritingAssistant({
   targetKind?: "article" | "technical-document";
   targetId?: string;
   currentMarkdown: string;
-  providerId: string;
-  modelId: string;
   onApplyArticle?: (article: {
     title: string;
     contentMd: string;
@@ -951,10 +954,13 @@ export function WritingAssistant({
   onApplyDigest?: (digest: string) => void;
 }) {
   const resolvedTargetId = targetId ?? articleId ?? "";
+  const { providers, providerId, modelId, select: selectModel } =
+    useModelSelection();
   const [input, setInput] = useState("");
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [initializing, setInitializing] = useState(true);
   const [fullscreenText, setFullscreenText] = useState<string | null>(null);
+  const [lastTurnUsage, setLastTurnUsage] = useState<LastTurnUsage>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transport = useMemo(
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
@@ -966,7 +972,25 @@ export function WritingAssistant({
       `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`
     );
     const data = await response.json();
-    if (response.ok) setProposals(data.proposals ?? []);
+    if (response.ok) {
+      setProposals(data.proposals ?? []);
+      const session = data.session as
+        | {
+            lastInputTokens?: number;
+            lastOutputTokens?: number;
+            lastReasoningTokens?: number;
+            lastTotalTokens?: number;
+          }
+        | undefined;
+      if (session) {
+        setLastTurnUsage({
+          inputTokens: session.lastInputTokens ?? 0,
+          outputTokens: session.lastOutputTokens ?? 0,
+          reasoningTokens: session.lastReasoningTokens ?? 0,
+          totalTokens: session.lastTotalTokens ?? 0,
+        });
+      }
+    }
     return data;
   }, [resolvedTargetId, targetKind]);
 
@@ -1033,6 +1057,32 @@ export function WritingAssistant({
   }
 
   const busy = status === "streaming" || status === "submitted";
+
+  // 扫描最近的 data-context-usage，取最新一条（composer token 计量用）。
+  const latestContextUsage = useMemo<ContextUsage>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
+        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
+        if (
+          p.type === "data-context-usage" &&
+          p.data &&
+          typeof p.data === "object"
+        ) {
+          const d = p.data as {
+            estimatedTokens?: unknown;
+            budgetTokens?: unknown;
+            compressed?: unknown;
+          };
+          return {
+            estimatedTokens: Number(d.estimatedTokens ?? 0),
+            budgetTokens: Number(d.budgetTokens ?? 0),
+            compressed: Boolean(d.compressed),
+          };
+        }
+      }
+    }
+    return null;
+  }, [messages]);
 
   // 扫描已完成的 propose_article_revision 工具结果，取最新的 direct 模式输出。
   // 工具 output 是可靠来源（part.state 为 output/output-streaming 即已就绪），
@@ -1259,27 +1309,43 @@ export function WritingAssistant({
             placeholder="让 Agent 研究、创作或调整文章…"
             className="min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none"
           />
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <ModelSelector
+              providers={providers}
+              providerId={providerId}
+              modelId={modelId}
+              onSelect={selectModel}
+            />
+            <TokenMeter
+              contextUsage={latestContextUsage}
+              lastTurn={lastTurnUsage}
+              modelName={
+                providers
+                  .find((p) => p.id === providerId)
+                  ?.models.find((m) => m.id === modelId)?.name ?? modelId
+              }
+            />
+            <span className="ml-auto hidden text-[10px] text-muted-foreground sm:inline">
               Enter 发送 · Shift+Enter 换行
             </span>
             {busy ? (
               <Button
-                size="icon"
-                variant="outline"
-                className="h-7 w-7"
+                size="sm"
+                variant="destructive"
+                className="h-8 gap-1.5 px-3 text-xs"
                 onClick={() => stop()}
               >
-                <Square className="h-3.5 w-3.5" />
+                <Square className="h-3 w-3 fill-current" />
+                停止
               </Button>
             ) : (
               <Button
                 size="icon"
-                className="h-7 w-7"
+                className="h-8 w-8"
                 disabled={!input.trim()}
                 onClick={() => void submit()}
               >
-                <Send className="h-3.5 w-3.5" />
+                <Send className="h-4 w-4" />
               </Button>
             )}
           </div>

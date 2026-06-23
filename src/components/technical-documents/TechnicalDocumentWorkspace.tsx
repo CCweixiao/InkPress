@@ -19,13 +19,6 @@ type TechnicalDocumentData = {
   stale: boolean;
 };
 
-type Provider = {
-  id: string;
-  name: string;
-  isDefault: boolean;
-  models: Array<{ id: string; name: string; isDefault: boolean }>;
-};
-
 export function TechnicalDocumentWorkspace({
   initialDocument,
 }: {
@@ -34,9 +27,6 @@ export function TechnicalDocumentWorkspace({
   const [title, setTitle] = useState(initialDocument.title);
   const [markdown, setMarkdown] = useState(initialDocument.markdown);
   const [snapshotHash, setSnapshotHash] = useState(initialDocument.snapshotHash);
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [providerId, setProviderId] = useState("");
-  const [modelId, setModelId] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [source, setSource] = useState<{
     path: string;
@@ -53,23 +43,6 @@ export function TechnicalDocumentWorkspace({
     createdAt: string;
   }>>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    fetch("/api/ai/providers")
-      .then((response) => response.json())
-      .then((data) => {
-        const list = data.providers ?? [];
-        setProviders(list);
-        const provider = list.find((item: Provider) => item.isDefault) ?? list[0];
-        setProviderId(provider?.id ?? "");
-        setModelId(
-          provider?.models.find((item: { isDefault: boolean }) => item.isDefault)?.id ??
-            provider?.models[0]?.id ??
-            ""
-        );
-      })
-      .catch(() => {});
-  }, []);
 
   const flush = useCallback(async () => {
     if (timer.current) clearTimeout(timer.current);
@@ -122,47 +95,10 @@ export function TechnicalDocumentWorkspace({
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <aside className="flex w-[400px] shrink-0 flex-col border-r bg-muted/25">
-        <div className="grid grid-cols-2 gap-2 border-b p-3">
-          <select
-            className="h-8 rounded-md border bg-background px-2 text-xs"
-            value={providerId}
-            onChange={(event) => {
-              const next = event.target.value;
-              setProviderId(next);
-              const provider = providers.find((item) => item.id === next);
-              setModelId(
-                provider?.models.find((item) => item.isDefault)?.id ??
-                  provider?.models[0]?.id ??
-                  ""
-              );
-            }}
-          >
-            {providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-8 rounded-md border bg-background px-2 text-xs"
-            value={modelId}
-            onChange={(event) => setModelId(event.target.value)}
-          >
-            {providers
-              .find((provider) => provider.id === providerId)
-              ?.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-          </select>
-        </div>
         <WritingAssistant
           targetKind="technical-document"
           targetId={initialDocument.id}
           currentMarkdown={markdown}
-          providerId={providerId}
-          modelId={modelId}
           onFlushTarget={flush}
           onApplyTechnicalDocument={(document) => {
             setTitle(document.title);
