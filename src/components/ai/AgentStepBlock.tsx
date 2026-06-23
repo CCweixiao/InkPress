@@ -33,14 +33,16 @@ export function AgentStepBlock({
     >
       <CollapsibleTrigger className="px-2.5 py-2 text-[11px] hover:bg-muted/40 rounded-md">
         {running ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
         ) : failed ? (
-          <X className="h-3.5 w-3.5 text-red-600" />
+          <X className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
         ) : (
-          <Check className="h-3.5 w-3.5 text-emerald-600" />
+          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
         )}
-        <span className={cn("font-medium", failed && "text-red-700")}>{title}</span>
-        {detail && <span className="text-muted-foreground truncate">{detail}</span>}
+        <span className={cn("shrink-0 font-medium", failed && "text-red-700 dark:text-red-400")}>{title}</span>
+        {detail && (
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">{detail}</span>
+        )}
       </CollapsibleTrigger>
       {detail && (
         <CollapsibleContent>

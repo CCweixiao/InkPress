@@ -1328,13 +1328,13 @@ export function WritingAssistant({
             <div className="ml-auto" aria-hidden />
             {busy ? (
               <Button
-                size="sm"
-                variant="destructive"
-                className="h-8 gap-1.5 px-3 text-xs"
+                size="icon"
+                variant="outline"
+                title="停止生成"
+                className="h-8 w-8 shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50"
                 onClick={() => stop()}
               >
-                <Square className="h-3 w-3 fill-current" />
-                停止
+                <Square className="h-3.5 w-3.5 fill-current" />
               </Button>
             ) : (
               <Button
