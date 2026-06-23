@@ -4,7 +4,7 @@
 
 h1 {
   display: block;
-  margin: 2.5em 0 1.5em;
+  margin: 1.55em 0 0.9em;
   padding: 0.8em 0.4em 0.72em;
   border-top: 1px solid var(--md-primary-color-light);
   border-bottom: 1px solid var(--md-primary-color-light);
@@ -18,7 +18,7 @@ h1 {
 
 h2 {
   display: table;
-  margin: 3em auto 1.35em;
+  margin: 1.85em auto 0.8em;
   padding: 0.38em 1.15em;
   border-radius: 999px;
   color: #fff;
@@ -32,7 +32,7 @@ h2 {
 }
 
 h3 {
-  margin: 2.15em 0 0.9em;
+  margin: 1.35em 0 0.65em;
   padding-left: 0.8em;
   border-left: 3px solid var(--md-primary-color);
   color: #35312e;
@@ -43,14 +43,14 @@ h3 {
 }
 
 h4, h5, h6 {
-  margin: 1.8em 0 0.7em;
+  margin: 1.15em 0 0.5em;
   color: var(--md-primary-color-dark);
   font-size: var(--md-font-size);
   font-weight: 650;
 }
 
 p {
-  margin: 1.15em 0;
+  margin: 0.8em 0;
   color: #403c38;
   line-height: 1.92;
   letter-spacing: 0.06em;
@@ -69,7 +69,7 @@ em {
 
 blockquote {
   position: relative;
-  margin: 1.7em 0;
+  margin: 1.1em 0;
   padding: 1.15em 1.25em 1.15em 1.4em;
   border: 0;
   border-radius: 10px;
@@ -84,20 +84,20 @@ blockquote p {
 }
 
 ul, ol {
-  margin: 1.1em 0;
+  margin: 0.75em 0;
   padding-left: 1.5em;
   color: #403c38;
 }
 
 li {
-  margin: 0.58em 0;
+  margin: 0.36em 0;
   line-height: 1.8;
 }
 
 hr {
   width: 68%;
   height: 1px;
-  margin: 2.8em auto;
+  margin: 1.8em auto;
   border: 0;
   background: #e5ddd6;
 }
