@@ -1147,6 +1147,9 @@ export function WritingAssistant({
   const prevScrollHeight = useRef(0);
   const prevScrollTop = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 首次（或切换文章后）加载完成时，是否已执行过「瞬时定位到底」；避免每次都用
+  // smooth 动画并落在未稳定的 scrollHeight 上、被后续重渲染打断而停在半路。
+  const didInitScroll = useRef(false);
   const transport = useMemo(
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
     []
@@ -1241,6 +1244,8 @@ export function WritingAssistant({
 
   useEffect(() => {
     let active = true;
+    // 切换文章 / 重新加载：重置初始滚动标记，加载完成后重新「瞬时定位到底」
+    didInitScroll.current = false;
     refresh()
       .then((data) => {
         if (active) {
@@ -1260,17 +1265,38 @@ export function WritingAssistant({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+
+    // 刚 prepend 更早消息：补偿新增高度，保持视觉位置（不跳到顶部）
     if (isLoadingMore.current) {
-      // 刚 prepend 更早消息：补偿新增高度，保持视觉位置（不跳到顶部）
       el.scrollTop = el.scrollHeight - prevScrollHeight.current + prevScrollTop.current;
       isLoadingMore.current = false;
-    } else {
-      // 初始进入 / 新消息 / 流式：自动滚到最新一条
-      el.scrollTo({
-        top: el.scrollHeight,
-        behavior: status === "streaming" ? "auto" : "smooth",
-      });
+      return;
     }
+
+    // 首次加载完成（已有消息）：本次 commit 后内容高度未必稳定（卡片/markdown/图片
+    // 可能引起回流），smooth 动画会落在未稳定的 scrollHeight 上、且易被后续重渲染
+    // （refresh 的 setProposals、status 变化等）打断而停在半路。故首次用「瞬时定位
+    // + 下一帧校准 + 短延时兜底」，确保稳稳到底，不走动画。
+    if (!didInitScroll.current && messages.length > 0) {
+      didInitScroll.current = true;
+      const jump = () => {
+        const node = scrollRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+      };
+      jump();
+      const raf = requestAnimationFrame(jump);
+      const timer = window.setTimeout(jump, 120);
+      return () => {
+        cancelAnimationFrame(raf);
+        window.clearTimeout(timer);
+      };
+    }
+
+    // 后续：新消息到达 / 流式输出 —— 平滑滚到最新（流式用瞬时以跟住节奏）
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: status === "streaming" ? "auto" : "smooth",
+    });
   }, [messages, status, proposals]);
 
   // 滚动到顶部时懒加载更早一页消息（游标 = 当前最旧 position）
