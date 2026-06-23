@@ -32,7 +32,7 @@ export function AIPanel({
   spaceId,
   onModeChange,
   onFlushArticle,
-  onDraftPreview,
+  onApplyDigest,
 }: {
   onApply: (md: string) => void;
   onApplyArticle: (article: {
@@ -49,10 +49,8 @@ export function AIPanel({
     contentMd?: string;
     digest?: string;
   }) => Promise<void>;
-  /** Agent 正文实时预览（后续修改模式，镜像到预览面板）。首次直写不走此回调。 */
-  onDraftPreview?: (
-    draft: { markdown: string; title?: string; mode: "direct" | "diff" } | null
-  ) => void;
+  /** Agent 摘要生成后镜像到编辑器 digest 字段。 */
+  onApplyDigest?: (digest: string) => void;
 }) {
   const [mode, setModeState] = useState<AIPanelMode>("chat");
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -161,8 +159,8 @@ export function AIPanel({
           providerId={providerId}
           modelId={modelId}
           onApplyArticle={onApplyArticle}
+          onApplyDigest={onApplyDigest}
           onFlushArticle={onFlushArticle}
-          onDraftPreview={onDraftPreview}
         />
       )}
 

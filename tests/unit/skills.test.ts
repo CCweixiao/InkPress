@@ -31,6 +31,7 @@ describe("Agent skill provider", () => {
     expect(ids).toContain("codebase-exploration");
     expect(ids).toContain("technical-documentation");
     expect(ids).toContain("wechat-writing");
+    expect(ids).toContain("article-summary");
   });
 
   it("loads user skill manuals and safe text resources (user root)", async () => {
