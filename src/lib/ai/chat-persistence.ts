@@ -107,19 +107,50 @@ export async function saveAgentMessages(sessionId: string, messages: UIMessage[]
   ]);
 }
 
+export type MergeRelation = "new" | "truncate" | "append" | "disjoint";
+
+/**
+ * 判定前端消息列表相对 DB 历史的关系，驱动 mergeAndPersistMessages 的合并策略。纯函数，便于单测。
+ *
+ * - new：DB 为空（新会话或已清空）。
+ * - truncate：前端列表是 DB 的「连续前缀」——从第 1 条起逐个 id 相等，直到前端结束
+ *   （前端可短于或等于 DB）。覆盖 rerun/regenerate（截断尾部）与完全一致（幂等重写）。
+ *   必须是「连续前缀」：仅末条 id 命中 DB 不足以判定——否则页面级导航 remount 后前端只持
+ *   最近若干条时，会把 DB 更早的历史误当截断删掉（F-001 回归根因）。
+ * - append：前端末条不在 DB，但前端与 DB 存在 id 交集 → 以「前端最后一条在 DB 的消息」
+ *   为分歧点，用 DB 前缀补全被分页/remount 截掉的历史。
+ * - disjoint：前端与 DB 无任何 id 交集（异常）。
+ *
+ * 无 id 的消息（id 为空）永不匹配，因此不会把含空 id 的列表误判为 truncate。
+ */
+export function detectRelation(
+  uiMessages: UIMessage[],
+  dbMessages: UIMessage[]
+): MergeRelation {
+  if (dbMessages.length === 0) return "new";
+  const isPrefix =
+    uiMessages.length <= dbMessages.length &&
+    uiMessages.every((m, i) => !!m.id && m.id === dbMessages[i].id);
+  if (isPrefix) return "truncate";
+  const dbIds = new Set(dbMessages.map((m) => m.id));
+  return uiMessages.some((m) => !!m.id && dbIds.has(m.id)) ? "append" : "disjoint";
+}
+
 /**
  * 合并前端消息与 DB 历史，避免分页/remount 导致的消息丢失。
  *
- * 问题背景：WritingAssistant 组件因 tab 切换（条件渲染）remount 时只从 DB 分页加载 10 条消息，
- * 下次发送时前端只传这些消息。若后端用 delete-all-recreate 语义，被分页出去的旧消息会被永久删除。
+ * 问题背景：WritingAssistant 因页面级导航重挂载时只从 DB 分页加载最近若干条消息，
+ * 下次发送/重跑时前端只传这些消息。若后端用 delete-all-recreate 语义盲目覆盖，
+ * 被分页出去的旧消息会被永久删除。
  *
- * 策略：
- * - 新会话或 DB 已空：直接写入前端消息。
- * - truncate 场景（rerun/regenerate）：前端最后一条消息 ID 在 DB 中存在 → 前端列表是权威子集，截断。
- * - append 场景：前端最后一条消息 ID 不在 DB 中 → 找分歧点（前端最后一条存在于 DB 的消息），用 DB 补全前缀。
- * - 无交集（异常）：直接写入前端消息，保守不丢数据。
+ * 策略（由 detectRelation 驱动）：
+ * - new / disjoint：直接写入前端消息（disjoint 为异常保守路径，不丢数据）。
+ * - truncate（前端是 DB 连续前缀，含 rerun/regenerate/幂等）：前端列表权威，截断尾部。
+ * - append：前端末条不在 DB → 找分歧点（前端最后一条存在于 DB 的消息），用 DB 补全前缀。
  *
  * 返回合并后的完整消息列表，供后续 originalMessages / prepareAgentContext 使用。
+ * 入口 POST 与各 onFinish 均走此函数：基于「最新 DB」合并而非盲目覆盖，使并发轮次
+ * 不会互相丢失对方已持久化的回复。
  */
 export async function mergeAndPersistMessages(
   sessionId: string,
@@ -135,31 +166,26 @@ export async function mergeAndPersistMessages(
     },
     "mergeAndPersistMessages 输入"
   );
-  if (dbMessages.length === 0) {
-    // 新会话或已清空：直接写入前端消息
+
+  const relation = detectRelation(uiMessages, dbMessages);
+
+  if (relation !== "append") {
+    // new / truncate / disjoint：前端列表权威（truncate 截断尾部，new/disjoint 直写）
     await saveAgentMessages(sessionId, uiMessages);
     return uiMessages;
   }
 
+  // append：找分歧点（前端最后一条在 DB 的消息），用 DB 补全前缀
   const dbIds = new Set(dbMessages.map((m) => m.id));
-  const lastFrontendId = uiMessages[uiMessages.length - 1]?.id;
-
-  if (lastFrontendId && dbIds.has(lastFrontendId)) {
-    // truncate/rerun/regenerate：前端消息是 DB 的前缀子集 → 截断
-    await saveAgentMessages(sessionId, uiMessages);
-    return uiMessages;
-  }
-
-  // append：找分歧点（前端最后一条在 DB 中的消息），用 DB 补全前缀
   let divergence = -1;
   for (let i = uiMessages.length - 1; i >= 0; i--) {
-    if (dbIds.has(uiMessages[i].id)) {
+    if (uiMessages[i].id && dbIds.has(uiMessages[i].id)) {
       divergence = i;
       break;
     }
   }
   if (divergence === -1) {
-    // 无交集（异常）：直接写入前端消息
+    // 理论不可达（detectRelation 已保证 append 有交集）；防御性兜底，保守不丢数据
     await saveAgentMessages(sessionId, uiMessages);
     return uiMessages;
   }

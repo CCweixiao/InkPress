@@ -86,7 +86,8 @@ const SUMMARY_SYSTEM = `你负责压缩写作对话历史。输出简洁的结�
  *
  * deleteSummarized（默认 false）：当 true 时，删除已被摘要覆盖的旧消息并对剩余消息
  * position 重编号（从 0 连续）。仅手动 /compact 使用——自动压缩路径不能删消息，
- * 因为后续 onFinish 的 saveAgentMessages 会用压缩前的完整列表覆盖 DB。
+ * 因为后续 onFinish 的 mergeAndPersistMessages 会以「前端完整列表」为基准合并 DB：
+ * 自动压缩时前端仍持有未压缩的全量消息，被删掉的旧消息会被 merge 还原回来。
  */
 export async function summarizeConversation(input: {
   model: LanguageModel;

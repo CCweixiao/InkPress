@@ -15,7 +15,6 @@ import {
   getOrCreateAgentSession,
   loadAgentMessages,
   mergeAndPersistMessages,
-  saveAgentMessages,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
 import { createWritingAgent } from "@/lib/ai/writing-agent";
@@ -319,7 +318,16 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     const stream = createUIMessageStream<UIMessage>({
       originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
-        await saveAgentMessages(session.id, messages);
+        try {
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, messages);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
@@ -347,7 +355,16 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     const stream = createUIMessageStream<UIMessage>({
       originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
-        await saveAgentMessages(session.id, messages);
+        try {
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, messages);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
@@ -376,7 +393,16 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     const stream = createUIMessageStream<UIMessage>({
       originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
-        await saveAgentMessages(session.id, messages);
+        try {
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, messages);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
@@ -579,24 +605,33 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     const stream = createUIMessageStream<UIMessage>({
       originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
-        const persisted = messages.map((message, index) => {
-          if (
-            !turnUsage ||
-            message.role !== "assistant" ||
-            messages.slice(index + 1).some((item) => item.role === "assistant")
-          ) {
-            return message;
-          }
-          return {
-            ...message,
-            metadata: {
-              ...((message as { metadata?: Record<string, unknown> }).metadata ??
-                {}),
-              usage: turnUsage,
-            },
-          };
-        });
-        await saveAgentMessages(session.id, persisted);
+        try {
+          const persisted = messages.map((message, index) => {
+            if (
+              !turnUsage ||
+              message.role !== "assistant" ||
+              messages.slice(index + 1).some((item) => item.role === "assistant")
+            ) {
+              return message;
+            }
+            return {
+              ...message,
+              metadata: {
+                ...((message as { metadata?: Record<string, unknown> }).metadata ??
+                  {}),
+                usage: turnUsage,
+              },
+            };
+          });
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, persisted);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
