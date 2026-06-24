@@ -5,22 +5,87 @@ import {
   Wrench,
 } from "lucide-react";
 
-/** 工具中文名（与 ToolCallBlock 标题一致）。 */
-export const TOOL_LABELS: Record<string, string> = {
-  set_task_plan: "制定执行计划",
-  load_skill: "补充加载 Skill",
-  read_skill_resource: "读取 Skill 资源",
-  web_search: "搜索网络资料",
-  web_extract: "读取网页正文",
-  project_search: "搜索本地代码项目",
-  project_read: "读取项目文件",
-  explore_project: "只读探索代码项目",
-  analyze_code_changes: "分析 Git 提交与代码差异",
-  github_pull_request: "读取 GitHub Pull Request",
-  article_assets: "筛选文章素材",
-  propose_article_revision: "生成文章修改提案",
-  propose_technical_document_revision: "生成技术文档提案",
+// ────────────────────────────────────────────────────────────────────────────
+// 工具描述符注册表（单一事实源）
+// 新增一个工具只需在此加一条：label（中文名）+ group（分组归属）+ summarize（一行摘要）。
+// TOOL_LABELS / EXPLORE_TOOLS / WEB_TOOLS / summarizeTool 均由此派生，避免分散到多处常量表。
+// ────────────────────────────────────────────────────────────────────────────
+
+type ToolGroup = "explore" | "web";
+
+type ToolDescriptor = {
+  /** 中文名（ToolCallBlock / ToolGroupBlock 标题一致）。 */
+  label: string;
+  /** 分组归属：连续同组工具在 UI 折叠成一个组；不分组则省略。 */
+  group?: ToolGroup;
+  /** 由工具 output 生成一行摘要；省略则回退「执行完成」。 */
+  summarize?: (value: Record<string, unknown>) => string;
 };
+
+const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
+  set_task_plan: {
+    label: "制定执行计划",
+    summarize: (v) =>
+      Array.isArray(v.steps)
+        ? `${v.intent ?? "任务"} · ${v.steps.length} 个步骤`
+        : "执行完成",
+  },
+  load_skill: {
+    label: "补充加载 Skill",
+    summarize: (v) => `已加载 ${v.name ?? v.id ?? "Skill"}`,
+  },
+  read_skill_resource: { label: "读取 Skill 资源" },
+  web_search: {
+    label: "搜索网络资料",
+    group: "web",
+    summarize: (v) =>
+      `获得 ${Array.isArray(v.results) ? v.results.length : 0} 条搜索结果`,
+  },
+  web_extract: { label: "读取网页正文", group: "web" },
+  project_search: {
+    label: "搜索本地代码项目",
+    group: "explore",
+    summarize: (v) =>
+      `找到 ${Array.isArray(v.matches) ? v.matches.length : 0} 个匹配`,
+  },
+  project_read: {
+    label: "读取项目文件",
+    group: "explore",
+    summarize: (v) => `已读取 ${v.path ?? "项目文件"}`,
+  },
+  explore_project: {
+    label: "只读探索代码项目",
+    group: "explore",
+    summarize: (v) =>
+      `证据包包含 ${Array.isArray(v.symbols) ? v.symbols.length : 0} 个符号、${Array.isArray(v.edges) ? v.edges.length : 0} 条关系`,
+  },
+  analyze_code_changes: {
+    label: "分析 Git 提交与代码差异",
+    group: "explore",
+  },
+  github_pull_request: {
+    label: "读取 GitHub Pull Request",
+    group: "explore",
+  },
+  article_assets: {
+    label: "筛选文章素材",
+    summarize: (v) =>
+      `读取 ${Array.isArray(v.assets) ? v.assets.length : 0} 项素材`,
+  },
+  propose_article_revision: {
+    label: "生成文章修改提案",
+    summarize: () => "文章修改提案已生成",
+  },
+  propose_technical_document_revision: { label: "生成技术文档提案" },
+};
+
+/** 工具中文名（由注册表派生，与 ToolCallBlock 标题一致）。 */
+export const TOOL_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(TOOL_REGISTRY).map(([name, descriptor]) => [
+    name,
+    descriptor.label,
+  ])
+);
 
 /** 根据工具名返回对应图标（与 ToolCallBlock 一致）。 */
 export function ToolIcon({ name }: { name: string }) {
@@ -30,7 +95,7 @@ export function ToolIcon({ name }: { name: string }) {
   return <Wrench className="h-3.5 w-3.5" />;
 }
 
-/** 根据工具名 + 输出生成一行摘要。 */
+/** 根据工具名 + 输出生成一行摘要（由注册表的 summarize 派生）。 */
 export function summarizeTool(
   toolName: string,
   output: unknown,
@@ -39,25 +104,7 @@ export function summarizeTool(
   if (typeof errorText === "string") return errorText;
   if (!output || typeof output !== "object") return "执行完成";
   const value = output as Record<string, unknown>;
-  if (toolName === "set_task_plan" && Array.isArray(value.steps)) {
-    return `${value.intent ?? "任务"} · ${value.steps.length} 个步骤`;
-  }
-  if (toolName === "load_skill") return `已加载 ${value.name ?? value.id ?? "Skill"}`;
-  if (toolName === "web_search") {
-    return `获得 ${Array.isArray(value.results) ? value.results.length : 0} 条搜索结果`;
-  }
-  if (toolName === "project_search") {
-    return `找到 ${Array.isArray(value.matches) ? value.matches.length : 0} 个匹配`;
-  }
-  if (toolName === "project_read") return `已读取 ${value.path ?? "项目文件"}`;
-  if (toolName === "explore_project") {
-    return `证据包包含 ${Array.isArray(value.symbols) ? value.symbols.length : 0} 个符号、${Array.isArray(value.edges) ? value.edges.length : 0} 条关系`;
-  }
-  if (toolName === "article_assets") {
-    return `读取 ${Array.isArray(value.assets) ? value.assets.length : 0} 项素材`;
-  }
-  if (toolName === "propose_article_revision") return "文章修改提案已生成";
-  return "执行完成";
+  return TOOL_REGISTRY[toolName]?.summarize?.(value) ?? "执行完成";
 }
 
 /** 安全 JSON 格式化（与 ToolCallBlock 一致）。 */
@@ -85,17 +132,20 @@ export function getToolName(part: Record<string, unknown>): string {
 // 工具分组定义
 // ────────────────────────────────────────────────────────────────────────────
 
+/** 某分组的工具名集合（由注册表 group 字段派生）。 */
+function toolsInGroup(group: ToolGroup): Set<string> {
+  return new Set(
+    Object.entries(TOOL_REGISTRY)
+      .filter(([, descriptor]) => descriptor.group === group)
+      .map(([name]) => name)
+  );
+}
+
 /** 只读代码探索类工具：连续多次调用合并为「探索代码项目」组。 */
-export const EXPLORE_TOOLS = new Set([
-  "project_search",
-  "project_read",
-  "explore_project",
-  "analyze_code_changes",
-  "github_pull_request",
-]);
+export const EXPLORE_TOOLS = toolsInGroup("explore");
 
 /** 网络类工具：合并为「搜索网络资料」组。 */
-export const WEB_TOOLS = new Set(["web_search", "web_extract"]);
+export const WEB_TOOLS = toolsInGroup("web");
 
 /** 代码探索相关的数据 part 类型（流式事件，非 tool-call）。 */
 export const EXPLORE_DATA_TYPES = new Set([

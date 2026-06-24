@@ -12,6 +12,8 @@ import { moduleLogger } from "@/lib/logger";
 const log = moduleLogger("ai.context");
 
 const RECENT_MESSAGE_COUNT = 8;
+// 自适应收缩保留窗口时的下限：超大消息撑爆预算也至少保留最近 2 条原文，保证最新一轮上下文完整。
+const FLOOR_KEEP_MIN = 2;
 const MAX_SUMMARY_SOURCE_CHARS = 24_000;
 
 export function estimateTokens(text: string) {
@@ -222,21 +224,45 @@ export async function prepareAgentContext(input: {
       conversationTokens >
       input.contextBudgetTokens * 0.7;
 
+  // 自适应保留窗口：默认保留 RECENT_MESSAGE_COUNT 条；当「正文 + 系统块 + 保留窗口」会超预算时，
+  // 从最新往旧贪心收缩窗口，把更多近端历史折进摘要（最少留 FLOOR_KEEP_MIN 条）。
+  // 解决「少量但超大的消息（explore/analyze 证据、长正文）撑爆预算，却因 keepRecent 固定为 8
+  // 把超大内容留在不可压地板里、自动压缩看似不生效」的问题。
+  const reserveTokens = articleTokens + systemExtraTokens + 1500; // 系统块 + 摘要余量
+  const budgetForRecent = input.contextBudgetTokens - reserveTokens;
+  let keepRecent = RECENT_MESSAGE_COUNT;
+  if (shouldSummarize) {
+    let used = 0;
+    let fit = 0;
+    for (let i = input.uiMessages.length - 1; i >= 0; i--) {
+      const t = estimateTokens(messageText(input.uiMessages[i]));
+      // 至少保留 FLOOR_KEEP_MIN 条；之后若再纳入会超出近端预算则停止收缩。
+      if (fit >= FLOOR_KEEP_MIN && (budgetForRecent <= 0 || used + t > budgetForRecent)) {
+        break;
+      }
+      used += t;
+      fit++;
+      if (fit >= RECENT_MESSAGE_COUNT) break;
+    }
+    keepRecent = Math.max(FLOOR_KEEP_MIN, Math.min(RECENT_MESSAGE_COUNT, fit));
+  }
+
   let summary = input.sessionSummary;
   let summaryUpToPosition = input.summaryUpToPosition;
   let recentMessages = input.uiMessages;
 
-  if (shouldSummarize && input.uiMessages.length > RECENT_MESSAGE_COUNT) {
+  if (shouldSummarize && input.uiMessages.length > keepRecent) {
     const compressed = await summarizeConversation({
       model: input.model,
       sessionId: input.sessionId,
       summary: input.sessionSummary,
       summaryUpToPosition: input.summaryUpToPosition,
       uiMessages: input.uiMessages,
+      keepRecent,
     });
     summary = compressed.summary;
     summaryUpToPosition = compressed.summaryUpToPosition;
-    recentMessages = input.uiMessages.slice(-RECENT_MESSAGE_COUNT);
+    recentMessages = input.uiMessages.slice(-keepRecent);
   }
 
   // estimatedTokens 基于实际将发送给 LLM 的 retained messages + summary + article，
@@ -262,19 +288,26 @@ export async function prepareAgentContext(input: {
   // - reasoning part：reasoning 选项语义是「移除」——"before-last-message" 仅保留最近一条消息的
   //   思维链，移除更早的历史 reasoning（往轮思维链体量大且对后续轮几乎无用，是纯 token 浪费）。
   //   （此前误用 "all" 会移除全部 reasoning，注释却写「始终保留」，语义与注释相互矛盾。）
+  // 重型工具裁剪列表：propose_*/web_extract 始终裁剪旧调用（正文/整页副本）。
+  // 当估算仍超预算时，额外把大体量只读证据工具（explore/analyze/web_search/PR）纳入裁剪，
+  // 仅保留最近 2 条消息中的调用——旧证据已在 UI 证据块留痕，原始大 payload 不必逐轮重复占用。
+  const heavyTools = [
+    "propose_article_revision",
+    "propose_technical_document_revision",
+    "web_extract",
+  ];
+  if (estimatedTokens > input.contextBudgetTokens) {
+    heavyTools.push(
+      "explore_project",
+      "analyze_code_changes",
+      "web_search",
+      "github_pull_request"
+    );
+  }
   const messages = pruneMessages({
     messages: converted,
     reasoning: "before-last-message",
-    toolCalls: [
-      {
-        type: "before-last-2-messages",
-        tools: [
-          "propose_article_revision",
-          "propose_technical_document_revision",
-          "web_extract",
-        ],
-      },
-    ],
+    toolCalls: [{ type: "before-last-2-messages", tools: heavyTools }],
     emptyMessages: "remove",
   }) as ModelMessage[];
 
@@ -291,7 +324,7 @@ export async function prepareAgentContext(input: {
   );
 
   const compressed =
-    shouldSummarize && input.uiMessages.length > RECENT_MESSAGE_COUNT;
+    shouldSummarize && input.uiMessages.length > keepRecent;
 
   log.debug(
     {

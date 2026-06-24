@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "ai";
-import { detectRelation } from "../../src/lib/ai/chat-persistence";
+import { computeMerged, detectRelation } from "../../src/lib/ai/chat-persistence";
 
 /**
  * detectRelation 是 mergeAndPersistMessages 的纯函数判定核心，决定前端消息列表
@@ -76,5 +76,57 @@ describe("detectRelation", () => {
   it("全部无 id 的前端 vs 有 DB → disjoint（无任何可靠交集）", () => {
     const db = [msg("a"), msg("b")];
     expect(detectRelation([noId(), noId("assistant")], db)).toBe("disjoint");
+  });
+});
+
+/**
+ * computeMerged 是 mergeAndPersistMessages 在事务内调用的纯合并函数，
+ * 根据 detectRelation 的关系决定最终落盘的完整消息列表。四态各覆盖一例。
+ */
+const ids = (messages: UIMessage[]) => messages.map((m) => m.id);
+
+describe("computeMerged", () => {
+  it("new：DB 为空 → 直写前端列表", () => {
+    const ui = [msg("a"), msg("b")];
+    expect(ids(computeMerged("new", ui, []))).toEqual(["a", "b"]);
+  });
+
+  it("truncate：前端是 DB 连续前缀 → 前端权威，截断尾部", () => {
+    const db = [msg("a"), msg("b"), msg("c")];
+    const ui = [msg("a"), msg("b")];
+    expect(ids(computeMerged("truncate", ui, db))).toEqual(["a", "b"]);
+  });
+
+  it("disjoint：无交集 → 保守直写前端列表（不丢前端数据）", () => {
+    const db = [msg("a"), msg("b")];
+    const ui = [msg("x"), msg("y")];
+    expect(ids(computeMerged("disjoint", ui, db))).toEqual(["x", "y"]);
+  });
+
+  it("append（F-001）：remount 后只持末尾若干条 → 用 DB 前缀补全", () => {
+    const db = [msg("a"), msg("x"), msg("y"), msg("b"), msg("c")];
+    // 前端只持最后 2 条 [b, c]，分歧点 = c（前端最后一条在 DB 的消息）
+    const ui = [msg("b"), msg("c")];
+    expect(ids(computeMerged("append", ui, db))).toEqual([
+      "a",
+      "x",
+      "y",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("append：DB 前缀 + 前端新增尾部 → 拼接补全", () => {
+    const db = [msg("a"), msg("b")];
+    // 前端 [b, new]：分歧点 = b，DB 取到 b 为止再接前端 b 之后的新消息
+    const ui = [msg("b"), msg("new")];
+    expect(ids(computeMerged("append", ui, db))).toEqual(["a", "b", "new"]);
+  });
+
+  it("append 兜底：无分歧点（理论不可达）→ 保守直写前端列表", () => {
+    const db = [msg("a"), msg("b")];
+    const ui = [msg("x"), msg("y")];
+    // 关系误标 append 但实际无交集：不丢前端数据
+    expect(ids(computeMerged("append", ui, db))).toEqual(["x", "y"]);
   });
 });
