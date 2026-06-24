@@ -75,9 +75,14 @@ type AgentTargetContext = {
 async function tavilyRequest(
   config: AgentConfig,
   endpoint: "search" | "extract",
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  abortSignal?: AbortSignal
 ) {
   if (!config.tavilyApiKey) throw new Error("未配置 Tavily API Key。");
+  // 请求级取消信号与 25s 超时取较早者：用户取消时联网请求立刻中止，不空跑到超时。
+  const signal = abortSignal
+    ? AbortSignal.any([abortSignal, AbortSignal.timeout(25_000)])
+    : AbortSignal.timeout(25_000);
   const response = await fetch(`https://api.tavily.com/${endpoint}`, {
     method: "POST",
     headers: {
@@ -85,7 +90,7 @@ async function tavilyRequest(
       Authorization: `Bearer ${config.tavilyApiKey}`,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(25_000),
+    signal,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -222,6 +227,8 @@ export async function createWritingAgent(input: {
   conversationSummary?: string;
   /** 是否把文章全文注入系统提示。默认 true；与正文无关的任务（联网/代码）可省略只带摘要，省 token。 */
   includeArticleBody?: boolean;
+  /** 请求级中止信号：用户取消 / 断连时透传到主循环与子 Agent（探索/分析），让服务端工作及时终止。 */
+  abortSignal?: AbortSignal;
   onFinishUsage?: (usage: {
     inputTokens: number;
     outputTokens: number;
@@ -292,13 +299,18 @@ export async function createWritingAgent(input: {
         maxResults: z.number().int().min(1).max(10).default(5),
       }),
       execute: withToolLog("web_search", async ({ query, topic, maxResults }) =>
-        tavilyRequest(input.config, "search", {
-          query,
-          topic,
-          max_results: maxResults,
-          include_answer: false,
-          include_raw_content: false,
-        })
+        tavilyRequest(
+          input.config,
+          "search",
+          {
+            query,
+            topic,
+            max_results: maxResults,
+            include_answer: false,
+            include_raw_content: false,
+          },
+          input.abortSignal
+        )
       ),
     }),
     web_extract: tool({
@@ -307,11 +319,16 @@ export async function createWritingAgent(input: {
       inputSchema: z.object({ url: z.string().url() }),
       execute: withToolLog("web_extract", async ({ url }) => {
         const safeUrl = await assertSafePublicUrl(url);
-        return tavilyRequest(input.config, "extract", {
-          urls: [safeUrl],
-          format: "markdown",
-          extract_depth: "basic",
-        });
+        return tavilyRequest(
+          input.config,
+          "extract",
+          {
+            urls: [safeUrl],
+            format: "markdown",
+            extract_depth: "basic",
+          },
+          input.abortSignal
+        );
       }),
     }),
     explore_project: tool({
@@ -330,6 +347,7 @@ export async function createWritingAgent(input: {
           objective,
           maxSteps: Math.min(12, input.config.maxSteps),
           onStep: input.onCodeExploreStep,
+          abortSignal: input.abortSignal,
         });
         // 完整证据走 data part 到 UI；喂模型/落库的 output 用界定后的瘦身版本。
         await input.onCodeEvidence?.(result);
@@ -361,6 +379,7 @@ export async function createWritingAgent(input: {
           range,
           maxSteps: Math.min(10, input.config.maxSteps),
           onStep: input.onCodeExploreStep,
+          abortSignal: input.abortSignal,
         });
         // 完整证据走 data part 到 UI；喂模型/落库的 output 用界定后的瘦身版本。
         await input.onChangeEvidence?.(result);

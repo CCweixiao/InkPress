@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { CircleSlash, Loader2, X } from "lucide-react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -22,8 +22,11 @@ import {
  */
 export function ToolCallBlock({
   part,
+  settled,
 }: {
   part: Record<string, unknown>;
+  /** 所属消息已定格（取消/出错/完成）：仍处于运行态的工具渲染为「已中断」而非旋转。 */
+  settled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -32,8 +35,10 @@ export function ToolCallBlock({
   if (!toolName) return null;
 
   const state = String(part.state ?? "");
-  const running =
+  const live =
     state.includes("streaming") || state.includes("input") || state === "call";
+  const running = live && !settled;
+  const interrupted = live && Boolean(settled);
   const failed = state === "output-error";
   const errorText = typeof part.errorText === "string" ? part.errorText : "";
   const input = formatJson(part.input);
@@ -58,13 +63,18 @@ export function ToolCallBlock({
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
         ) : failed ? (
           <X className="h-3.5 w-3.5 shrink-0 text-red-600" />
+        ) : interrupted ? (
+          <CircleSlash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
           <span className="shrink-0">
             <ToolIcon name={toolName} />
           </span>
         )}
         <span className="shrink-0 font-medium">{label}</span>
-        {!running && !failed && hasDetail && (
+        {interrupted && (
+          <span className="shrink-0 text-muted-foreground">· 已中断</span>
+        )}
+        {!running && !interrupted && !failed && hasDetail && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
             {summarizeTool(toolName, part.output, part.errorText)}
           </span>

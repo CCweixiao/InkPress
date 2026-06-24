@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Check,
+  CircleSlash,
   FileSearch,
   Globe2,
   Loader2,
@@ -38,11 +39,12 @@ function GroupIcon({ groupType }: { groupType: "explore" | "web" }) {
   return <FileSearch className="h-3.5 w-3.5 shrink-0" />;
 }
 
-/** 计算组内完成/失败/运行中计数，用于标题徽章。 */
-function tallyGroup(parts: AgentPart[]) {
+/** 计算组内完成/失败/运行中/已中断计数，用于标题徽章。settled 后运行态计入「已中断」。 */
+function tallyGroup(parts: AgentPart[], settled?: boolean) {
   let running = 0;
   let failed = 0;
   let done = 0;
+  let interrupted = 0;
   for (const part of parts) {
     const state = String(part.state ?? "");
     if (state === "output-error") {
@@ -52,25 +54,30 @@ function tallyGroup(parts: AgentPart[]) {
       state.includes("input") ||
       state === "call"
     ) {
-      running++;
+      if (settled) interrupted++;
+      else running++;
     } else {
       done++;
     }
   }
-  return { running, failed, done };
+  return { running, failed, done, interrupted };
 }
 
 /** 单个工具调用行：图标 + 中文名 + 摘要 + 状态符号，点击展开详情。 */
 function ToolGroupItem({
   part,
+  settled,
 }: {
   part: AgentPart;
+  settled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
   const toolName = getToolName(part);
   const state = String(part.state ?? "");
-  const running = isPartStreaming(part);
+  const live = isPartStreaming(part);
+  const running = live && !settled;
+  const interrupted = live && Boolean(settled);
   const failed = state === "output-error";
   const errorText = typeof part.errorText === "string" ? part.errorText : "";
   const input = formatJson(part.input);
@@ -96,7 +103,10 @@ function ToolGroupItem({
           <ToolIcon name={toolName} />
         </span>
         <span className="shrink-0 font-medium">{label}</span>
-        {!running && !failed && hasDetail && (
+        {interrupted && (
+          <span className="shrink-0 text-muted-foreground">· 已中断</span>
+        )}
+        {!running && !interrupted && !failed && hasDetail && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
             {summarizeTool(toolName, part.output, part.errorText)}
           </span>
@@ -106,6 +116,8 @@ function ToolGroupItem({
           <Loader2 className="ml-auto h-3 w-3 shrink-0 animate-spin text-primary" />
         ) : failed ? (
           <X className="ml-auto h-3 w-3 shrink-0 text-red-600" />
+        ) : interrupted ? (
+          <CircleSlash className="ml-auto h-3 w-3 shrink-0 text-muted-foreground" />
         ) : (
           hasDetail && (
             <Check className="ml-auto h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -175,11 +187,14 @@ function isToolPart(part: AgentPart): boolean {
 export function ToolGroupBlock({
   parts,
   groupType,
+  settled,
 }: {
   parts: AgentPart[];
   groupType: "explore" | "web";
+  /** 所属消息已定格（取消/出错/完成）：组内运行态收敛为「已中断」，不再自动展开/旋转。 */
+  settled?: boolean;
 }) {
-  const streaming = isGroupStreaming(parts);
+  const streaming = isGroupStreaming(parts) && !settled;
   const [open, setOpen] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
 
@@ -189,7 +204,7 @@ export function ToolGroupBlock({
     if (!streaming && !userToggled) setOpen(false);
   }, [streaming, userToggled]);
 
-  const { running, failed, done } = tallyGroup(parts);
+  const { running, failed, done, interrupted } = tallyGroup(parts, settled);
   const title = GROUP_TITLE[groupType];
   const count = parts.length;
 
@@ -243,6 +258,12 @@ export function ToolGroupBlock({
               {done} 完成
             </span>
           )}
+          {!streaming && interrupted > 0 && (
+            <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
+              <CircleSlash className="h-2.5 w-2.5" />
+              {interrupted} 已中断
+            </span>
+          )}
           {failed > 0 && (
             <span className="inline-flex items-center gap-0.5 rounded bg-red-500/10 px-1 py-px text-[10px] text-red-700 dark:text-red-400">
               <AlertCircle className="h-2.5 w-2.5" />
@@ -260,7 +281,7 @@ export function ToolGroupBlock({
         <div className="space-y-1 border-t border-border/60 px-2 py-2">
           {parts.map((part, i) =>
             isToolPart(part) ? (
-              <ToolGroupItem key={i} part={part} />
+              <ToolGroupItem key={i} part={part} settled={settled} />
             ) : (
               <GroupDataItem key={i} part={part} />
             )
