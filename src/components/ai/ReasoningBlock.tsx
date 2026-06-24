@@ -20,11 +20,14 @@ const PREVIEW_CHARS = 80;
 export function ReasoningBlock({
   text,
   state,
+  settled,
 }: {
   text: string;
   state?: string;
+  /** 所属消息已定格（取消/出错/完成）：即便 state 仍为 streaming 也不再显示「思考中」旋转。 */
+  settled?: boolean;
 }) {
-  const streaming = state === "streaming";
+  const streaming = state === "streaming" && !settled;
   const [open, setOpen] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
 

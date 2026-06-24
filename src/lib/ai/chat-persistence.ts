@@ -22,12 +22,41 @@ type AgentChatMessageRow = {
   position: number;
 };
 
+/**
+ * 规范化从 DB 加载的 part 状态。
+ *
+ * 客户端断连时 AI SDK 的 createUIMessageStream 通过 cancel() 触发 onFinish，
+ * 正在执行的工具 part 可能以 input-streaming / input-available 状态被持久化。
+ * 重新加载后 isPartStreaming 判定为"运行中"→ 永久 spinner。
+ * 历史消息的工具调用不可能仍在运行，统一强制为 output-available。
+ */
+export function normalizeLoadedParts(parts: UIMessage["parts"]): UIMessage["parts"] {
+  const raw = parts as Record<string, unknown>[];
+  let changed = false;
+  const normalized = raw.map((part) => {
+    const type = part.type;
+    const isTool =
+      type === "dynamic-tool" ||
+      (typeof type === "string" && type.startsWith("tool-"));
+    if (!isTool) return part;
+    const state = part.state;
+    if (state === "input-streaming" || state === "input-available") {
+      changed = true;
+      return { ...part, state: "output-available" as const };
+    }
+    return part;
+  });
+  return changed ? (normalized as UIMessage["parts"]) : parts;
+}
+
 /** 行 → UIMessage（统一映射口径，避免各处重复 JSON.parse 逻辑）。 */
 function rowToUIMessage(row: AgentChatMessageRow): UIMessage {
   return {
     id: row.id,
     role: row.role as UIMessage["role"],
-    parts: JSON.parse(row.partsJson) as UIMessage["parts"],
+    parts: normalizeLoadedParts(
+      JSON.parse(row.partsJson) as UIMessage["parts"]
+    ),
     ...(row.metadataJson ? { metadata: JSON.parse(row.metadataJson) } : {}),
   };
 }
@@ -183,12 +212,7 @@ export async function loadAgentMessages(
   // 取最新的 limit 条（rows 已 desc），丢弃多余哨兵；再反转为升序展示
   const pageRows = (hasMore ? rows.slice(0, limit) : rows).slice().reverse();
   return {
-    messages: pageRows.map((row) => ({
-      id: row.id,
-      role: row.role as UIMessage["role"],
-      parts: JSON.parse(row.partsJson) as UIMessage["parts"],
-      ...(row.metadataJson ? { metadata: JSON.parse(row.metadataJson) } : {}),
-    })),
+    messages: pageRows.map(rowToUIMessage),
     hasMore,
     oldestPosition: pageRows.length ? pageRows[0].position : null,
   };
