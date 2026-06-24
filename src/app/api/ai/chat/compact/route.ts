@@ -8,6 +8,7 @@ import {
 import { getModel } from "@/lib/ai/provider";
 import {
   estimateTokens,
+  estimateMessageTokens,
   summarizeConversation,
 } from "@/lib/ai/context-manager";
 import { withApiLog } from "@/lib/api-log";
@@ -45,18 +46,10 @@ export const POST = withApiLog("POST /api/ai/chat/compact", async (req: NextRequ
   const session = await getOrCreateAgentSession(target);
   const messages = await loadAllAgentMessages(session.id);
 
+  // 统一口径：与 context-manager / TokenMeter 一致，含 text + 完整工具 input/output，
+  // 避免「仅 text part」低估导致前端展示的「约省 X tokens」与 TokenMeter 下降值对不上。
   const beforeTokens = messages.reduce(
-    (total, message) =>
-      total +
-      estimateTokens(
-        (message.parts ?? [])
-          .filter(
-            (part): part is { type: "text"; text: string } =>
-              part.type === "text" && typeof part.text === "string"
-          )
-          .map((part) => part.text)
-          .join("\n")
-      ),
+    (total, message) => total + estimateMessageTokens(message),
     0
   );
 
@@ -76,17 +69,7 @@ export const POST = withApiLog("POST /api/ai/chat/compact", async (req: NextRequ
     const afterTokens =
       estimateTokens(result.summary) +
       kept.reduce(
-        (total, message) =>
-          total +
-          estimateTokens(
-            (message.parts ?? [])
-              .filter(
-                (part): part is { type: "text"; text: string } =>
-                  part.type === "text" && typeof part.text === "string"
-              )
-              .map((part) => part.text)
-              .join("\n")
-          ),
+        (total, message) => total + estimateMessageTokens(message),
         0
       );
 
