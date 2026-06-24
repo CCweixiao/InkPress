@@ -147,7 +147,12 @@ export const EXPLORE_TOOLS = toolsInGroup("explore");
 /** 网络类工具：合并为「搜索网络资料」组。 */
 export const WEB_TOOLS = toolsInGroup("web");
 
-/** 代码探索相关的数据 part 类型（流式事件，非 tool-call）。 */
+/**
+ * 代码探索相关的数据 part 类型（流式事件，非 tool-call）。
+ * 注意：data-code-source-detected / approval / ready 不在此列——它们是代码源
+ * 生命周期的交互式 UI（授权卡片 / 就绪通知），有专用 PART_RENDERERS，
+ * 被 aggregateParts 折叠进 ToolGroupBlock 会丢失按钮交互。
+ */
 export const EXPLORE_DATA_TYPES = new Set([
   "data-code-explore-step",
   "data-project-snapshot",
@@ -155,9 +160,6 @@ export const EXPLORE_DATA_TYPES = new Set([
   "data-git-range",
   "data-commit-evidence",
   "data-change-evidence-summary",
-  "data-code-source-detected",
-  "data-code-source-approval",
-  "data-code-source-ready",
 ]);
 
 /** 判断工具属于哪个分组（explore / web / null=不分组）。 */

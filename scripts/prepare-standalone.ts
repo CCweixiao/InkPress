@@ -13,6 +13,11 @@
  * - better_sqlite3.node 原生绑定（确保顶层 + .pnpm 一致）
  *
  * 运行：pnpm tsx scripts/prepare-standalone.ts（在 pnpm build 之后）
+ *
+ * 目标 CPU 架构（better-sqlite3 原生绑定必须与 electron-builder --arch 一致）：
+ * - 环境变量 INKPRESS_TARGET_ARCH=arm64|x64（electron-build.mjs 注入）
+ * - CLI 参数 --arm64 | --x64
+ * - 默认：process.arch
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -20,6 +25,28 @@ import { spawnSync } from "node:child_process";
 import { createRequire, builtinModules } from "node:module";
 
 const root = process.cwd();
+const targetArch = parseTargetArch();
+
+/** 解析打包目标 CPU 架构（与 electron-builder --arm64/--x64 对齐） */
+function parseTargetArch(): "arm64" | "x64" {
+  const fromEnv = process.env.INKPRESS_TARGET_ARCH;
+  if (fromEnv === "arm64" || fromEnv === "x64") return fromEnv;
+
+  const flag = process.argv.find((a) => a === "--arm64" || a === "--x64");
+  if (flag === "--arm64") return "arm64";
+  if (flag === "--x64") return "x64";
+
+  if (process.arch === "arm64") return "arm64";
+  if (process.arch === "x64") return "x64";
+
+  console.error(`✗ 不支持的本机架构：${process.arch}，请设置 INKPRESS_TARGET_ARCH=arm64|x64`);
+  process.exit(1);
+}
+
+/** lipo 架构名：x64 → x86_64 */
+function machArchLabel(arch: "arm64" | "x64"): string {
+  return arch === "x64" ? "x86_64" : "arm64";
+}
 const srcStandalone = path.join(root, ".next", "standalone");
 // 去符号链接的 bundle 目录（electron-builder 的 extraResources 指向此处）
 const bundle = path.join(root, ".next", "standalone-bundle");
@@ -42,7 +69,7 @@ if (!fs.existsSync(srcStandalone)) {
 // 清理旧 bundle，重建
 fs.rmSync(bundle, { recursive: true, force: true });
 
-console.log("生成去符号链接的 standalone bundle…");
+console.log(`生成去符号链接的 standalone bundle（目标架构 ${targetArch}）…`);
 // 第一步：复制（dereference=true 会跟随 symlink 读文件内容，但对 symlink 目录本身
 // 仍会重建为 symlink —— pnpm 的 .pnpm 结构正是如此，导致 bundle 内残留指向项目源码
 // 目录的绝对路径符号链接，打包到其他机器后全部失效）。
@@ -138,22 +165,32 @@ void (async () => {
  * 因为 standalone 用 NODE_PATH 指向 app_modules 解析依赖。
  */
 function ensureNativeBindingForElectron() {
-  console.log("  → 为 Electron 重编译 better-sqlite3 原生绑定…");
+  console.log(`  → 为 Electron 重编译 better-sqlite3 原生绑定（arch=${targetArch}）…`);
 
-  // 在项目根目录用 electron-rebuild 重编译（需要标准 node_modules 结构）
+  // 在项目根目录用 @electron/rebuild 重编译（需要标准 node_modules 结构）
   const electronVersion = JSON.parse(
     fs.readFileSync(path.join(root, "node_modules", "electron", "package.json"), "utf8")
   ).version;
 
+  const rebuildBin = path.join(root, "node_modules", ".bin", "electron-rebuild");
   const result = spawnSync(
-    "npx",
-    ["--yes", "electron-rebuild", "-f", "-w", "better-sqlite3", "--version", electronVersion],
+    rebuildBin,
+    [
+      "-f",
+      "-w",
+      "better-sqlite3",
+      "--version",
+      electronVersion,
+      "--arch",
+      targetArch,
+    ],
     {
       cwd: root,
       env: {
         ...process.env,
         npm_config_runtime: "electron",
         npm_config_target: electronVersion,
+        npm_config_arch: targetArch,
         npm_config_disturl: "https://electronjs.org/headers",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -164,19 +201,27 @@ function ensureNativeBindingForElectron() {
   if (result.stderr) process.stderr.write(result.stderr);
 
   if (result.status !== 0) {
-    console.warn(`  ⚠ electron-rebuild 失败（退出码 ${result.status}），better-sqlite3 可能无法加载`);
-    return;
+    console.error(
+      `  ✗ electron-rebuild 失败（退出码 ${result.status}，arch=${targetArch}）。` +
+        ` 跨架构打包请在对应 CPU 的 Mac 上构建，或检查 Xcode CLT。`
+    );
+    process.exit(1);
   }
 
   // 把重编译后的 .node 复制到 bundle 的所有 better-sqlite3 副本
-  const src = findFile(
-    path.join(root, "node_modules", ".pnpm"),
-    "better_sqlite3.node"
+  const src = findNativeBindingForArch(
+    path.join(root, "node_modules"),
+    targetArch
   );
   if (!src) {
-    console.warn("  ⚠ 项目 node_modules 找不到重编译后的 better_sqlite3.node");
-    return;
+    console.error(
+      `  ✗ 项目 node_modules 找不到 arch=${targetArch} 的 better_sqlite3.node`
+    );
+    process.exit(1);
   }
+
+  verifyNodeArch(src, targetArch);
+
   // 扫描整个 bundle 刷新所有 better_sqlite3.node 副本：
   // - node_modules/{better-sqlite3,.pnpm/better-sqlite3@*}/...（常规路径）
   // - .next/node_modules/better-sqlite3-*/...（Next.js nft 追踪生成的带哈希副本，运行时优先命中）
@@ -184,9 +229,45 @@ function ensureNativeBindingForElectron() {
   const targets = findAllFiles(bundle, "better_sqlite3.node");
   for (const t of targets) {
     fs.copyFileSync(src, t);
+    verifyNodeArch(t, targetArch);
     refreshed++;
   }
-  console.log(`  ✓ better-sqlite3（Electron ABI）已刷新 ${refreshed} 处`);
+  console.log(
+    `  ✓ better-sqlite3（Electron ABI，${targetArch}）已刷新 ${refreshed} 处`
+  );
+}
+
+/** 在 node_modules 树中查找与目标架构匹配的 better_sqlite3.node */
+function findNativeBindingForArch(
+  nmRoot: string,
+  arch: "arm64" | "x64"
+): string | null {
+  const candidates = findAllFiles(nmRoot, "better_sqlite3.node");
+  const expected = machArchLabel(arch);
+  for (const candidate of candidates) {
+    const r = spawnSync("lipo", ["-archs", candidate], { encoding: "utf8" });
+    if (r.status !== 0) continue;
+    const actual = (r.stdout ?? "").trim().split(/\s+/);
+    if (actual.includes(expected)) return candidate;
+  }
+  return null;
+}
+
+/** 校验 .node 文件的 CPU 架构，不匹配则终止打包 */
+function verifyNodeArch(nodePath: string, arch: "arm64" | "x64"): void {
+  const expected = machArchLabel(arch);
+  const r = spawnSync("lipo", ["-archs", nodePath], { encoding: "utf8" });
+  if (r.status !== 0) {
+    console.warn(`  ⚠ 无法验证 ${path.relative(root, nodePath)} 的 CPU 架构`);
+    return;
+  }
+  const actual = (r.stdout ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!actual.includes(expected)) {
+    console.error(
+      `  ✗ ${path.relative(root, nodePath)} 架构不匹配：期望 ${expected}，实际 ${actual.join(", ") || "未知"}`
+    );
+    process.exit(1);
+  }
 }
 
 /**
@@ -528,12 +609,6 @@ function findAllFiles(dir: string, name: string): string[] {
   walk(dir);
   return results;
 }
-
-function findFile(dir: string, name: string): string | null {
-  const all = findAllFiles(dir, name);
-  return all[0] ?? null;
-}
-
 /**
  * 从 bundle 内删除运行时（生产环境）不需要的文件，减小打包体积。
  *
