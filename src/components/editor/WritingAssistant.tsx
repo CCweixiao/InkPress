@@ -592,6 +592,12 @@ export type RenderCtx = {
   rerun?: (index: number, editedText: string) => void;
   /** Agent 是否忙碌（忙碌时禁用重新执行）。 */
   busy: boolean;
+  /**
+   * 本条消息是否已「定格」（不再随活动流变化）。
+   * 仅「正在流式的最新助手消息」为非 settled；其余（历史消息、用户取消/出错/完成后）均为 settled。
+   * settled 时，仍停留在 running/streaming 视觉态的步骤/工具/思考应渲染为「已中断」而非持续旋转。
+   */
+  settled: boolean;
 };
 
 export type PartRenderer = {
@@ -874,7 +880,7 @@ function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
       />
     );
   }
-  return <ToolCallBlock part={part} />;
+  return <ToolCallBlock part={part} settled={ctx.settled} />;
 }
 
 /** AI 输出文本的操作按钮：复制原文 + 全屏放大（hover 显露，与用户消息操作行风格一致）。 */
@@ -946,10 +952,11 @@ export const PART_RENDERERS: PartRenderer[] = [
   },
   {
     match: (p) => p.type === "reasoning" && typeof p.text === "string",
-    render: (p) => (
+    render: (p, ctx) => (
       <ReasoningBlock
         text={p.text as string}
         state={typeof p.state === "string" ? p.state : undefined}
+        settled={ctx.settled}
       />
     ),
   },
@@ -1029,7 +1036,12 @@ export const PART_RENDERERS: PartRenderer[] = [
   },
   {
     match: (p) => p.type === "data-agent-step" && isObj(p.data),
-    render: (p) => <AgentStepBlock data={p.data as Record<string, unknown>} />,
+    render: (p, ctx) => (
+      <AgentStepBlock
+        data={p.data as Record<string, unknown>}
+        settled={ctx.settled}
+      />
+    ),
   },
   {
     match: (p) => p.type === "data-context-usage" && isObj(p.data),
@@ -1783,6 +1795,10 @@ export function WritingAssistant({
                 {(() => {
                   const parts = message.parts as unknown as AgentPart[];
                   const items = aggregateParts(parts);
+                  // 仅「正在流式的最新助手消息」是活动态；其余一律 settled。
+                  // 用户取消 / 出错 / 完成后 busy 转 false → settled 转 true，
+                  // 让仍卡在 running/streaming 的步骤、工具、思考即时收敛为「已中断/已结束」。
+                  const settled = !(busy && idx === lastAssistantIndex);
                   const ctx: RenderCtx = {
                     role: message.role,
                     targetKind,
@@ -1796,6 +1812,7 @@ export function WritingAssistant({
                     messageIndex: idx,
                     rerun,
                     busy,
+                    settled,
                   };
                   return items.map((item) => {
                     if (item.kind === "tool-group") {
@@ -1804,6 +1821,7 @@ export function WritingAssistant({
                           key={item.key}
                           parts={item.parts}
                           groupType={item.groupType}
+                          settled={settled}
                         />
                       );
                     }

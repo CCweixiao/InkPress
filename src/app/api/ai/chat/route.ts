@@ -175,7 +175,19 @@ function buildRouterContext(
   return segments.join("\n\n");
 }
 
+/** 用户取消 / 断连触发的中止：不是真正的错误，单独识别以免当作异常展示或记错误日志。 */
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
+}
+
 function errorMessage(error: unknown) {
+  // 中止（用户取消/断连）：返回中性文案。此时客户端通常已断开，不会展示；仅用于流内收尾。
+  if (isAbortError(error)) return "对话已取消。";
   // 统一委托 classifyError（前后端共享同一份归类规则，含厂商中文限流文案与 statusCode 探测）。
   // 注意：streamText 的 onError 返回值会被忽略；真正面向用户的归类展示由前端
   // AgentErrorBlock 对 useChat 转发的 error 调用同一份 classifyError 完成。
@@ -882,6 +894,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           assetCatalog,
           conversationSummary: context.summary,
           includeArticleBody,
+          // 请求级中止信号：用户点停止 / 断连时，主循环与子 Agent（探索/分析）、联网请求一并终止。
+          abortSignal: req.signal,
           onCodeExploreStep: async (step) => {
             writer.write({
               type: "data-code-explore-step",
@@ -965,7 +979,10 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             } as never);
           },
         });
-        const result = await agent.stream({ messages: context.messages });
+        const result = await agent.stream({
+          messages: context.messages,
+          abortSignal: req.signal,
+        });
         writer.merge(
           result.toUIMessageStream({
             sendReasoning: true,

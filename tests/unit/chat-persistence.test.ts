@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "ai";
-import { computeMerged, detectRelation } from "../../src/lib/ai/chat-persistence";
+import {
+  computeMerged,
+  detectRelation,
+  normalizeLoadedParts,
+} from "../../src/lib/ai/chat-persistence";
 
 /**
  * detectRelation 是 mergeAndPersistMessages 的纯函数判定核心，决定前端消息列表
@@ -128,5 +132,87 @@ describe("computeMerged", () => {
     const ui = [msg("x"), msg("y")];
     // 关系误标 append 但实际无交集：不丢前端数据
     expect(ids(computeMerged("append", ui, db))).toEqual(["x", "y"]);
+  });
+});
+
+/**
+ * normalizeLoadedParts：DB 加载时修正工具 part 的未完成状态。
+ *
+ * 根因：客户端断连时 createUIMessageStream 的 cancel() 路径触发 onFinish，
+ * 正在执行的工具 part 以 input-streaming / input-available 被持久化。
+ * isPartStreaming 把这两个状态判为"运行中"，加载后永久 spinner。
+ * 修复：历史消息中的工具 part 统一强制为 output-available。
+ */
+type AnyPart = UIMessage["parts"][number];
+
+describe("normalizeLoadedParts", () => {
+  it("input-streaming → output-available", () => {
+    const parts = [
+      { type: "dynamic-tool", state: "input-streaming", toolName: "web_search" },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect((result[0] as Record<string, unknown>).state).toBe("output-available");
+  });
+
+  it("input-available → output-available", () => {
+    const parts = [
+      { type: "dynamic-tool", state: "input-available", toolName: "explore_project" },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect((result[0] as Record<string, unknown>).state).toBe("output-available");
+  });
+
+  it("tool-* 前缀类型的 input-available 也被修正", () => {
+    const parts = [
+      { type: "tool-web_search", state: "input-available" },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect((result[0] as Record<string, unknown>).state).toBe("output-available");
+  });
+
+  it("output-available 不受影响", () => {
+    const parts = [
+      { type: "dynamic-tool", state: "output-available", toolName: "web_search" },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect((result[0] as Record<string, unknown>).state).toBe("output-available");
+  });
+
+  it("output-error 不受影响", () => {
+    const parts = [
+      { type: "dynamic-tool", state: "output-error", toolName: "web_search" },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect((result[0] as Record<string, unknown>).state).toBe("output-error");
+  });
+
+  it("非工具 part（text / data-*）不受影响", () => {
+    const parts = [
+      { type: "text", text: "hello" },
+      { type: "data-agent-step", data: { status: "completed" } },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect(result).toEqual(parts);
+  });
+
+  it("混合列表：只修正未完成的工具 part，其余原样保留", () => {
+    const parts = [
+      { type: "text", text: "hi" },
+      { type: "dynamic-tool", state: "input-available", toolName: "a" },
+      { type: "dynamic-tool", state: "output-available", toolName: "b" },
+      { type: "tool-c", state: "input-streaming" },
+      { type: "data-agent-step", data: {} },
+    ] as unknown as UIMessage["parts"];
+    const result = normalizeLoadedParts(parts);
+    expect((result[0] as Record<string, unknown>).type).toBe("text");
+    expect((result[1] as Record<string, unknown>).state).toBe("output-available");
+    expect((result[2] as Record<string, unknown>).state).toBe("output-available");
+    expect((result[3] as Record<string, unknown>).state).toBe("output-available");
+    expect((result[4] as Record<string, unknown>).type).toBe("data-agent-step");
+  });
+
+  it("无工具 part 时不创建新数组（引用不变优化）", () => {
+    const parts = [{ type: "text", text: "hello" }] as unknown as UIMessage["parts"];
+    expect(normalizeLoadedParts(parts)).toBe(parts);
   });
 });
