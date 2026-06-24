@@ -37,8 +37,9 @@ function renderLine(line: string) {
   const msg = String(parsed?.msg ?? "");
   const time = parsed?.time ? formatLogTime(parsed.time) : "";
   // 简化展示：时间 [级别] module msg
-  const module = parsed?.module ? `[${parsed.module}]` : "";
-  const text = `${time} ${level.toUpperCase().padEnd(5)} ${module} ${msg}`;
+  // 注意：局部变量不可命名为 module（会遮蔽 CommonJS 全局 module，触发 no-assign-module-variable）。
+  const moduleLabel = parsed?.module ? `[${parsed.module}]` : "";
+  const text = `${time} ${level.toUpperCase().padEnd(5)} ${moduleLabel} ${msg}`;
   // 日间：亮底 + 黑灰常规字（异常标红、warn 标黄）；夜间：暗底 + 浅灰字另配一套
   const color =
     level === "error"

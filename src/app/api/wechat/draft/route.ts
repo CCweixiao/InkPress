@@ -38,7 +38,7 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
   if (!article) {
     return NextResponse.json({ error: "文章不存在" }, { status: 404 });
   }
-  let themeId = parsed.data.themeId ?? article.themeId;
+  const themeId = parsed.data.themeId ?? article.themeId;
   const theme = themeId
     ? await prisma.theme.findUnique({ where: { id: themeId } })
     : await prisma.theme.findFirst({ where: { isBuiltIn: true } });
@@ -105,7 +105,7 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
     }
 
     // 3. 封面
-    let thumbMediaId = article.coverMediaId ?? "";
+    const thumbMediaId = article.coverMediaId ?? "";
     if (!thumbMediaId) {
       // 无封面时使用一张占位：从正文第一张图取，否则跳过封面（公众号要求必须有封面）
       return NextResponse.json(
