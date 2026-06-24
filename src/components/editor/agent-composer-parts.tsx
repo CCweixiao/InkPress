@@ -154,19 +154,22 @@ export function TokenMeter({
   contextUsage,
   lastTurn,
   modelName,
+  budget: budgetProp,
 }: {
   contextUsage: ContextUsage;
   lastTurn: LastTurnUsage;
   modelName?: string;
+  /** 稳定的上下文预算（config 固定值），在 contextUsage 被 clear 清空时兜底，让 chip 仍显示 0/budget。 */
+  budget?: number;
 }) {
   const [open, setOpen] = useState(false);
   const estimated = contextUsage?.estimatedTokens ?? 0;
-  const budget = contextUsage?.budgetTokens ?? 0;
+  const budget = contextUsage?.budgetTokens ?? budgetProp ?? 0;
   const pct = budget > 0 ? Math.min(100, Math.round((estimated / budget) * 100)) : 0;
   const tone = occupancyTone(pct);
 
-  // 没有任何用量数据时不显示 chip（首次进入、未跑过）
-  if (!contextUsage && !lastTurn) return null;
+  // 始终显示 chip：即使没有用量数据（clear 后 / 首次进入）也展示图标，
+  // estimated 为 0 时显示 0/budget（预算来自历史或暂为 0），展开面板计数为 0。
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

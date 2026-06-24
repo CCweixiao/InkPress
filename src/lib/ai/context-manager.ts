@@ -134,7 +134,22 @@ export async function summarizeConversation(input: {
   const summary = result.text.trim();
 
   if (input.deleteSummarized) {
-    // 删除已被摘要覆盖的旧消息，剩余消息 position 批量减 cutoff 使其从 0 开始连续。
+    // 收益判断：若生成的摘要体量 >= 被压缩历史的原文体量，压缩无收益——短/中对话下，
+    // 结构化摘要模板（目标/要求/事实/决策/偏好/待办）可能比被压掉的少量历史还大，
+    // 此时执行压缩反而让总占用不减反增。故不删消息、不更新 summary，保持现状，
+    // 返回 summarizedCount=0 让 /compact 跳过计量刷新并提示用户。
+    const summarizedTokens = newHistorical.reduce(
+      (total, message) => total + estimateTokens(messageText(message)),
+      0
+    );
+    if (estimateTokens(summary) >= summarizedTokens) {
+      return {
+        summary: input.summary,
+        summaryUpToPosition: input.summaryUpToPosition,
+        summarizedCount: 0,
+      };
+    }
+    // 有收益：删除已被摘要覆盖的旧消息，剩余消息 position 批量减 cutoff 使其从 0 开始连续。
     // summaryUpToPosition 重置为 -1（所有保留消息都已在 DB 中，无跳过的前缀）。
     await prisma.$transaction([
       prisma.agentChatMessage.deleteMany({
