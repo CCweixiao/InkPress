@@ -6,6 +6,7 @@ allowBuilds:
   esbuild: true
   prisma: true
   sharp: true
+  unrs-resolver: true
 onlyBuiltDependencies:
   - '@prisma/engines'
   - better-sqlite3
