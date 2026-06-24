@@ -194,6 +194,34 @@ describe("aggregateParts", () => {
     expect(items[1].kind).toBe("tool-group");
   });
 
+  it("代码源授权/就绪 part 不参与工具分组，保留独立交互卡片", () => {
+    const approvalPart = {
+      type: "data-code-source-approval",
+      data: { id: "g1", displayName: "InkPress", locator: "/tmp/x" },
+    };
+    const detectedPart = {
+      type: "data-code-source-detected",
+      data: { displayName: "InkPress", locator: "/tmp/x" },
+    };
+    const readyPart = {
+      type: "data-code-source-ready",
+      data: { displayName: "InkPress", locator: "/tmp/x" },
+    };
+    const items = aggregateParts([
+      detectedPart,
+      approvalPart,
+      explorePart("project_search"),
+      explorePart("project_read"),
+      readyPart,
+    ]);
+    // detected / approval / ready 各自为 single；中间 2 个探索工具合并为 1 组
+    expect(items.length).toBe(4);
+    expect(items[0]).toMatchObject({ kind: "single", part: detectedPart });
+    expect(items[1]).toMatchObject({ kind: "single", part: approvalPart });
+    expect(items[2]).toMatchObject({ kind: "tool-group", groupType: "explore" });
+    expect(items[3]).toMatchObject({ kind: "single", part: readyPart });
+  });
+
   it("组 key 编码首末索引，保证流式 reconciliation 稳定", () => {
     const items = aggregateParts([
       textPart(),

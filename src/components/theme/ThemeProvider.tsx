@@ -10,11 +10,17 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  persistThemeModeCookie,
+  parseThemeMode,
+  THEME_STORAGE_KEY,
+  type ThemeMode,
+} from "@/lib/theme-mode";
+
 // 外观配置在 SystemConfig 表的 key（与 src/lib/appearance-config 保持一致）。
-// 此处内联常量，避免客户端组件间接引入 @prisma（仅服务端可用）。
 const APPEARANCE_CONFIG_KEY = "inkpress.appearance";
 
-export type ThemeMode = "light" | "dark" | "auto";
+export type { ThemeMode };
 
 type ThemeContextValue = {
   /** 用户选择：light / dark / auto */
@@ -27,7 +33,7 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-const STORAGE_KEY = "inkpress.appearance";
+const STORAGE_KEY = THEME_STORAGE_KEY;
 
 function systemPrefersDark() {
   if (typeof window === "undefined") return false;
@@ -38,8 +44,7 @@ function systemPrefersDark() {
 function readStoredMode(): ThemeMode {
   if (typeof window === "undefined") return "auto";
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === "light" || raw === "dark" || raw === "auto") return raw;
+    return parseThemeMode(localStorage.getItem(STORAGE_KEY));
   } catch {
     /* localStorage 不可用时回退 auto */
   }
@@ -47,8 +52,8 @@ function readStoredMode(): ThemeMode {
 }
 
 /**
- * 主题 Provider：管理 light/dark/auto 状态，同步 <html> class、localStorage、服务端配置。
- * 首帧由 layout.tsx 注入的阻塞脚本处理（无 FOUC），Provider 启动后接管。
+ * 主题 Provider：管理 light/dark/auto 状态，同步 <html> class、localStorage、cookie、服务端配置。
+ * 首帧由 layout SSR 读 cookie + CSS prefers-color-scheme 处理（无阻塞 script）。
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>("auto");
@@ -75,12 +80,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return mode;
   }, [mode]);
 
-  // 应用主题到 <html>（客户端）
+  // 应用主题到 <html>（客户端）：显式 dark/light 写 class；auto 移除二者交给 CSS 媒体查询。
   const applyTheme = useCallback((next: ThemeMode) => {
     if (typeof document === "undefined") return;
-    const isDark =
-      next === "dark" || (next === "auto" && systemPrefersDark());
-    document.documentElement.classList.toggle("dark", isDark);
+    const root = document.documentElement;
+    root.classList.remove("dark", "light");
+    if (next === "dark") root.classList.add("dark");
+    else if (next === "light") root.classList.add("light");
   }, []);
 
   const setMode = useCallback(
@@ -92,6 +98,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       } catch {
         /* 忽略写入失败 */
       }
+      persistThemeModeCookie(next);
       // 同步到服务端（复用 /api/system-config，跨设备保持一致）
       fetch("/api/system-config", {
         method: "PUT",
@@ -110,9 +117,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setMode(resolved === "dark" ? "light" : "dark");
   }, [resolved, setMode]);
 
-  // 挂载后若 mode 与实际 <html> class 不一致（首帧脚本与 localStorage 不同步），修正一次
+  // 挂载后若 localStorage 与 <html> class 不一致（首帧 cookie/系统偏好），修正一次并回写 cookie。
   useEffect(() => {
-    if (mounted) applyTheme(mode);
+    if (!mounted) return;
+    applyTheme(mode);
+    persistThemeModeCookie(mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted]);
 
