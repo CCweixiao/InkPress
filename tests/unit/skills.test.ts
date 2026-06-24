@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  invalidateSkillsCache,
   listSkills,
   loadSkill,
   readSkillResource,
@@ -14,6 +15,9 @@ const root = path.join(USER_SKILLS_ROOT, key);
 
 afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
+  // 测试直接改动磁盘（绕过 skills-manager），需手动失效 listSkills 缓存，
+  // 模拟真实写入路径中 skills-manager 调用 invalidateSkillsCache 的行为。
+  invalidateSkillsCache();
 });
 
 describe("Agent skill provider", () => {
@@ -46,6 +50,7 @@ describe("Agent skill provider", () => {
       "# Guide\nVerified content.",
       "utf8"
     );
+    invalidateSkillsCache(); // 让刚写入磁盘的用户 skill 立即对 listSkills 可见
     const skill = await loadSkill(key);
     expect(skill.resources).toContain("references/guide.md");
     const resource = await readSkillResource(key, "references/guide.md");
@@ -59,6 +64,7 @@ describe("Agent skill provider", () => {
       `---\nname: test-agent-resource\ndescription: test\n---\nManual`,
       "utf8"
     );
+    invalidateSkillsCache(); // 同上：使新写入的 skill 对 listSkills 可见
     await expect(readSkillResource(key, "../other.txt")).rejects.toThrow();
   });
 });
