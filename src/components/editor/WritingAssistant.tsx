@@ -561,35 +561,10 @@ function CodeSourceApprovalCard({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Agent part 渲染注册表（声明式：每条 part → { stage, match, render }）
-// 替换原 message.parts.map 内的 if/else 链；新增 part 类型只需加一条规则。
-// stage 为阶段语义（意图/就绪/计划/思考/工具/证据/产出/meta/异常），当前按 part
-// 原序渲染，阶段分组可视化（设计文档 §2.1）作为后续增量。
+// Agent part 渲染注册表（声明式：每条 part → { match, render }）
+// 替换原 message.parts.map 内的 if/else 链；新增 part 类型只需加一条规则，
+// matcher 顺序即优先级（特化 matcher 必须在通用 tool matcher 之前）。
 // ────────────────────────────────────────────────────────────────────────────
-
-export type Stage =
-  | "intent"
-  | "ready"
-  | "plan"
-  | "reasoning"
-  | "tool"
-  | "evidence"
-  | "output"
-  | "meta"
-  | "error";
-
-/** 阶段顺序（§2.1 规范化流水线），供后续阶段分组渲染使用。 */
-export const STAGE_ORDER: Stage[] = [
-  "intent",
-  "ready",
-  "plan",
-  "reasoning",
-  "tool",
-  "evidence",
-  "output",
-  "meta",
-  "error",
-];
 
 type AgentPart = Record<string, unknown>;
 
@@ -620,7 +595,6 @@ export type RenderCtx = {
 };
 
 export type PartRenderer = {
-  stage: Stage;
   match: (part: AgentPart) => boolean;
   render: (part: AgentPart, ctx: RenderCtx) => ReactNode;
 };
@@ -949,7 +923,6 @@ function AiOutputActions({
 // 顺序即优先级：特化 matcher（text/reasoning/data-*）必须在通用 tool matcher 之前。
 export const PART_RENDERERS: PartRenderer[] = [
   {
-    stage: "output",
     match: (p) => p.type === "text" && typeof p.text === "string",
     render: (p, ctx) => {
       const text = p.text as string;
@@ -972,7 +945,6 @@ export const PART_RENDERERS: PartRenderer[] = [
     },
   },
   {
-    stage: "reasoning",
     match: (p) => p.type === "reasoning" && typeof p.text === "string",
     render: (p) => (
       <ReasoningBlock
@@ -982,7 +954,6 @@ export const PART_RENDERERS: PartRenderer[] = [
     ),
   },
   {
-    stage: "ready",
     match: (p) => p.type === "data-code-source-approval" && isObj(p.data),
     render: (p, ctx) => (
       <CodeSourceApprovalCard
@@ -999,28 +970,24 @@ export const PART_RENDERERS: PartRenderer[] = [
     ),
   },
   {
-    stage: "ready",
     match: (p) => p.type === "data-code-source-ready" && isObj(p.data),
     render: (p) => (
       <CodeSourceReadyNotice data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "data-git-range" && isObj(p.data),
     render: (p) => (
       <EvidenceChip kind="git-range" data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "data-commit-evidence" && isObj(p.data),
     render: (p) => (
       <EvidenceChip kind="commit" data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "data-change-evidence-summary" && isObj(p.data),
     render: (p) => (
       <EvidenceChip
@@ -1030,28 +997,24 @@ export const PART_RENDERERS: PartRenderer[] = [
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "data-code-explore-step" && isObj(p.data),
     render: (p) => (
       <EvidenceChip kind="explore" data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "data-project-snapshot" && isObj(p.data),
     render: (p) => (
       <EvidenceChip kind="snapshot" data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "data-source-evidence" && isObj(p.data),
     render: (p) => (
       <EvidenceChip kind="source" data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "evidence",
     match: (p) => p.type === "source-url" && typeof p.url === "string",
     render: (p) => (
       <a
@@ -1065,19 +1028,16 @@ export const PART_RENDERERS: PartRenderer[] = [
     ),
   },
   {
-    stage: "intent",
     match: (p) => p.type === "data-agent-step" && isObj(p.data),
     render: (p) => <AgentStepBlock data={p.data as Record<string, unknown>} />,
   },
   {
-    stage: "meta",
     match: (p) => p.type === "data-context-usage" && isObj(p.data),
     render: (p) => (
       <ContextUsageLine data={p.data as Record<string, unknown>} />
     ),
   },
   {
-    stage: "tool",
     match: (p) => getToolName(p) !== "",
     render: (p, ctx) => renderToolPart(p, ctx),
   },
@@ -1503,7 +1463,9 @@ export function WritingAssistant({
 
   /** /compact：手动把历史压缩为摘要，刷新会话与计量，给反馈提示。 */
   async function runCompact() {
-    if (compacting) return; // 防重入
+    // 流式进行中禁止压缩：/compact 会删消息并改写 summary，与活动流的 onFinish
+    // 落盘（mergeAndPersistMessages 整表重写）并发会互相覆盖丢数据。
+    if (compacting || busy) return; // 防重入 + 防与流式 onFinish 并发写
     setCompacting(true);
     setSlashNotice("正在压缩对话…"); // 即时进行态反馈（不让用户以为没反应）
     try {
@@ -1584,6 +1546,12 @@ export function WritingAssistant({
     }
     if (command.kind === "compact") {
       setInput("");
+      if (busy) {
+        // 流式中拦截并即时反馈，避免静默无响应（runCompact 也会兜底挡 busy）。
+        setSlashNotice("对话进行中，请等待回复结束后再压缩");
+        window.setTimeout(() => setSlashNotice(""), 4000);
+        return;
+      }
       void runCompact();
       return;
     }
@@ -1747,16 +1715,21 @@ export function WritingAssistant({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestDigest, busy]);
 
-  const proposalIdsInMessages = new Set(
-    messages.flatMap((message) =>
-      message.parts
-        .map((part) =>
-          proposalIdFromOutput(
-            (part as unknown as Record<string, unknown>).output
-          )
+  // memo 化：流式期间 messages 高频变更，避免每帧全量重扫所有 part。
+  const proposalIdsInMessages = useMemo(
+    () =>
+      new Set(
+        messages.flatMap((message) =>
+          message.parts
+            .map((part) =>
+              proposalIdFromOutput(
+                (part as unknown as Record<string, unknown>).output
+              )
+            )
+            .filter(Boolean)
         )
-        .filter(Boolean)
-    )
+      ),
+    [messages]
   );
 
   return (
