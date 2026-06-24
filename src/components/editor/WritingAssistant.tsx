@@ -1252,6 +1252,8 @@ export function WritingAssistant({
   // /compact 反馈与进行态
   const [slashNotice, setSlashNotice] = useState("");
   const [compacting, setCompacting] = useState(false);
+  // /compact 成功后即时覆盖 TokenMeter：用压缩后估算临时顶替，直到下一轮对话下发真实 data-context-usage。
+  const [compactOverride, setCompactOverride] = useState<ContextUsage>(null);
   // 恢复被中断的回复：页面级导航导致组件重挂载后，服务端可能仍在处理上一轮
   // （客户端断连不中断服务端 onFinish 持久化）。轮询 DB 直到出现 assistant 回复。
   const [recovering, setRecovering] = useState(false);
@@ -1516,6 +1518,14 @@ export function WritingAssistant({
         setOldestPosition(
           sessionData.oldestPosition == null ? null : Number(sessionData.oldestPosition)
         );
+        // 即时刷新 TokenMeter：afterTokens(摘要 + 最近 4 条) + articleTokens(复用上次正文占用)，
+        // 与 prepareAgentContext 的 estimatedTokens(article + summary + retained)同口径。
+        setCompactOverride({
+          estimatedTokens:
+            Number(data.afterTokens ?? 0) + (latestContextUsage?.articleTokens ?? 0),
+          budgetTokens: latestContextUsage?.budgetTokens ?? 0,
+          compressed: true,
+        });
         setSlashNotice(
           data.summarizedCount > 0
             ? `已压缩 ${data.summarizedCount} 条历史，约省 ${Math.max(
@@ -1622,17 +1632,24 @@ export function WritingAssistant({
             estimatedTokens?: unknown;
             budgetTokens?: unknown;
             compressed?: unknown;
+            articleTokens?: unknown;
           };
           return {
             estimatedTokens: Number(d.estimatedTokens ?? 0),
             budgetTokens: Number(d.budgetTokens ?? 0),
             compressed: Boolean(d.compressed),
+            articleTokens: Number(d.articleTokens ?? 0),
           };
         }
       }
     }
     return null;
   }, [messages]);
+
+  // 下一轮对话开始即清除 compact 覆盖，让随后下发的真实 data-context-usage 重新生效。
+  useEffect(() => {
+    if (status !== "ready") setCompactOverride(null);
+  }, [status]);
 
   // 扫描已完成的 propose_article_revision 工具结果，取最新的 direct 模式输出。
   // 工具 output 是可靠来源（part.state 为 output/output-streaming 即已就绪），
@@ -1967,7 +1984,7 @@ export function WritingAssistant({
               onSelect={selectModel}
             />
             <TokenMeter
-              contextUsage={latestContextUsage}
+              contextUsage={compactOverride ?? latestContextUsage}
               lastTurn={lastTurnUsage}
               modelName={
                 providers

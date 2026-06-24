@@ -129,6 +129,8 @@ export type ContextUsage = {
   estimatedTokens: number;
   budgetTokens: number;
   compressed?: boolean;
+  // 正文占用（data-context-usage 已下发；前端不直接渲染，仅供 /compact 后的即时覆盖计算）
+  articleTokens?: number;
 } | null;
 
 export type LastTurnUsage = {
