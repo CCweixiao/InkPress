@@ -1193,6 +1193,9 @@ export function WritingAssistant({
   const [initializing, setInitializing] = useState(true);
   const [fullscreenText, setFullscreenText] = useState<string | null>(null);
   const [lastTurnUsage, setLastTurnUsage] = useState<LastTurnUsage>(null);
+  // 上下文预算（config 固定值）：从 data-context-usage 记住，clear 清空消息后仍保留，
+  // 让 TokenMeter 在无用量时也能显示 0/budget 而非消失。
+  const [contextBudget, setContextBudget] = useState(0);
   // 用户历史输入缓存：打开会话时从后端全量加载（仅文本，轻量），新发送的输入追加。
   // 上下键在此列表前后历。与消息分页解耦。
   const [inputHistory, setInputHistory] = useState<string[]>([]);
@@ -1471,6 +1474,10 @@ export function WritingAssistant({
       historyIndex.current = null;
       setHasMore(false);
       setOldestPosition(null);
+      // 清空后无任何用量数据：重置压缩覆盖与上一轮用量，TokenMeter 回到初始不显示状态，
+      // 避免残留的 compactOverride / lastTurnUsage 让计量卡在旧值。
+      setCompactOverride(null);
+      setLastTurnUsage(null);
     }
   }
 
@@ -1518,22 +1525,25 @@ export function WritingAssistant({
         setOldestPosition(
           sessionData.oldestPosition == null ? null : Number(sessionData.oldestPosition)
         );
-        // 即时刷新 TokenMeter：afterTokens(摘要 + 最近 4 条) + articleTokens(复用上次正文占用)，
-        // 与 prepareAgentContext 的 estimatedTokens(article + summary + retained)同口径。
-        setCompactOverride({
-          estimatedTokens:
-            Number(data.afterTokens ?? 0) + (latestContextUsage?.articleTokens ?? 0),
-          budgetTokens: latestContextUsage?.budgetTokens ?? 0,
-          compressed: true,
-        });
-        setSlashNotice(
-          data.summarizedCount > 0
-            ? `已压缩 ${data.summarizedCount} 条历史，约省 ${Math.max(
-                0,
-                (data.beforeTokens ?? 0) - (data.afterTokens ?? 0)
-              )} tokens`
-            : "对话较短，暂无需压缩"
-        );
+        if (data.summarizedCount > 0) {
+          // 有压缩：即时刷新 TokenMeter。afterTokens(摘要 + 最近 4 条) + articleTokens(复用上次正文占用)，
+          // 与 prepareAgentContext 的 estimatedTokens(article + summary + retained)同口径。
+          setCompactOverride({
+            estimatedTokens:
+              Number(data.afterTokens ?? 0) + (latestContextUsage?.articleTokens ?? 0),
+            budgetTokens: latestContextUsage?.budgetTokens ?? 0,
+            compressed: true,
+          });
+          setSlashNotice(
+            `已压缩 ${data.summarizedCount} 条历史，约省 ${Math.max(
+              0,
+              (data.beforeTokens ?? 0) - (data.afterTokens ?? 0)
+            )} tokens`
+          );
+        } else {
+          // 无压缩（对话较短/无收益，后端已跳过）：不动计量，避免用未生效的估算误导。
+          setSlashNotice("对话较短，压缩收益有限，未执行压缩");
+        }
       } else {
         setSlashNotice(data.error || "压缩失败，请稍后重试。");
       }
@@ -1650,6 +1660,14 @@ export function WritingAssistant({
   useEffect(() => {
     if (status !== "ready") setCompactOverride(null);
   }, [status]);
+
+  // 记住上下文预算（data-context-usage 下发的 budgetTokens，= config 固定值），
+  // clear 清空消息后 latestContextUsage 变 null，用此兜底让 TokenMeter 仍显示 0/budget。
+  useEffect(() => {
+    if (latestContextUsage?.budgetTokens) {
+      setContextBudget(latestContextUsage.budgetTokens);
+    }
+  }, [latestContextUsage]);
 
   // 扫描已完成的 propose_article_revision 工具结果，取最新的 direct 模式输出。
   // 工具 output 是可靠来源（part.state 为 output/output-streaming 即已就绪），
@@ -1986,6 +2004,7 @@ export function WritingAssistant({
             <TokenMeter
               contextUsage={compactOverride ?? latestContextUsage}
               lastTurn={lastTurnUsage}
+              budget={contextBudget}
               modelName={
                 providers
                   .find((p) => p.id === providerId)
