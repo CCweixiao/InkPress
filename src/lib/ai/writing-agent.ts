@@ -98,6 +98,87 @@ async function tavilyRequest(
   return data;
 }
 
+// 证据工具 output 上限：完整证据已通过 data part 流到 UI 证据块（commit/symbol/文件 chip），
+// 喂给模型并落库的 tool output 只需保留足够写作引用的「界定后」证据。无上限时单轮 explore/analyze
+// 的 symbols/edges/commits 数组可达数百项，逐轮重复占用上下文并撑大消息表。
+const EVIDENCE_CAPS = {
+  entryPoints: 20,
+  modules: 16,
+  moduleEvidence: 6,
+  symbols: 60,
+  edges: 60,
+  flows: 10,
+  commits: 40,
+  commitBodyChars: 600,
+  changedFiles: 60,
+  featureGroups: 20,
+  risks: 12,
+  openQuestions: 12,
+} as const;
+
+function capArray<T>(value: T[] | undefined, max: number) {
+  const list = Array.isArray(value) ? value : [];
+  return { items: list.slice(0, max), omitted: Math.max(0, list.length - max) };
+}
+
+/** 界定 explore_project 证据包：截断大数组与模块内嵌证据，保留写作所需的结构与摘要。 */
+function slimCodeEvidence(pkg: CodeEvidencePackage) {
+  const entryPoints = capArray(pkg.entryPoints, EVIDENCE_CAPS.entryPoints);
+  const modules = capArray(pkg.modules, EVIDENCE_CAPS.modules);
+  const symbols = capArray(pkg.symbols, EVIDENCE_CAPS.symbols);
+  const edges = capArray(pkg.edges, EVIDENCE_CAPS.edges);
+  const flows = capArray(pkg.flows, EVIDENCE_CAPS.flows);
+  const omitted =
+    entryPoints.omitted +
+    modules.omitted +
+    symbols.omitted +
+    edges.omitted +
+    flows.omitted;
+  return {
+    objective: pkg.objective,
+    projectId: pkg.projectId,
+    snapshotHash: pkg.snapshotHash,
+    summary: pkg.summary,
+    entryPoints: entryPoints.items,
+    modules: modules.items.map((module) => ({
+      ...module,
+      evidence: (module.evidence ?? []).slice(0, EVIDENCE_CAPS.moduleEvidence),
+    })),
+    symbols: symbols.items,
+    edges: edges.items,
+    flows: flows.items,
+    openQuestions: pkg.openQuestions,
+    filesRead: pkg.filesRead,
+    truncated: pkg.truncated || omitted > 0,
+  };
+}
+
+/** 界定 analyze_code_changes 证据包：截断提交/文件/功能组数组，并裁剪冗长 commit body。 */
+function slimChangeEvidence(pkg: CodeChangeEvidencePackage) {
+  const commits = capArray(pkg.commits, EVIDENCE_CAPS.commits);
+  const changedFiles = capArray(pkg.changedFiles, EVIDENCE_CAPS.changedFiles);
+  const featureGroups = capArray(pkg.featureGroups, EVIDENCE_CAPS.featureGroups);
+  const omitted = commits.omitted + changedFiles.omitted + featureGroups.omitted;
+  return {
+    source: pkg.source,
+    baseCommit: pkg.baseCommit,
+    headCommit: pkg.headCommit,
+    requestedRange: pkg.requestedRange,
+    commits: commits.items.map((commit) => ({
+      ...commit,
+      body: (commit.body ?? "").slice(0, EVIDENCE_CAPS.commitBodyChars),
+    })),
+    changedFiles: changedFiles.items,
+    featureGroups: featureGroups.items,
+    risks: (pkg.risks ?? []).slice(0, EVIDENCE_CAPS.risks),
+    openQuestions: (pkg.openQuestions ?? []).slice(
+      0,
+      EVIDENCE_CAPS.openQuestions
+    ),
+    truncated: pkg.truncated || omitted > 0,
+  };
+}
+
 /** 省略全文时的轻量正文概要：标题 + 摘要 + 篇幅 + 大纲（让模型知道文章存在与结构，但不耗全文 token）。 */
 function articleDescriptor(target: AgentTargetContext): string {
   const outline = extractArticleOutline(target.markdown ?? "");
@@ -250,8 +331,9 @@ export async function createWritingAgent(input: {
           maxSteps: Math.min(12, input.config.maxSteps),
           onStep: input.onCodeExploreStep,
         });
+        // 完整证据走 data part 到 UI；喂模型/落库的 output 用界定后的瘦身版本。
         await input.onCodeEvidence?.(result);
-        return result;
+        return slimCodeEvidence(result);
       }),
     }),
     analyze_code_changes: tool({
@@ -280,19 +362,9 @@ export async function createWritingAgent(input: {
           maxSteps: Math.min(10, input.config.maxSteps),
           onStep: input.onCodeExploreStep,
         });
+        // 完整证据走 data part 到 UI；喂模型/落库的 output 用界定后的瘦身版本。
         await input.onChangeEvidence?.(result);
-        return {
-          source: result.source,
-          baseCommit: result.baseCommit,
-          headCommit: result.headCommit,
-          requestedRange: result.requestedRange,
-          commits: result.commits,
-          changedFiles: result.changedFiles,
-          featureGroups: result.featureGroups,
-          risks: result.risks,
-          openQuestions: result.openQuestions,
-          truncated: result.truncated,
-        };
+        return slimChangeEvidence(result);
       }),
     }),
     github_pull_request: tool({

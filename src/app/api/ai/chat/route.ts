@@ -280,13 +280,16 @@ export async function GET(req: NextRequest) {
             decidedAt: true,
           },
         });
-  // 用户历史输入缓存（轻量：仅取 user 消息的文本，供对话框上下键导航；
-  // 与消息分页解耦——消息含证据/工具输出较重需分页，而用户输入文本很轻可全量）。
-  const userMessages = await prisma.agentChatMessage.findMany({
-    where: { sessionId: session.id, role: "user" },
-    orderBy: { position: "asc" },
-    select: { partsJson: true },
-  });
+  // 用户历史输入缓存（仅取 user 消息文本，供对话框上下键导航）。
+  // 限最近 50 条（position 倒序取后再翻正）：上下键历史足够用，避免长会话每次 refresh 全量扫描。
+  const userMessages = (
+    await prisma.agentChatMessage.findMany({
+      where: { sessionId: session.id, role: "user" },
+      orderBy: { position: "desc" },
+      take: 50,
+      select: { partsJson: true },
+    })
+  ).reverse();
   const userInputs = userMessages.flatMap((row) => {
     try {
       const parts = JSON.parse(row.partsJson) as Array<{
@@ -464,209 +467,17 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     return createUIMessageStreamResponse({ stream });
   }
 
+  let turnUsage:
+    | {
+        inputTokens: number;
+        outputTokens: number;
+        reasoningTokens: number;
+        totalTokens: number;
+      }
+    | undefined;
   try {
-    const { model } = await getModel(parsed.data.providerId, parsed.data.modelId);
-    const skills = await listSkills();
-    const route = await routeAgentRequest({
-      model,
-      message: lastUserText(mergedMessages),
-      skills,
-      config,
-      previousProjectId: session.selectedProjectId,
-      targetKind: target.kind,
-      conversationContext: buildRouterContext(session.summary, mergedMessages),
-    });
-
-    // 按需注入正文：默认带全文；仅与正文无关的意图（联网/代码）且用户未指代当前文章时省略全文，省 token。
-    let includeArticleBody = shouldIncludeArticleBody(
-      route.intent,
-      referencesArticle
-    );
-
-    // 长正文降级：若全文已超出安全上下文预算，不再硬抛错阻断整轮对话，
-    // 改为退回「概要（标题+摘要+大纲）」（writing-agent 的 articleDescriptor），
-    // 仍能对长文做问答/规划，仅逐字改写场景才提示换模型。
-    const articleBodyTokens = estimateTokens(
-      `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
-    );
-    const articleBodyTooLarge =
-      articleBodyTokens > config.contextBudgetTokens * 0.65;
-    if (includeArticleBody && articleBodyTooLarge) {
-      includeArticleBody = false;
-    }
-
-    // 斜杠命令 /<skill>：强制加载用户指定的 Skill（优先级最高，去重后并入路由结果，限 4 个）。
-    // 仅接受已注册的 skillKey/id；强制 Skill 需要工具链路里的 load_skill 能力。
-    if (parsed.data.forceSkillIds?.length) {
-      const availableSkillIds = new Set(
-        skills.flatMap((skill) => [skill.id, skill.skillKey])
-      );
-      const forced = parsed.data.forceSkillIds.filter((id) =>
-        availableSkillIds.has(id)
-      );
-      if (forced.length) {
-        route.skillIds = Array.from(
-          new Set([...forced, ...route.skillIds])
-        ).slice(0, 4);
-        if (!route.activeTools.includes("load_skill")) {
-          route.activeTools.push("load_skill");
-        }
-      }
-    }
-    let codeSource: CodeSourceReference | undefined;
-    let approval:
-      | {
-          id: string;
-          displayName: string;
-          locator: string;
-          approvalToken: string;
-        }
-      | undefined;
-
-    if (route.codeSourceCandidate) {
-      const resolved = await createOrReuseCodeSourceGrant({
-        sessionId: session.id,
-        candidate: route.codeSourceCandidate,
-      });
-      if (resolved.grant.status === "approved") {
-        const source = await codeSourceProject(resolved.grant.id, config, {
-          historyDepth: route.needsGitHistory ? 200 : 1,
-        });
-        route.project = source.project;
-        route.codeSource = source.source;
-        codeSource = source.source;
-        route.ambiguityQuestion = undefined;
-      } else if (resolved.approvalToken) {
-        approval = {
-          id: resolved.grant.id,
-          displayName: resolved.grant.displayName,
-          locator: resolved.grant.locator,
-          approvalToken: resolved.approvalToken,
-        };
-        route.ambiguityQuestion = undefined;
-      }
-    } else if (route.project) {
-      const resolved = await createOrReuseCodeSourceGrant({
-        sessionId: session.id,
-        candidate: {
-          kind: "configured-project",
-          locator: route.project.root,
-          projectId: route.project.id,
-          root: route.project.root,
-          displayName: route.project.name,
-        },
-      });
-      const source = await codeSourceProject(resolved.grant.id, config, {
-        historyDepth: route.needsGitHistory ? 200 : 1,
-      });
-      route.project = source.project;
-      route.codeSource = source.source;
-      codeSource = source.source;
-    } else if (route.needsProject) {
-      const previous = await prisma.codeSourceGrant.findFirst({
-        where: { sessionId: session.id, status: "approved" },
-        orderBy: { lastAccessedAt: "desc" },
-      });
-      if (previous) {
-        const source = await codeSourceProject(previous.id, config, {
-          historyDepth: route.needsGitHistory ? 200 : 1,
-        });
-        route.project = source.project;
-        route.codeSource = source.source;
-        codeSource = source.source;
-        route.ambiguityQuestion = undefined;
-      }
-    }
-
-    if (route.project) {
-      if (!route.activeTools.includes("explore_project")) {
-        route.activeTools.push("explore_project");
-      }
-      if (
-        route.needsGitHistory &&
-        !route.activeTools.includes("analyze_code_changes")
-      ) {
-        route.activeTools.push("analyze_code_changes");
-      }
-      if (
-        codeSource?.kind === "github" &&
-        !route.activeTools.includes("github_pull_request")
-      ) {
-        route.activeTools.push("github_pull_request");
-      }
-    }
-    const loadedSkills = await Promise.all(
-      route.skillIds.map((id) => loadSkill(id))
-    );
-    // 文章目标始终加载素材：意图路由可能把写作请求误判为 question，
-    // 但只要目标是文章且上传了素材，就应让 Agent 看到素材列表并按需插图。
-    const assets =
-      target.kind === "article"
-        ? await prisma.asset.findMany({
-            where: { articleId: target.id, trashed: false },
-            select: {
-              id: true,
-              name: true,
-              url: true,
-              kind: true,
-              description: true,
-              tagsJson: true,
-            },
-            orderBy: { createdAt: "desc" },
-            take: 50,
-          })
-        : [];
-    const assetCatalog = assets.map((asset) => ({
-      id: asset.id,
-      name: asset.name,
-      url: asset.url,
-      kind: asset.kind,
-      description: asset.description,
-      tags: parseTags(asset.tagsJson),
-    }));
-
-    await prisma.agentChatSession.update({
-      where: { id: session.id },
-      data: {
-        selectedProjectId: route.project?.id ?? session.selectedProjectId,
-        providerId: parsed.data.providerId ?? null,
-        modelId: parsed.data.modelId ?? null,
-      },
-    });
-
-    // system prompt 的可变大块：已加载 Skill 手册 + 素材目录。纳入上下文估算，
-    // 避免 TokenMeter 低估与 shouldSummarize 阈值失真（system prompt 同样占用预算）。
-    const systemExtraText = [
-      ...loadedSkills.map(
-        (skill) => `${skill.name}\n${skill.description}\n${skill.manual}`
-      ),
-      ...assetCatalog.map(
-        (asset) =>
-          `${asset.name} ${asset.kind} ${asset.description ?? ""} ${asset.tags.join(" ")}`
-      ),
-    ].join("\n");
-
-    const context = await prepareAgentContext({
-      model,
-      sessionId: session.id,
-      sessionSummary: session.summary,
-      summaryUpToPosition: session.summaryUpToPosition,
-      uiMessages: mergedMessages,
-      articleText: includeArticleBody
-        ? `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
-        : "",
-      contextBudgetTokens: config.contextBudgetTokens,
-      systemExtraText,
-    });
-
-    let turnUsage:
-      | {
-          inputTokens: number;
-          outputTokens: number;
-          reasoningTokens: number;
-          totalTokens: number;
-        }
-      | undefined;
+    // 先开流再做重活：路由（LLM）与代码源解析（含可能的 git clone/拉取历史）都放进 execute 内，
+    // 避免在打开流之前同步阻塞导致长 TTFB 与「假死」；客户端断连时已发送的步骤也得以保留。
     const stream = createUIMessageStream<UIMessage>({
       originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
@@ -700,6 +511,223 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
+        // 先发「识别意图」运行态，立即给用户反馈（下面的路由/代码源解析可能耗时）。
+        writeStep(writer, {
+          id: "intent",
+          kind: "intent",
+          title: "识别任务意图",
+          detail: "正在分析意图与所需能力…",
+          status: "running",
+        });
+        const { model } = await getModel(
+          parsed.data.providerId,
+          parsed.data.modelId
+        );
+        const skills = await listSkills();
+        const route = await routeAgentRequest({
+          model,
+          message: lastUserText(mergedMessages),
+          skills,
+          config,
+          previousProjectId: session.selectedProjectId,
+          targetKind: target.kind,
+          conversationContext: buildRouterContext(session.summary, mergedMessages),
+        });
+
+        // 按需注入正文：默认带全文；仅与正文无关的意图（联网/代码）且用户未指代当前文章时省略全文，省 token。
+        let includeArticleBody = shouldIncludeArticleBody(
+          route.intent,
+          referencesArticle
+        );
+
+        // 长正文降级：若全文已超出安全上下文预算，不再硬抛错阻断整轮对话，
+        // 改为退回「概要（标题+摘要+大纲）」（writing-agent 的 articleDescriptor），
+        // 仍能对长文做问答/规划，仅逐字改写场景才提示换模型。
+        const articleBodyTokens = estimateTokens(
+          `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
+        );
+        const articleBodyTooLarge =
+          articleBodyTokens > config.contextBudgetTokens * 0.65;
+        if (includeArticleBody && articleBodyTooLarge) {
+          includeArticleBody = false;
+        }
+
+        // 斜杠命令 /<skill>：强制加载用户指定的 Skill（优先级最高，去重后并入路由结果，限 4 个）。
+        // 仅接受已注册的 skillKey/id；强制 Skill 需要工具链路里的 load_skill 能力。
+        if (parsed.data.forceSkillIds?.length) {
+          const availableSkillIds = new Set(
+            skills.flatMap((skill) => [skill.id, skill.skillKey])
+          );
+          const forced = parsed.data.forceSkillIds.filter((id) =>
+            availableSkillIds.has(id)
+          );
+          if (forced.length) {
+            route.skillIds = Array.from(
+              new Set([...forced, ...route.skillIds])
+            ).slice(0, 4);
+            if (!route.activeTools.includes("load_skill")) {
+              route.activeTools.push("load_skill");
+            }
+          }
+        }
+        let codeSource: CodeSourceReference | undefined;
+        let approval:
+          | {
+              id: string;
+              displayName: string;
+              locator: string;
+              approvalToken: string;
+            }
+          | undefined;
+
+        // 代码源解析可能较慢（首次 clone / 拉取历史）：先发运行态步骤再解析。
+        if (route.codeSourceCandidate || route.project || route.needsProject) {
+          writeStep(writer, {
+            id: "project",
+            kind: "project",
+            title: "识别代码源",
+            detail: "正在解析代码源…",
+            status: "running",
+          });
+        }
+
+        if (route.codeSourceCandidate) {
+          const resolved = await createOrReuseCodeSourceGrant({
+            sessionId: session.id,
+            candidate: route.codeSourceCandidate,
+          });
+          if (resolved.grant.status === "approved") {
+            const source = await codeSourceProject(resolved.grant.id, config, {
+              historyDepth: route.needsGitHistory ? 200 : 1,
+            });
+            route.project = source.project;
+            route.codeSource = source.source;
+            codeSource = source.source;
+            route.ambiguityQuestion = undefined;
+          } else if (resolved.approvalToken) {
+            approval = {
+              id: resolved.grant.id,
+              displayName: resolved.grant.displayName,
+              locator: resolved.grant.locator,
+              approvalToken: resolved.approvalToken,
+            };
+            route.ambiguityQuestion = undefined;
+          }
+        } else if (route.project) {
+          const resolved = await createOrReuseCodeSourceGrant({
+            sessionId: session.id,
+            candidate: {
+              kind: "configured-project",
+              locator: route.project.root,
+              projectId: route.project.id,
+              root: route.project.root,
+              displayName: route.project.name,
+            },
+          });
+          const source = await codeSourceProject(resolved.grant.id, config, {
+            historyDepth: route.needsGitHistory ? 200 : 1,
+          });
+          route.project = source.project;
+          route.codeSource = source.source;
+          codeSource = source.source;
+        } else if (route.needsProject) {
+          const previous = await prisma.codeSourceGrant.findFirst({
+            where: { sessionId: session.id, status: "approved" },
+            orderBy: { lastAccessedAt: "desc" },
+          });
+          if (previous) {
+            const source = await codeSourceProject(previous.id, config, {
+              historyDepth: route.needsGitHistory ? 200 : 1,
+            });
+            route.project = source.project;
+            route.codeSource = source.source;
+            codeSource = source.source;
+            route.ambiguityQuestion = undefined;
+          }
+        }
+
+        if (route.project) {
+          if (!route.activeTools.includes("explore_project")) {
+            route.activeTools.push("explore_project");
+          }
+          if (
+            route.needsGitHistory &&
+            !route.activeTools.includes("analyze_code_changes")
+          ) {
+            route.activeTools.push("analyze_code_changes");
+          }
+          if (
+            codeSource?.kind === "github" &&
+            !route.activeTools.includes("github_pull_request")
+          ) {
+            route.activeTools.push("github_pull_request");
+          }
+        }
+        const loadedSkills = await Promise.all(
+          route.skillIds.map((id) => loadSkill(id))
+        );
+        // 文章目标始终加载素材：意图路由可能把写作请求误判为 question，
+        // 但只要目标是文章且上传了素材，就应让 Agent 看到素材列表并按需插图。
+        const assets =
+          target.kind === "article"
+            ? await prisma.asset.findMany({
+                where: { articleId: target.id, trashed: false },
+                select: {
+                  id: true,
+                  name: true,
+                  url: true,
+                  kind: true,
+                  description: true,
+                  tagsJson: true,
+                },
+                orderBy: { createdAt: "desc" },
+                take: 50,
+              })
+            : [];
+        const assetCatalog = assets.map((asset) => ({
+          id: asset.id,
+          name: asset.name,
+          url: asset.url,
+          kind: asset.kind,
+          description: asset.description,
+          tags: parseTags(asset.tagsJson),
+        }));
+
+        await prisma.agentChatSession.update({
+          where: { id: session.id },
+          data: {
+            selectedProjectId: route.project?.id ?? session.selectedProjectId,
+            providerId: parsed.data.providerId ?? null,
+            modelId: parsed.data.modelId ?? null,
+          },
+        });
+
+        // system prompt 的可变大块：已加载 Skill 手册 + 素材目录。纳入上下文估算，
+        // 避免 TokenMeter 低估与 shouldSummarize 阈值失真（system prompt 同样占用预算）。
+        const systemExtraText = [
+          ...loadedSkills.map(
+            (skill) => `${skill.name}\n${skill.description}\n${skill.manual}`
+          ),
+          ...assetCatalog.map(
+            (asset) =>
+              `${asset.name} ${asset.kind} ${asset.description ?? ""} ${asset.tags.join(" ")}`
+          ),
+        ].join("\n");
+
+        const context = await prepareAgentContext({
+          model,
+          sessionId: session.id,
+          sessionSummary: session.summary,
+          summaryUpToPosition: session.summaryUpToPosition,
+          uiMessages: mergedMessages,
+          articleText: includeArticleBody
+            ? `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
+            : "",
+          contextBudgetTokens: config.contextBudgetTokens,
+          systemExtraText,
+        });
+
+        // 意图识别完成：覆盖同 id 的运行态步骤为完成态（含意图与路由说明）。
         writeStep(writer, {
           id: "intent",
           kind: "intent",

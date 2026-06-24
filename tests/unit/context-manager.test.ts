@@ -18,8 +18,8 @@ type MessageRow = {
 
 let messageStore: Map<string, MessageRow[]>;
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma: any = {
     agentChatMessage: {
       findMany: vi.fn(async ({ where, orderBy, take }: any) => {
         let rows = (messageStore.get(where.sessionId) ?? []).slice();
@@ -37,7 +37,18 @@ vi.mock("@/lib/db", () => ({
       deleteMany: vi.fn(async ({ where }: any) => {
         const rows = messageStore.get(where.sessionId) ?? [];
         let count = 0;
+        // 支持 id:{in:[...]} 的定向删除（增量对账 saveWithin 使用）。
+        const deleteIds: Set<string> | null = Array.isArray(where.id?.in)
+          ? new Set(where.id.in)
+          : null;
         const remaining = rows.filter((r) => {
+          if (deleteIds) {
+            if (deleteIds.has(r.id)) {
+              count++;
+              return false;
+            }
+            return true;
+          }
           if (
             where === null ||
             typeof where !== "object" ||
@@ -67,9 +78,20 @@ vi.mock("@/lib/db", () => ({
       }),
       create: vi.fn(async ({ data }: any) => {
         const rows = messageStore.get(data.sessionId) ?? [];
-        rows.push(data);
+        rows.push({ ...data });
         messageStore.set(data.sessionId, rows);
         return data;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        // 按 id 定位并就地更新（增量对账 saveWithin 使用）。
+        for (const rows of messageStore.values()) {
+          const row = rows.find((r) => r.id === where.id);
+          if (row) {
+            Object.assign(row, data);
+            return row;
+          }
+        }
+        return null;
       }),
       updateMany: vi.fn(async ({ where, data }: any) => {
         const rows = messageStore.get(where.sessionId) ?? [];
@@ -88,11 +110,13 @@ vi.mock("@/lib/db", () => ({
     },
     $transaction: vi.fn(async (arg: any) => {
       if (Array.isArray(arg)) return Promise.all(arg);
-      if (typeof arg === "function") return arg({});
+      // 交互式事务：把同一组 mock 委托作为 tx 客户端传入（生产代码内的读/写绑定到此 tx）。
+      if (typeof arg === "function") return arg(prisma);
       return undefined;
     }),
-  },
-}));
+  };
+  return { prisma };
+});
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
@@ -440,6 +464,64 @@ describe("prepareAgentContext — estimatedTokens", () => {
     }, 0);
 
     expect(result.estimatedTokens).toBe(articleTokens + summaryTokens + allTokens);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* prepareAgentContext — 自适应保留窗口（超预算收缩）                    */
+/* Regression: 少量但超大的消息撑爆预算，旧逻辑因 keepRecent 固定为 8 +  */
+/* 「消息数 > 8」门控而不触发压缩；新逻辑按预算收缩保留窗口并压缩。       */
+/* ------------------------------------------------------------------ */
+
+describe("prepareAgentContext — 自适应保留窗口", () => {
+  const SID = "sess-adaptive";
+
+  beforeEach(() => {
+    vi.mocked(generateText).mockResolvedValue({ text: "摘要" } as any);
+  });
+
+  it("少量但超大的消息（≤8 条）仍触发压缩，保留窗口收缩到下限", async () => {
+    const big = "x".repeat(12000); // ≈3000 tokens（ascii/4）
+    const all: UIMessage[] = Array.from({ length: 6 }, (_, i) =>
+      msg(`m${i}`, i % 2 === 0 ? "user" : "assistant", big)
+    );
+    seedMessages(SID, all);
+
+    const result = await prepareAgentContext({
+      model: fakeModel,
+      sessionId: SID,
+      sessionSummary: "",
+      summaryUpToPosition: -1,
+      uiMessages: all,
+      articleText: "",
+      contextBudgetTokens: 8000,
+    });
+
+    // 6 条 ≤ RECENT_MESSAGE_COUNT(8)，旧逻辑不会压缩；新逻辑因超预算压缩并收缩窗口到下限 2
+    expect(result.compressed).toBe(true);
+    expect(result.retainedMessages).toBe(2);
+    expect(vi.mocked(generateText)).toHaveBeenCalled();
+  });
+
+  it("预算充裕时保留窗口维持默认 RECENT_MESSAGE_COUNT", async () => {
+    const all: UIMessage[] = Array.from({ length: 30 }, (_, i) =>
+      msg(`m${i}`, i % 2 === 0 ? "user" : "assistant", `短消息 ${i}`)
+    );
+    seedMessages(SID + "-roomy", all);
+
+    const result = await prepareAgentContext({
+      model: fakeModel,
+      sessionId: SID + "-roomy",
+      sessionSummary: "",
+      summaryUpToPosition: -1,
+      uiMessages: all,
+      articleText: "短正文",
+      contextBudgetTokens: 200000,
+    });
+
+    // 触发压缩（>24 条），但预算充裕 → 保留窗口仍为默认 8
+    expect(result.compressed).toBe(true);
+    expect(result.retainedMessages).toBe(8);
   });
 });
 
