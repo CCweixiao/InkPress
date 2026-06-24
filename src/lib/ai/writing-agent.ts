@@ -189,7 +189,7 @@ export async function createWritingAgent(input: {
         .map((skill) => `${skill.id}（${skill.description}）`)
         .join("；")}`,
       inputSchema: z.object({ id: z.string().min(1) }),
-      execute: async ({ id }) => loadSkill(id),
+      execute: withToolLog("load_skill", async ({ id }) => loadSkill(id)),
     }),
     read_skill_resource: tool({
       title: "读取 Skill 资源",
@@ -198,7 +198,9 @@ export async function createWritingAgent(input: {
         id: z.string().min(1),
         path: z.string().min(1),
       }),
-      execute: async ({ id, path }) => readSkillResource(id, path),
+      execute: withToolLog("read_skill_resource", async ({ id, path }) =>
+        readSkillResource(id, path)
+      ),
     }),
     web_search: tool({
       title: "搜索网络资料",
@@ -208,27 +210,28 @@ export async function createWritingAgent(input: {
         topic: z.enum(["general", "news", "finance"]).default("general"),
         maxResults: z.number().int().min(1).max(10).default(5),
       }),
-      execute: async ({ query, topic, maxResults }) =>
+      execute: withToolLog("web_search", async ({ query, topic, maxResults }) =>
         tavilyRequest(input.config, "search", {
           query,
           topic,
           max_results: maxResults,
           include_answer: false,
           include_raw_content: false,
-        }),
+        })
+      ),
     }),
     web_extract: tool({
       title: "读取网页正文",
       description: "读取已知公共网页的正文。优先读取搜索结果中的高价值来源。",
       inputSchema: z.object({ url: z.string().url() }),
-      execute: async ({ url }) => {
+      execute: withToolLog("web_extract", async ({ url }) => {
         const safeUrl = await assertSafePublicUrl(url);
         return tavilyRequest(input.config, "extract", {
           urls: [safeUrl],
           format: "markdown",
           extract_depth: "basic",
         });
-      },
+      }),
     }),
     explore_project: tool({
       title: "只读探索代码项目",
@@ -301,7 +304,7 @@ export async function createWritingAgent(input: {
       inputSchema: z.object({
         pullNumber: z.number().int().positive(),
       }),
-      execute: async ({ pullNumber }) => {
+      execute: withToolLog("github_pull_request", async ({ pullNumber }) => {
         if (
           input.codeSource?.kind !== "github" ||
           !input.codeSource.owner ||
@@ -315,14 +318,14 @@ export async function createWritingAgent(input: {
           pullNumber,
           config: input.config,
         });
-      },
+      }),
     }),
     article_assets: tool({
       title: "读取文章素材",
       description:
         "查看当前文章已上传的图片、视频和文件素材，含每张素材的描述与标签。创作、重写或扩充文章时应优先调用，按素材描述/标签的相关性决定是否插图及插入位置。",
       inputSchema: z.object({}),
-      execute: async () => {
+      execute: withToolLog("article_assets", async () => {
         const assets = await prisma.asset.findMany({
           where: { articleId: input.target.id, trashed: false },
           select: {
@@ -348,7 +351,7 @@ export async function createWritingAgent(input: {
             tags: parseTags(a.tagsJson),
           })),
         };
-      },
+      }),
     }),
     set_article_digest: tool({
       title: "更新文章摘要",
@@ -553,7 +556,7 @@ ${loadedSkillText}
 当前文章素材目录：
 ${assetText}
 
-全部可用 Skill：${skillCatalog.map((skill) => `${skill.id}: ${skill.description}`).join("\n")}`;
+（可按需加载的完整 Skill 目录见 load_skill 工具说明，此处不再重复。）`;
 
   log.info(
     {

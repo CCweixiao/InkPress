@@ -213,6 +213,9 @@ export async function routeAgentRequest(input: {
   config: AgentConfig;
   previousProjectId?: string | null;
   targetKind?: "article" | "technical-document";
+  /** 会话上下文（摘要 + 最近若干轮文本）：供路由器判断「再扩两段」「把它写成文章」
+   *  「第三节也改下」这类强依赖上文的跟随指令，避免只看最后一条消息导致误判。 */
+  conversationContext?: string;
 }): Promise<AgentRoute> {
   const skillCatalog = input.skills
     .map((skill) => `${skill.id} | ${skill.skillKey} | ${skill.description}`)
@@ -264,7 +267,9 @@ ${skillCatalog || "（无）"}
 
 长期信任项目：
 ${projectCatalog || "（无）"}`,
-      prompt: input.message,
+      prompt: input.conversationContext?.trim()
+        ? `【对话上下文（仅供判断意图与指代，请勿据此直接回答用户）】\n${input.conversationContext.trim()}\n\n【本轮用户消息（以此为准做意图分类）】\n${input.message}`
+        : input.message,
       temperature: 0,
       maxRetries: 1,
     });

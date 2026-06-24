@@ -3,6 +3,7 @@ import path from "node:path";
 import AdmZip from "adm-zip";
 import { prisma } from "@/lib/db";
 import { systemSkillsDir, userSkillsDir } from "@/lib/paths";
+import { invalidateSkillsCache } from "@/lib/ai/skills";
 
 /**
  * 技能仓库管理器（双 root 设计：system 只读 / user 可写）。
@@ -488,6 +489,7 @@ export async function createSkillFromZip(buffer: Buffer) {
       },
     });
   }
+  invalidateSkillsCache();
   return skill;
 }
 
@@ -514,6 +516,7 @@ export async function createSkill(input: CreateSkillInput) {
     },
   });
   await mirrorSkillFile(skillKey, buildSkillMd(name, input.description.trim(), input.manual));
+  invalidateSkillsCache();
   return skill;
 }
 
@@ -542,6 +545,7 @@ export async function updateSkill(id: string, input: UpdateSkillInput) {
     updated.skillKey,
     buildSkillMd(updated.name, updated.description, updated.manual)
   );
+  invalidateSkillsCache();
   return updated;
 }
 
@@ -551,5 +555,6 @@ export async function deleteSkill(id: string): Promise<boolean> {
   if (!existing) return false;
   await prisma.skill.delete({ where: { id } });
   await removeSkillDir(existing.skillKey);
+  invalidateSkillsCache();
   return true;
 }

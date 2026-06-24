@@ -33,7 +33,7 @@ import {
 import { getModel } from "@/lib/ai/provider";
 import { listSkills, loadSkill } from "@/lib/ai/skills";
 import { routeAgentRequest } from "@/lib/ai/agent-orchestrator";
-import { prepareAgentContext } from "@/lib/ai/context-manager";
+import { estimateTokens, prepareAgentContext } from "@/lib/ai/context-manager";
 import { parseTags } from "@/lib/asset";
 import {
   codeSourceProject,
@@ -134,6 +134,45 @@ function lastUserText(messages: UIMessage[]) {
     .map((part) => part.text)
     .join("\n")
     .trim();
+}
+
+/** 提取某条消息的纯文本（仅 text part），供路由上下文使用。 */
+function messagePlainText(message: UIMessage) {
+  return (message.parts ?? [])
+    .filter(
+      (part): part is { type: "text"; text: string } =>
+        part.type === "text" && typeof part.text === "string"
+    )
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * 构造意图路由器的会话上下文：session 摘要 + 最近若干轮文本（不含本轮当前消息）。
+ * 仅取 text part 并截断，保持轻量；让路由器能正确处理依赖上文的跟随指令。
+ */
+function buildRouterContext(
+  sessionSummary: string,
+  messages: UIMessage[],
+  recentTurns = 4
+): string {
+  const segments: string[] = [];
+  if (sessionSummary.trim()) {
+    segments.push(`对话历史摘要：\n${sessionSummary.trim().slice(0, 1200)}`);
+  }
+  // 排除最后一条（即本轮当前用户消息，路由器已单独拿到），取其前的最近若干条。
+  const prior = messages.slice(0, -1).slice(-recentTurns);
+  const transcript = prior
+    .map((message) => {
+      const text = messagePlainText(message);
+      if (!text) return null;
+      return `${message.role === "user" ? "用户" : "助手"}：${text.slice(0, 300)}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+  if (transcript) segments.push(`最近对话：\n${transcript}`);
+  return segments.join("\n\n");
 }
 
 function errorMessage(error: unknown) {
@@ -435,13 +474,26 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       config,
       previousProjectId: session.selectedProjectId,
       targetKind: target.kind,
+      conversationContext: buildRouterContext(session.summary, mergedMessages),
     });
 
     // 按需注入正文：默认带全文；仅与正文无关的意图（联网/代码）且用户未指代当前文章时省略全文，省 token。
-    const includeArticleBody = shouldIncludeArticleBody(
+    let includeArticleBody = shouldIncludeArticleBody(
       route.intent,
       referencesArticle
     );
+
+    // 长正文降级：若全文已超出安全上下文预算，不再硬抛错阻断整轮对话，
+    // 改为退回「概要（标题+摘要+大纲）」（writing-agent 的 articleDescriptor），
+    // 仍能对长文做问答/规划，仅逐字改写场景才提示换模型。
+    const articleBodyTokens = estimateTokens(
+      `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
+    );
+    const articleBodyTooLarge =
+      articleBodyTokens > config.contextBudgetTokens * 0.65;
+    if (includeArticleBody && articleBodyTooLarge) {
+      includeArticleBody = false;
+    }
 
     // 斜杠命令 /<skill>：强制加载用户指定的 Skill（优先级最高，去重后并入路由结果，限 4 个）。
     // 仅接受已注册的 skillKey/id；强制 Skill 需要工具链路里的 load_skill 能力。
@@ -582,6 +634,18 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       },
     });
 
+    // system prompt 的可变大块：已加载 Skill 手册 + 素材目录。纳入上下文估算，
+    // 避免 TokenMeter 低估与 shouldSummarize 阈值失真（system prompt 同样占用预算）。
+    const systemExtraText = [
+      ...loadedSkills.map(
+        (skill) => `${skill.name}\n${skill.description}\n${skill.manual}`
+      ),
+      ...assetCatalog.map(
+        (asset) =>
+          `${asset.name} ${asset.kind} ${asset.description ?? ""} ${asset.tags.join(" ")}`
+      ),
+    ].join("\n");
+
     const context = await prepareAgentContext({
       model,
       sessionId: session.id,
@@ -592,6 +656,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         ? `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
         : "",
       contextBudgetTokens: config.contextBudgetTokens,
+      systemExtraText,
     });
 
     let turnUsage:
@@ -709,6 +774,14 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             kind: "intent",
             title: "已载入当前文章",
             detail: `已注入实时编辑区正文（约 ${articleMarkdown.length.toLocaleString()} 字）`,
+          });
+        } else if (articleBodyTooLarge && articleMarkdown.trim() !== "") {
+          // 长正文已降级为概要：明确告知用户，逐字改写需换更长上下文模型。
+          writeStep(writer, {
+            id: "current-article-digest",
+            kind: "intent",
+            title: "正文过长，已改用概要",
+            detail: `当前文章约 ${articleBodyTokens.toLocaleString()} tokens 超出安全预算，已退回「标题+摘要+大纲」概要；如需逐字改写全文请切换更长上下文的模型`,
           });
         }
         writer.write({

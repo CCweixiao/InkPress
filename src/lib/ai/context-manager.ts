@@ -20,9 +20,19 @@ export function estimateTokens(text: string) {
   return Math.ceil(cjk / 1.5 + nonCjk / 4);
 }
 
+/** 估算单条消息的 token（统一口径：含 text part + 完整工具 input/output）。
+ *  对外暴露供 /compact 等复用，避免各处用「仅 text part」的不一致口径。 */
+export function estimateMessageTokens(message: UIMessage) {
+  return estimateTokens(messageText(message));
+}
+
 /** 提取消息的可估算文本（用于 token 估算）。
- *  包含 text part + 工具调用的 input/output 文本，使 conversationTokens 更接近实际上下文大小，
- *  让 shouldSummarize 阈值在工具调用密集的对话中也能正确触发。 */
+ *  包含 text part + 工具调用的**完整** input/output，使 conversationTokens 贴近实际上下文大小，
+ *  让 shouldSummarize 阈值在工具调用密集的对话中也能正确触发。
+ *
+ *  注意：早期实现只取 input/output 的 5 个字符串字段（markdown/summary/text/digest/title），
+ *  会漏掉 web_search/explore_project/analyze_code_changes/web_extract 等大体量结构化输出
+ *  （数组/嵌套对象），导致严重低估。这里改为对整个 input/output 序列化估算。 */
 function messageText(message: UIMessage) {
   return (message.parts ?? [])
     .map((part) => {
@@ -30,24 +40,22 @@ function messageText(message: UIMessage) {
       if (p.type === "text" && typeof p.text === "string") {
         return p.text;
       }
-      // 工具调用 / 结果 part：提取 input 和 output 中的大文本字段
+      // 工具调用 / 结果 part：对完整 input 与 output 估算（字符串直接计，对象序列化后计）。
       if (
         (typeof p.type === "string" && p.type.startsWith("tool-")) ||
         p.type === "dynamic-tool"
       ) {
         const segments: string[] = [];
-        const input = p.input;
-        if (input && typeof input === "object") {
-          for (const key of ["markdown", "summary", "text", "digest", "title"]) {
-            const val = (input as Record<string, unknown>)[key];
-            if (typeof val === "string") segments.push(val);
-          }
-        }
-        const output = p.output;
-        if (output && typeof output === "object") {
-          for (const key of ["markdown", "summary", "text", "digest", "title"]) {
-            const val = (output as Record<string, unknown>)[key];
-            if (typeof val === "string") segments.push(val);
+        for (const key of ["input", "output"] as const) {
+          const val = p[key];
+          if (typeof val === "string") {
+            segments.push(val);
+          } else if (val && typeof val === "object") {
+            try {
+              segments.push(JSON.stringify(val));
+            } catch {
+              /* 含循环引用等无法序列化时忽略，不阻断估算 */
+            }
           }
         }
         return segments.join("\n");
@@ -59,15 +67,19 @@ function messageText(message: UIMessage) {
 }
 
 function compactTranscript(messages: UIMessage[]) {
-  return messages
+  const full = messages
     .map((message) => {
       const text = messageText(message);
       if (!text) return null;
       return `${message.role === "user" ? "用户" : "助手"}：${text.slice(0, 1800)}`;
     })
     .filter(Boolean)
-    .join("\n\n")
-    .slice(-MAX_SUMMARY_SOURCE_CHARS);
+    .join("\n\n");
+  if (full.length <= MAX_SUMMARY_SOURCE_CHARS) return full;
+  // 超长：保留头尾两段（各约一半预算）+ 中间省略标记，避免单次大批量压缩时
+  // 仅 slice(-N) 头截断把「最旧历史」整段丢弃（最旧目标/约定也需进摘要）。
+  const half = Math.floor(MAX_SUMMARY_SOURCE_CHARS / 2);
+  return `${full.slice(0, half)}\n\n…（中间历史略）…\n\n${full.slice(-half)}`;
 }
 
 const SUMMARY_SYSTEM = `你负责压缩写作对话历史。输出简洁的结构化中文摘要，严格保留：
@@ -183,8 +195,13 @@ export async function prepareAgentContext(input: {
   uiMessages: UIMessage[];
   articleText: string;
   contextBudgetTokens: number;
+  /** system prompt 中除正文/摘要外的可变大块（已加载 Skill 手册 + 素材目录 + Skill 目录），
+   *  纳入估算以避免 TokenMeter 低估、shouldSummarize 阈值失真。可选，缺省按 0 计。 */
+  systemExtraText?: string;
 }) {
   const articleTokens = estimateTokens(input.articleText);
+  // system prompt 的可变大块（Skill 手册 / 素材目录等）：随正文一起占用预算，需计入估算。
+  const systemExtraTokens = estimateTokens(input.systemExtraText ?? "");
   if (articleTokens > input.contextBudgetTokens * 0.65) {
     throw new Error(
       `当前文章约 ${articleTokens.toLocaleString()} tokens，已超过写作助手安全上下文预算。请切换支持更长上下文的模型，或先精简文章后再继续。`
@@ -199,7 +216,10 @@ export async function prepareAgentContext(input: {
   // 下降会导致 shouldSummarize 为 false，永远无法触发自动压缩。
   const shouldSummarize =
     input.uiMessages.length > 24 ||
-    articleTokens + estimateTokens(input.sessionSummary) + conversationTokens >
+    articleTokens +
+      systemExtraTokens +
+      estimateTokens(input.sessionSummary) +
+      conversationTokens >
       input.contextBudgetTokens * 0.7;
 
   let summary = input.sessionSummary;
@@ -226,7 +246,7 @@ export async function prepareAgentContext(input: {
     0
   );
   const estimatedTokens =
-    articleTokens + estimateTokens(summary) + retainedTokens;
+    articleTokens + systemExtraTokens + estimateTokens(summary) + retainedTokens;
 
   const converted = await convertToModelMessages(recentMessages);
   // 选择性裁剪：只对「重型工具」裁剪旧调用，其余工具全部保留。
@@ -238,10 +258,13 @@ export async function prepareAgentContext(input: {
   // - propose_*_revision / web_extract：仅保留最近 2 条消息中的调用，更早的裁剪
   //   （旧的正文副本被移除，但系统提示词始终有当前正文兜底）
   // - explore_project / web_search / 等轻量工具：全部保留（"none" 效果），不丢多轮上下文
-  // - 非 tool-call part（text / reasoning）：始终保留
+  // - text part：始终保留
+  // - reasoning part：reasoning 选项语义是「移除」——"before-last-message" 仅保留最近一条消息的
+  //   思维链，移除更早的历史 reasoning（往轮思维链体量大且对后续轮几乎无用，是纯 token 浪费）。
+  //   （此前误用 "all" 会移除全部 reasoning，注释却写「始终保留」，语义与注释相互矛盾。）
   const messages = pruneMessages({
     messages: converted,
-    reasoning: "all",
+    reasoning: "before-last-message",
     toolCalls: [
       {
         type: "before-last-2-messages",
