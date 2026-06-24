@@ -280,7 +280,6 @@ export async function createOrReuseCodeSourceGrant(input: {
     });
     return { grant: existing, approvalToken: null };
   }
-  const approvalToken = crypto.randomBytes(24).toString("base64url");
   const kind =
     candidate.kind === "github-repository"
       ? "github"
@@ -288,6 +287,27 @@ export async function createOrReuseCodeSourceGrant(input: {
         ? "configured"
         : "local";
   const automaticallyApproved = kind === "github" || kind === "configured";
+
+  // 已有 pending grant：只刷新元数据，绝不轮换 approvalTokenHash。
+  // 否则客户端消息里保存的旧 token 会立刻失效（「代码源授权令牌无效」）。
+  if (existing?.status === "pending") {
+    const grant = await prisma.codeSourceGrant.update({
+      where: { id: existing.id },
+      data: {
+        kind,
+        displayName: candidate.displayName,
+        locator: candidate.locator,
+        root: "root" in candidate ? candidate.root : existing.root,
+        owner: "owner" in candidate ? candidate.owner : existing.owner,
+        repo: "repo" in candidate ? candidate.repo : existing.repo,
+        ref: "ref" in candidate ? (candidate.ref ?? null) : existing.ref,
+        lastAccessedAt: new Date(),
+      },
+    });
+    return { grant, approvalToken: null };
+  }
+
+  const approvalToken = crypto.randomBytes(24).toString("base64url");
   const grant = await prisma.codeSourceGrant.upsert({
     where: { sessionId_sourceKey: { sessionId: input.sessionId, sourceKey } },
     update: {
@@ -683,4 +703,21 @@ export async function rejectCodeSourceGrant(input: {
     where: { id: grant.id },
     data: { status: "rejected", approvalTokenHash: null },
   });
+}
+
+/**
+ * 为仍处 pending 的 grant 签发新 approvalToken（仅当客户端 token 已失效时调用）。
+ * 会轮换 approvalTokenHash；调用方须用返回的新 token 重试 approve。
+ */
+export async function refreshCodeSourceApprovalToken(id: string) {
+  const grant = await prisma.codeSourceGrant.findUnique({ where: { id } });
+  if (!grant || grant.status !== "pending") {
+    throw new Error("该代码源授权已失效。");
+  }
+  const approvalToken = crypto.randomBytes(24).toString("base64url");
+  const updated = await prisma.codeSourceGrant.update({
+    where: { id },
+    data: { approvalTokenHash: hashToken(approvalToken) },
+  });
+  return { grant: updated, approvalToken };
 }

@@ -1,6 +1,15 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import {
@@ -441,6 +450,8 @@ function ProposalCard({
 function CodeSourceApprovalCard({
   data,
   onApproved,
+  onStatusChange,
+  onApprovalFailed,
 }: {
   data: {
     id: string;
@@ -449,24 +460,52 @@ function CodeSourceApprovalCard({
     approvalToken: string;
   };
   onApproved: () => Promise<void>;
+  /** 授权状态变化时通知父级（用于锁定 composer 等）。 */
+  onStatusChange?: (status: string) => void;
+  /** 授权失败且无法恢复时解锁 composer。 */
+  onApprovalFailed?: () => void;
 }) {
   const [sourceStatus, setSourceStatus] = useState("pending");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [activeToken, setActiveToken] = useState(data.approvalToken);
+
+  useEffect(() => {
+    setActiveToken(data.approvalToken);
+  }, [data.approvalToken]);
 
   useEffect(() => {
     fetch(`/api/ai/code-sources/${data.id}/status`)
       .then((response) => response.json())
       .then((result) => {
-        if (result.source?.status) setSourceStatus(result.source.status);
+        if (result.source?.status) {
+          setSourceStatus(result.source.status);
+          onStatusChange?.(result.source.status);
+        }
       })
       .catch(() => undefined);
-  }, [data.id]);
+  }, [data.id, onStatusChange]);
+
+  async function refreshApprovalToken(): Promise<string | null> {
+    const response = await fetch(
+      `/api/ai/code-sources/${data.id}/refresh-token`,
+      { method: "POST" }
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || typeof result.approvalToken !== "string") {
+      return null;
+    }
+    setActiveToken(result.approvalToken);
+    return result.approvalToken;
+  }
 
   async function decide(
     action: "approve" | "reject",
-    scope: "session" | "trusted" = "session"
+    scope: "session" | "trusted" = "session",
+    tokenOverride?: string,
+    allowTokenRefresh = true
   ) {
+    const token = tokenOverride ?? activeToken;
     setBusy(true);
     setError("");
     const response = await fetch(
@@ -475,19 +514,35 @@ function CodeSourceApprovalCard({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          approvalToken: data.approvalToken,
+          approvalToken: token,
           action,
           scope,
         }),
       }
     );
     const result = await response.json().catch(() => ({}));
-    setBusy(false);
     if (!response.ok) {
-      setError(result.error || "代码源授权失败。");
+      const message =
+        typeof result.error === "string" ? result.error : "代码源授权失败。";
+      if (
+        allowTokenRefresh &&
+        response.status === 409 &&
+        message.includes("令牌无效")
+      ) {
+        const refreshed = await refreshApprovalToken();
+        if (refreshed) {
+          await decide(action, scope, refreshed, false);
+          return;
+        }
+      }
+      setBusy(false);
+      setError(message);
+      onApprovalFailed?.();
       return;
     }
+    setBusy(false);
     setSourceStatus(action === "approve" ? "approved" : "rejected");
+    onStatusChange?.(action === "approve" ? "approved" : "rejected");
     if (action === "approve") await onApproved();
   }
 
@@ -506,7 +561,16 @@ function CodeSourceApprovalCard({
           </p>
         </div>
       </div>
-      {error && <p className="mt-2 text-red-600 dark:text-red-400">{error}</p>}
+      {error && (
+        <p className="mt-2 text-red-600 dark:text-red-400">
+          {error}
+          {error.includes("令牌无效") && (
+            <span className="block mt-1 text-amber-800 dark:text-amber-200">
+              已尝试刷新令牌；若仍失败，请重新发送探索请求或点击「拒绝」解除锁定。
+            </span>
+          )}
+        </p>
+      )}
       {sourceStatus === "pending" ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           <Button
@@ -586,6 +650,10 @@ export type RenderCtx = {
     snapshotHash: string;
   }) => void;
   resumeAfterApproval: () => Promise<void>;
+  /** 代码源授权状态变化（pending 时父级锁定 composer）。 */
+  onApprovalStatusChange?: (status: string) => void;
+  /** 授权失败且无法恢复时解锁 composer。 */
+  onApprovalFailed?: () => void;
   /** 当前消息在 messages 中的下标（用户消息重新执行需据此截断）。 */
   messageIndex: number;
   /** 重新执行用户消息：编辑后丢弃其后消息并重跑（codex edit & retry）。 */
@@ -973,6 +1041,8 @@ export const PART_RENDERERS: PartRenderer[] = [
           }
         }
         onApproved={ctx.resumeAfterApproval}
+        onStatusChange={ctx.onApprovalStatusChange}
+        onApprovalFailed={ctx.onApprovalFailed}
       />
     ),
   },
@@ -1127,6 +1197,136 @@ export function aggregateParts(parts: AgentPart[]): RenderItem[] {
   return items;
 }
 
+/** 从消息 parts 收集 propose_article_revision 等工具产出的 proposalId。 */
+function collectProposalIds(parts: readonly unknown[]): Set<string> {
+  const ids = new Set<string>();
+  for (const part of parts) {
+    const id = proposalIdFromOutput(
+      (part as Record<string, unknown>).output
+    );
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+type AgentMessageRowProps = {
+  message: UIMessage;
+  messageIndex: number;
+  settled: boolean;
+  isLastAssistant: boolean;
+  showUserDivider: boolean;
+  targetKind: "article" | "technical-document";
+  busy: boolean;
+  setFullscreenText: (text: string | null) => void;
+  onApplyArticle?: RenderCtx["onApplyArticle"];
+  onApplyTechnicalDocument?: RenderCtx["onApplyTechnicalDocument"];
+  onRerun: NonNullable<RenderCtx["rerun"]>;
+  onResumeAfterApproval: RenderCtx["resumeAfterApproval"];
+  onApprovalStatusChange?: RenderCtx["onApprovalStatusChange"];
+  onApprovalFailed?: RenderCtx["onApprovalFailed"];
+};
+
+/**
+ * 单条会话消息行（memo）。
+ * 流式期间仅「活动助手消息」的 parts 引用会变；历史行 parts 不变则跳过重渲染，
+ * 把每 chunk 的渲染成本从 O(全部消息×parts) 降到 O(1)。
+ */
+const AgentMessageRow = memo(function AgentMessageRow({
+  message,
+  messageIndex,
+  settled,
+  isLastAssistant,
+  showUserDivider,
+  targetKind,
+  busy,
+  setFullscreenText,
+  onApplyArticle,
+  onApplyTechnicalDocument,
+  onRerun,
+  onResumeAfterApproval,
+  onApprovalStatusChange,
+  onApprovalFailed,
+}: AgentMessageRowProps) {
+  const parts = message.parts as unknown as AgentPart[];
+  const items = useMemo(() => aggregateParts(parts), [parts]);
+
+  const ctx: RenderCtx = useMemo(
+    () => ({
+      role: message.role,
+      targetKind,
+      setFullscreenText,
+      onApplyArticle,
+      onApplyTechnicalDocument,
+      resumeAfterApproval: onResumeAfterApproval,
+      onApprovalStatusChange,
+      onApprovalFailed,
+      messageIndex,
+      rerun: onRerun,
+      busy,
+      settled,
+    }),
+    [
+      message.role,
+      targetKind,
+      setFullscreenText,
+      onApplyArticle,
+      onApplyTechnicalDocument,
+      onResumeAfterApproval,
+      onApprovalStatusChange,
+      onApprovalFailed,
+      messageIndex,
+      onRerun,
+      busy,
+      settled,
+    ]
+  );
+
+  return (
+    <div
+      className={cn(
+        "space-y-2",
+        message.role === "user" && "flex flex-col items-end",
+        showUserDivider &&
+          "mt-3 border-t border-dashed border-border/60 pt-3"
+      )}
+    >
+      {items.map((item) => {
+        if (item.kind === "tool-group") {
+          return (
+            <ToolGroupBlock
+              key={item.key}
+              parts={item.parts}
+              groupType={item.groupType}
+              settled={settled}
+            />
+          );
+        }
+        const part = item.part;
+        const isProcessPart =
+          part.type === "data-agent-step" ||
+          part.type === "data-context-usage";
+        if (isProcessPart && !isLastAssistant) return null;
+        return (
+          <Fragment key={item.key}>
+            {renderAgentPart(part, ctx)}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}, (prev, next) => {
+  if (prev.message.parts !== next.message.parts) return false;
+  if (prev.message.role !== next.message.role) return false;
+  if (prev.messageIndex !== next.messageIndex) return false;
+  if (prev.showUserDivider !== next.showUserDivider) return false;
+  if (prev.isLastAssistant !== next.isLastAssistant) return false;
+  if (prev.targetKind !== next.targetKind) return false;
+  if (prev.settled !== next.settled) return false;
+  // 已定格的历史行不受 busy 影响；活动行需随 busy 更新 rerun 禁用态等。
+  if (!next.settled && prev.busy !== next.busy) return false;
+  return true;
+});
+
 export function WritingAssistant({
   articleId,
   targetKind = "article",
@@ -1227,6 +1427,8 @@ export function WritingAssistant({
   // /compact 反馈与进行态
   const [slashNotice, setSlashNotice] = useState("");
   const [compacting, setCompacting] = useState(false);
+  // 待代码源授权：锁定 composer，引导用户先完成上方授权卡片操作。
+  const [approvalBlocked, setApprovalBlocked] = useState(false);
   // /compact 成功后即时覆盖 TokenMeter：用压缩后估算临时顶替，直到下一轮对话下发真实 data-context-usage。
   const [compactOverride, setCompactOverride] = useState<ContextUsage>(null);
   // 恢复被中断的回复：页面级导航导致组件重挂载后，服务端可能仍在处理上一轮
@@ -1279,6 +1481,12 @@ export function WritingAssistant({
     id: `${targetKind}-agent-${resolvedTargetId}`,
     transport,
     onFinish: () => void refresh(),
+    // 流式更新节流：默认每个 chunk 都触发一次 setMessages → 整个会话重渲染。
+    // 长对话里每次渲染要全量重扫 messages（latestContextUsage / latestDirectArticle /
+    // proposalIdsInMessages 等多个 O(消息×part) memo）并联动编辑器写入，高频 chunk 会把
+    // 同步更新堆到 React 的嵌套上限，抛 "Maximum update depth exceeded"。
+    // 按 50ms 合并更新，既消除该报错又显著降低长对话的渲染压力。
+    experimental_throttle: 50,
   });
 
   useEffect(() => {
@@ -1548,6 +1756,32 @@ export function WritingAssistant({
     await regenerate({ body: requestBody });
   }
 
+  const requestBodyRef = useRef(requestBody);
+  requestBodyRef.current = requestBody;
+  const flushTargetRef = useRef(onFlushTarget ?? onFlushArticle);
+  flushTargetRef.current = onFlushTarget ?? onFlushArticle;
+  const regenerateRef = useRef(regenerate);
+  regenerateRef.current = regenerate;
+  const rerunRef = useRef(rerun);
+  rerunRef.current = rerun;
+
+  const stableResumeAfterApproval = useCallback(async () => {
+    await flushTargetRef.current?.();
+    await regenerateRef.current({ body: requestBodyRef.current });
+  }, []);
+
+  const stableRerun = useCallback((index: number, editedText: string) => {
+    void rerunRef.current(index, editedText);
+  }, []);
+
+  const handleApprovalStatusChange = useCallback((status: string) => {
+    setApprovalBlocked(status === "pending");
+  }, []);
+
+  const handleApprovalFailed = useCallback(() => {
+    setApprovalBlocked(false);
+  }, []);
+
   /** 斜杠菜单选中：内置命令立即执行，Skill 插入 token + 空格待补参数。 */
   function slashSelect(command: SlashCommand) {
     setSlashForcedClosed(false);
@@ -1573,8 +1807,8 @@ export function WritingAssistant({
 
   async function submit() {
     const text = input.trim();
-    // 压缩进行中禁用一切发送（普通消息与斜杠命令），直至压缩完成
-    if (!text || busy || compacting) return;
+    // 压缩进行中 / 待代码源授权时禁用一切发送
+    if (!text || busy || compacting || approvalBlocked) return;
     const parsed = parseSlashCommand(text, slashCommands);
     if (parsed) {
       if (parsed.command.kind === "clear") {
@@ -1608,33 +1842,78 @@ export function WritingAssistant({
   }
 
 
-  // 扫描最近的 data-context-usage，取最新一条（composer token 计量用）。
-  const latestContextUsage = useMemo<ContextUsage>(() => {
+  // 最新一条助手消息的索引：过程步骤（意图/代码源/Skill/素材 + 上下文计量）
+  // 仅在此轮展示，历史轮次折叠掉这些过程块，避免多轮时「步骤重复、中间夹着上下文 tokens」。
+  const lastAssistantIndex = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
-        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
-        if (
-          p.type === "data-context-usage" &&
-          p.data &&
-          typeof p.data === "object"
-        ) {
-          const d = p.data as {
-            estimatedTokens?: unknown;
-            budgetTokens?: unknown;
-            compressed?: unknown;
-            articleTokens?: unknown;
-          };
-          return {
-            estimatedTokens: Number(d.estimatedTokens ?? 0),
-            budgetTokens: Number(d.budgetTokens ?? 0),
-            compressed: Boolean(d.compressed),
-            articleTokens: Number(d.articleTokens ?? 0),
-          };
-        }
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  }, [messages]);
+
+  const lastAssistantParts =
+    lastAssistantIndex >= 0 ? messages[lastAssistantIndex]?.parts : undefined;
+
+  /** 最新助手消息中的待授权 grant id（有则轮询 status 决定是否锁定 composer）。 */
+  const pendingApprovalGrantId = useMemo(() => {
+    if (!lastAssistantParts) return null;
+    for (const p of lastAssistantParts) {
+      const part = p as unknown as Record<string, unknown>;
+      if (part.type === "data-code-source-approval" && isObj(part.data)) {
+        const id = String((part.data as { id?: unknown }).id ?? "");
+        if (id) return id;
       }
     }
     return null;
-  }, [messages]);
+  }, [lastAssistantParts]);
+
+  useEffect(() => {
+    if (!pendingApprovalGrantId) {
+      setApprovalBlocked(false);
+      return;
+    }
+    let active = true;
+    fetch(`/api/ai/code-sources/${pendingApprovalGrantId}/status`)
+      .then((response) => response.json())
+      .then((result) => {
+        if (active) {
+          setApprovalBlocked(result.source?.status === "pending");
+        }
+      })
+      .catch(() => {
+        if (active) setApprovalBlocked(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [pendingApprovalGrantId]);
+
+  // 扫描最近的 data-context-usage（composer token 计量用）——仅最新助手消息。
+  const latestContextUsage = useMemo<ContextUsage>(() => {
+    if (!lastAssistantParts) return null;
+    for (let j = lastAssistantParts.length - 1; j >= 0; j--) {
+      const p = lastAssistantParts[j] as unknown as Record<string, unknown>;
+      if (
+        p.type === "data-context-usage" &&
+        p.data &&
+        typeof p.data === "object"
+      ) {
+        const d = p.data as {
+          estimatedTokens?: unknown;
+          budgetTokens?: unknown;
+          compressed?: unknown;
+          articleTokens?: unknown;
+        };
+        return {
+          estimatedTokens: Number(d.estimatedTokens ?? 0),
+          budgetTokens: Number(d.budgetTokens ?? 0),
+          compressed: Boolean(d.compressed),
+          articleTokens: Number(d.articleTokens ?? 0),
+        };
+      }
+    }
+    return null;
+  }, [lastAssistantParts]);
 
   // 下一轮对话开始即清除 compact 覆盖，让随后下发的真实 data-context-usage 重新生效。
   useEffect(() => {
@@ -1649,56 +1928,43 @@ export function WritingAssistant({
     }
   }, [latestContextUsage]);
 
-  // 扫描已完成的 propose_article_revision 工具结果，取最新的 direct 模式输出。
-  // 工具 output 是可靠来源（part.state 为 output/output-streaming 即已就绪），
-  // 不依赖 data-article-draft 流式 part 的时序。
+  // 扫描已完成的 propose_article_revision 工具结果 —— 仅最新助手消息。
   const latestDirectArticle = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
-        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
-        const name = getToolName(p);
-        if (name !== "propose_article_revision") continue;
-        const out = p.output as
-          | { mode?: unknown; markdown?: unknown; title?: unknown; digest?: unknown }
-          | undefined;
-        if (out?.mode === "direct" && typeof out.markdown === "string") {
-          return {
-            markdown: out.markdown,
-            title: typeof out.title === "string" ? out.title : null,
-            digest: typeof out.digest === "string" ? out.digest : null,
-          };
-        }
+    if (!lastAssistantParts) return null;
+    for (let j = lastAssistantParts.length - 1; j >= 0; j--) {
+      const p = lastAssistantParts[j] as unknown as Record<string, unknown>;
+      const name = getToolName(p);
+      if (name !== "propose_article_revision") continue;
+      const out = p.output as
+        | { mode?: unknown; markdown?: unknown; title?: unknown; digest?: unknown }
+        | undefined;
+      if (out?.mode === "direct" && typeof out.markdown === "string") {
+        return {
+          markdown: out.markdown,
+          title: typeof out.title === "string" ? out.title : null,
+          digest: typeof out.digest === "string" ? out.digest : null,
+        };
       }
     }
     return null;
-  }, [messages]);
+  }, [lastAssistantParts]);
 
-  // 扫描 set_article_digest 推送的摘要事件，取最新一条。
+  // 扫描 set_article_digest 推送的摘要事件 —— 仅最新助手消息。
   const latestDigest = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      for (let j = messages[i].parts.length - 1; j >= 0; j--) {
-        const p = messages[i].parts[j] as unknown as Record<string, unknown>;
-        if (
-          p.type === "data-article-digest" &&
-          p.data &&
-          typeof p.data === "object"
-        ) {
-          const d = (p.data as { digest?: unknown }).digest;
-          if (typeof d === "string") return d;
-        }
+    if (!lastAssistantParts) return null;
+    for (let j = lastAssistantParts.length - 1; j >= 0; j--) {
+      const p = lastAssistantParts[j] as unknown as Record<string, unknown>;
+      if (
+        p.type === "data-article-digest" &&
+        p.data &&
+        typeof p.data === "object"
+      ) {
+        const d = (p.data as { digest?: unknown }).digest;
+        if (typeof d === "string") return d;
       }
     }
     return null;
-  }, [messages]);
-
-  // 最新一条助手消息的索引：过程步骤（意图/代码源/Skill/素材 + 上下文计量）
-  // 仅在此轮展示，历史轮次折叠掉这些过程块，避免多轮时「步骤重复、中间夹着上下文 tokens」。
-  const lastAssistantIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant") return i;
-    }
-    return -1;
-  }, [messages]);
+  }, [lastAssistantParts]);
 
   // 记录已应用过的 direct 文章 markdown，避免重复写入（流式期间多次 messages 更新）。
   const appliedDirectRef = useRef<string | null>(null);
@@ -1727,22 +1993,51 @@ export function WritingAssistant({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestDigest, busy]);
 
-  // memo 化：流式期间 messages 高频变更，避免每帧全量重扫所有 part。
-  const proposalIdsInMessages = useMemo(
-    () =>
-      new Set(
-        messages.flatMap((message) =>
-          message.parts
-            .map((part) =>
-              proposalIdFromOutput(
-                (part as unknown as Record<string, unknown>).output
-              )
-            )
-            .filter(Boolean)
-        )
-      ),
-    [messages]
-  );
+  // 流式期间仅最新助手消息的 parts 会变；前缀 proposalId 按 parts 引用缓存，避免每 chunk 全量重扫。
+  const prefixProposalCacheRef = useRef<{
+    partRefs: readonly unknown[];
+    ids: Set<string>;
+  } | null>(null);
+
+  const prefixProposalIds = useMemo(() => {
+    if (!busy || lastAssistantIndex <= 0) return null;
+    const partRefs = messages
+      .slice(0, lastAssistantIndex)
+      .map((message) => message.parts);
+    const cached = prefixProposalCacheRef.current;
+    if (
+      cached &&
+      cached.partRefs.length === partRefs.length &&
+      cached.partRefs.every((parts, index) => parts === partRefs[index])
+    ) {
+      return cached.ids;
+    }
+    const ids = new Set<string>();
+    for (let i = 0; i < lastAssistantIndex; i++) {
+      for (const id of collectProposalIds(messages[i].parts)) {
+        ids.add(id);
+      }
+    }
+    prefixProposalCacheRef.current = { partRefs, ids };
+    return ids;
+  }, [busy, lastAssistantIndex, messages]);
+
+  const proposalIdsInMessages = useMemo(() => {
+    if (!busy || lastAssistantIndex < 0) {
+      const ids = new Set<string>();
+      for (const message of messages) {
+        for (const id of collectProposalIds(message.parts)) {
+          ids.add(id);
+        }
+      }
+      return ids;
+    }
+    const ids = new Set(prefixProposalIds ?? []);
+    for (const id of collectProposalIds(messages[lastAssistantIndex].parts)) {
+      ids.add(id);
+    }
+    return ids;
+  }, [messages, busy, lastAssistantIndex, prefixProposalIds]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1782,64 +2077,25 @@ export function WritingAssistant({
               </div>
             )}
             {messages.map((message, idx) => (
-              <div
+              <AgentMessageRow
                 key={message.id}
-                className={cn(
-                  "space-y-2",
-                  message.role === "user" && "flex flex-col items-end",
-                  idx > 0 &&
-                    message.role === "user" &&
-                    "mt-3 border-t border-dashed border-border/60 pt-3"
-                )}
-              >
-                {(() => {
-                  const parts = message.parts as unknown as AgentPart[];
-                  const items = aggregateParts(parts);
-                  // 仅「正在流式的最新助手消息」是活动态；其余一律 settled。
-                  // 用户取消 / 出错 / 完成后 busy 转 false → settled 转 true，
-                  // 让仍卡在 running/streaming 的步骤、工具、思考即时收敛为「已中断/已结束」。
-                  const settled = !(busy && idx === lastAssistantIndex);
-                  const ctx: RenderCtx = {
-                    role: message.role,
-                    targetKind,
-                    setFullscreenText,
-                    onApplyArticle,
-                    onApplyTechnicalDocument,
-                    resumeAfterApproval: async () => {
-                      await (onFlushTarget ?? onFlushArticle)?.();
-                      await regenerate({ body: requestBody });
-                    },
-                    messageIndex: idx,
-                    rerun,
-                    busy,
-                    settled,
-                  };
-                  return items.map((item) => {
-                    if (item.kind === "tool-group") {
-                      return (
-                        <ToolGroupBlock
-                          key={item.key}
-                          parts={item.parts}
-                          groupType={item.groupType}
-                          settled={settled}
-                        />
-                      );
-                    }
-                    const part = item.part;
-                    // 过程块（意图/上下文计量）只在最新一轮助手消息展示，
-                    // 历史轮次不再重复堆叠这些过程块，消除噪音。
-                    const isProcessPart =
-                      part.type === "data-agent-step" ||
-                      part.type === "data-context-usage";
-                    if (isProcessPart && idx !== lastAssistantIndex) return null;
-                    return (
-                      <Fragment key={item.key}>
-                        {renderAgentPart(part, ctx)}
-                      </Fragment>
-                    );
-                  });
-                })()}
-              </div>
+                message={message}
+                messageIndex={idx}
+                settled={!(busy && idx === lastAssistantIndex)}
+                isLastAssistant={idx === lastAssistantIndex}
+                showUserDivider={
+                  idx > 0 && message.role === "user"
+                }
+                targetKind={targetKind}
+                busy={busy}
+                setFullscreenText={setFullscreenText}
+                onApplyArticle={onApplyArticle}
+                onApplyTechnicalDocument={onApplyTechnicalDocument}
+                onRerun={stableRerun}
+                onResumeAfterApproval={stableResumeAfterApproval}
+                onApprovalStatusChange={handleApprovalStatusChange}
+                onApprovalFailed={handleApprovalFailed}
+              />
             ))}
             {proposals
               .filter(
@@ -1913,8 +2169,15 @@ export function WritingAssistant({
               {slashNotice}
             </div>
           )}
+          {approvalBlocked && !busy && (
+            <div className="pointer-events-none absolute -top-2 left-2 flex -translate-y-full items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 shadow-sm dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-100">
+              <FileSearch className="h-3 w-3 shrink-0" />
+              请先完成上方代码源授权，授权后将自动继续分析
+            </div>
+          )}
           <textarea
             value={input}
+            disabled={approvalBlocked || compacting}
             onChange={(event) => {
               setInput(event.target.value);
               setSlashForcedClosed(false);
@@ -1982,8 +2245,15 @@ export function WritingAssistant({
                 }
               }
             }}
-            placeholder="让 Agent 研究、创作或调整文章…（输入 / 查看命令 · Enter 发送 · Shift+Enter 换行）"
-            className="min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none"
+            placeholder={
+              approvalBlocked
+                ? "等待代码源授权…请在上方卡片选择「仅本会话允许」或「允许并长期信任」"
+                : "让 Agent 研究、创作或调整文章…（输入 / 查看命令 · Enter 发送 · Shift+Enter 换行）"
+            }
+            className={cn(
+              "min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none",
+              approvalBlocked && "cursor-not-allowed opacity-60"
+            )}
           />
           <div className="flex items-center gap-1.5">
             <ModelSelector
@@ -2017,8 +2287,14 @@ export function WritingAssistant({
               <Button
                 size="icon"
                 className="h-8 w-8"
-                disabled={!input.trim() || compacting}
-                title={compacting ? "正在压缩对话…" : undefined}
+                disabled={!input.trim() || compacting || approvalBlocked}
+                title={
+                  approvalBlocked
+                    ? "请先完成代码源授权"
+                    : compacting
+                      ? "正在压缩对话…"
+                      : undefined
+                }
                 onClick={() => void submit()}
               >
                 <Send className="h-4 w-4" />

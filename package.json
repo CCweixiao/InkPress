@@ -27,7 +27,9 @@
     "electron:compile": "tsc -p tsconfig.electron.json",
     "electron:prepare": "pnpm build && pnpm tsx scripts/prepare-standalone.ts && pnpm electron:compile",
     "electron:dev": "pnpm build && pnpm tsx scripts/prepare-standalone.ts && pnpm electron:compile && electron .",
-    "electron:build": "pnpm electron:prepare && electron-builder --mac",
+    "electron:build": "node scripts/electron-build.mjs",
+    "electron:build:arm64": "node scripts/electron-build.mjs --arm64",
+    "electron:build:x64": "node scripts/electron-build.mjs --x64",
     "docker:build": "docker build -t inkpress:latest .",
     "docker:run": "docker run --rm -p 3000:3000 -v \"$PWD/inkpress-data:/data\" inkpress:latest",
     "docker:up": "docker compose up -d",
@@ -154,8 +156,7 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64",
-            "x64"
+            "arm64"
           ]
         }
       ],

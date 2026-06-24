@@ -591,6 +591,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               approvalToken: string;
             }
           | undefined;
+        /** 本地代码源仍待用户授权（含复用 pending grant、无新 token 下发的情况）。 */
+        let awaitingApproval = false;
 
         // 代码源解析可能较慢（首次 clone / 拉取历史）：先发运行态步骤再解析。
         if (route.codeSourceCandidate || route.project || route.needsProject) {
@@ -616,13 +618,16 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             route.codeSource = source.source;
             codeSource = source.source;
             route.ambiguityQuestion = undefined;
-          } else if (resolved.approvalToken) {
-            approval = {
-              id: resolved.grant.id,
-              displayName: resolved.grant.displayName,
-              locator: resolved.grant.locator,
-              approvalToken: resolved.approvalToken,
-            };
+          } else if (resolved.grant.status === "pending") {
+            awaitingApproval = true;
+            if (resolved.approvalToken) {
+              approval = {
+                id: resolved.grant.id,
+                displayName: resolved.grant.displayName,
+                locator: resolved.grant.locator,
+                approvalToken: resolved.approvalToken,
+              };
+            }
             route.ambiguityQuestion = undefined;
           }
         } else if (route.project) {
@@ -752,8 +757,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           title: "识别代码源",
           detail: codeSource
             ? `已选择 ${codeSource.displayName}（${codeSource.kind === "github" ? "GitHub 公开仓库缓存" : "本地严格只读"}）`
-            : approval
-              ? `检测到 ${approval.displayName}，等待首次授权`
+            : awaitingApproval
+              ? `检测到 ${route.codeSourceCandidate?.displayName ?? "本地项目"}，等待首次授权`
             : route.needsProject
               ? "需要确认项目"
               : "本轮无需读取代码源",
@@ -848,16 +853,9 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           return;
         }
 
-        if (approval) {
-          const textId = crypto.randomUUID();
-          writer.write({ type: "text-start", id: textId } as never);
-          writer.write({
-            type: "text-delta",
-            id: textId,
-            delta:
-              "我识别到了本地项目路径。请先选择仅本会话授权，或保存为长期信任项目；授权后会自动继续本次分析。",
-          } as never);
-          writer.write({ type: "text-end", id: textId } as never);
+        if (awaitingApproval) {
+          // 授权交互由 data-code-source-approval → CodeSourceApprovalCard 承载；
+          // 复用 pending grant 时不重复下发 part（客户端仍持有首次 token）。
           return;
         }
 
