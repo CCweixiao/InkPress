@@ -68,6 +68,9 @@ export function EditorWorkspace({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
     "idle"
   );
+  const editorScrollRef = useRef<HTMLDivElement | null>(null);
+  const previewScrollRef = useRef<HTMLElement | null>(null);
+  const scrollSyncFrame = useRef<number | null>(null);
 
   const currentTheme =
     themes.find((t) => t.id === themeId) ??
@@ -134,6 +137,42 @@ export function EditorWorkspace({
     save({ themeId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeId]);
+
+  useEffect(() => {
+    const editorScroller = editorScrollRef.current;
+    const previewScroller = previewScrollRef.current;
+    if (!editorScroller || !previewScroller || previewCollapsed) return;
+
+    const syncPreviewScroll = () => {
+      if (scrollSyncFrame.current !== null) {
+        window.cancelAnimationFrame(scrollSyncFrame.current);
+      }
+      scrollSyncFrame.current = window.requestAnimationFrame(() => {
+        const editorMax =
+          editorScroller.scrollHeight - editorScroller.clientHeight;
+        const previewMax =
+          previewScroller.scrollHeight - previewScroller.clientHeight;
+
+        if (editorMax <= 0 || previewMax <= 0) return;
+
+        const ratio = editorScroller.scrollTop / editorMax;
+        previewScroller.scrollTop = Math.max(0, Math.min(previewMax, ratio * previewMax));
+      });
+    };
+
+    editorScroller.addEventListener("scroll", syncPreviewScroll, {
+      passive: true,
+    });
+    syncPreviewScroll();
+
+    return () => {
+      editorScroller.removeEventListener("scroll", syncPreviewScroll);
+      if (scrollSyncFrame.current !== null) {
+        window.cancelAnimationFrame(scrollSyncFrame.current);
+        scrollSyncFrame.current = null;
+      }
+    };
+  }, [previewCollapsed]);
 
   // 页面卸载/刷新前立即落盘未保存内容（防止仅改标题未等 5s 防抖就离开导致丢失）
   useEffect(() => {
@@ -280,7 +319,7 @@ export function EditorWorkspace({
             发布
           </Button>
         </div>
-        <div className="editor-canvas flex-1 overflow-y-auto">
+        <div ref={editorScrollRef} className="editor-canvas flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-10 py-6">
             <TiptapEditor value={markdown} onChange={setMarkdown} articleId={article.id} />
           </div>
@@ -289,6 +328,7 @@ export function EditorWorkspace({
 
       {/* 右栏：公众号实时预览 */}
       <aside
+        ref={previewScrollRef}
         className={`${
           previewCollapsed ? "hidden" : "w-[380px] shrink-0"
         } border-l border-border bg-muted/30 overflow-y-auto transition-[width] duration-200`}

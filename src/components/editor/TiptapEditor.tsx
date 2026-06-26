@@ -4,6 +4,10 @@ import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
+import { Table } from "@tiptap/extension-table";
+import TableCell from "@tiptap/extension-table-cell";
+import TableHeader from "@tiptap/extension-table-header";
+import TableRow from "@tiptap/extension-table-row";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Markdown } from "tiptap-markdown";
@@ -39,8 +43,16 @@ export function TiptapEditor({
         placeholder: "开始写作，或从左侧用 AI 生成…",
       }),
       Image.configure({
+        inline: true,
         HTMLAttributes: { class: "rounded-lg" },
       }),
+      Table.configure({
+        resizable: true,
+        HTMLAttributes: { class: "tiptap-table" },
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
       TaskList,
       TaskItem.configure({ nested: true }),
       createImageUploadExtension(articleId),
@@ -68,7 +80,6 @@ export function TiptapEditor({
     if (value !== current) {
       editor.commands.setContent(value || "", { emitUpdate: false });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, editor]);
 
   if (!editor) return null;
