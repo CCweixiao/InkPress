@@ -15,6 +15,7 @@ import {
   Link as LinkIcon,
   Strikethrough,
   Minus,
+  Table2,
   Undo2,
   Redo2,
 } from "lucide-react";
@@ -102,6 +103,17 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         if (url) editor.chain().focus().setLink({ href: url }).run();
       },
       active: editor.isActive("link"),
+    },
+    {
+      icon: Table2,
+      label: "插入表格",
+      action: () =>
+        editor
+          .chain()
+          .focus()
+          .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+          .run(),
+      active: editor.isActive("table"),
     },
     {
       icon: Undo2,
