@@ -220,6 +220,8 @@ function cleanForWeChat(html: string, primaryColor: string): string {
     if (extra) img.setAttribute("style", `${existing};${extra}`.replace(/^;/, ""));
   });
 
+  normalizeImageRowsForWeChat(root);
+
   // 微信会重写 ul / ol / li，原生 marker 在嵌套列表、松散列表中很容易变成
   // 独立空圆点。发布前改为纯 section + 文本 marker，不再依赖平台列表样式。
   normalizeListsForWeChat(root, primaryColor);
@@ -231,6 +233,88 @@ function cleanForWeChat(html: string, primaryColor: string): string {
   const placeholder =
     '<p style="font-size:0;line-height:0;margin:0;visibility:hidden;">&nbsp;</p>';
   return placeholder + cleaned + placeholder;
+}
+
+function normalizeImageRowsForWeChat(root: Element): void {
+  const paragraphs = Array.from(root.querySelectorAll("p"));
+
+  for (const paragraph of paragraphs) {
+    const images = Array.from(paragraph.children).filter(
+      (child) => child.tagName.toLowerCase() === "img"
+    );
+    if (images.length < 2 || !isImageOnlyParagraph(paragraph)) continue;
+
+    const doc = paragraph.ownerDocument;
+    const row = doc.createElement("section");
+    row.setAttribute("data-wx-image-row", "true");
+    row.setAttribute(
+      "style",
+      [
+        "display:table",
+        "width:100%",
+        "table-layout:fixed",
+        "border-collapse:separate",
+        "border-spacing:8px 0",
+        "margin:1.05em 0",
+      ].join(";")
+    );
+
+    images.forEach((image) => {
+      const cell = doc.createElement("section");
+      cell.setAttribute(
+        "style",
+        [
+          "display:table-cell",
+          "width:" + (100 / images.length).toFixed(4) + "%",
+          "vertical-align:top",
+        ].join(";")
+      );
+      image.setAttribute(
+        "style",
+        mergeInlineStyle(image.getAttribute("style"), [
+          "display:block",
+          "width:100%",
+          "max-width:100%",
+          "height:auto",
+          "margin:0",
+          "box-sizing:border-box",
+        ])
+      );
+      cell.appendChild(image);
+      row.appendChild(cell);
+    });
+
+    paragraph.replaceWith(row);
+  }
+}
+
+function isImageOnlyParagraph(paragraph: Element): boolean {
+  return Array.from(paragraph.childNodes).every((node) => {
+    if (node.nodeType === node.TEXT_NODE) {
+      return (node.textContent ?? "").trim() === "";
+    }
+    if (node.nodeType !== node.ELEMENT_NODE) return false;
+    const tagName = (node as Element).tagName.toLowerCase();
+    return tagName === "img" || tagName === "br";
+  });
+}
+
+function mergeInlineStyle(
+  existing: string | null,
+  additions: string[]
+): string {
+  const rules = new Map<string, string>();
+  for (const declaration of (existing ?? "").split(";")) {
+    const [property, ...valueParts] = declaration.split(":");
+    const value = valueParts.join(":").trim();
+    if (property?.trim() && value) rules.set(property.trim(), value);
+  }
+  for (const declaration of additions) {
+    const [property, ...valueParts] = declaration.split(":");
+    const value = valueParts.join(":").trim();
+    if (property?.trim() && value) rules.set(property.trim(), value);
+  }
+  return Array.from(rules, ([property, value]) => `${property}:${value}`).join(";");
 }
 
 /**

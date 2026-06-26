@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Smartphone } from "lucide-react";
 import type { ThemeOption } from "@/components/editor/EditorWorkspace";
 
@@ -19,6 +19,7 @@ export function WeChatPreview({
 }) {
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!markdown.trim() || !theme) {
@@ -61,6 +62,57 @@ export function WeChatPreview({
     };
   }, [markdown, theme]);
 
+  useEffect(() => {
+    if (!html) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const container = contentRef.current;
+      if (!container) return;
+
+      const blocks = Array.from(
+        container.querySelectorAll<HTMLElement>("code.language-mermaid")
+      );
+      if (blocks.length === 0) return;
+
+      const mermaid = (await import("mermaid")).default;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: document.documentElement.classList.contains("dark")
+          ? "dark"
+          : "neutral",
+      });
+
+      for (const [index, block] of blocks.entries()) {
+        if (cancelled) return;
+
+        const source = block.textContent?.trim();
+        const target = block.closest(".code-block") ?? block.parentElement;
+        if (!source || !target?.parentElement) continue;
+
+        const preview = document.createElement("section");
+        preview.className = "mermaid-preview";
+        try {
+          const result = await mermaid.render(
+            `wechat-preview-mermaid-${index}-${crypto.randomUUID()}`,
+            source
+          );
+          if (cancelled) return;
+          preview.innerHTML = result.svg;
+        } catch {
+          preview.textContent = "流程图渲染失败";
+        }
+        target.replaceWith(preview);
+      }
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [html]);
+
   return (
     <div className="px-4 py-5">
       <div className="mb-3 flex items-center justify-between px-1 text-xs text-muted-foreground">
@@ -91,7 +143,11 @@ export function WeChatPreview({
           </header>
 
           {html ? (
-            <div className="wechat-article-content" dangerouslySetInnerHTML={{ __html: html }} />
+            <div
+              ref={contentRef}
+              className="wechat-article-content"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
           ) : (
             <div className="py-20 text-center">
               <div className="mx-auto mb-3 h-10 w-10 rounded-2xl bg-slate-50 dark:bg-slate-800" />
