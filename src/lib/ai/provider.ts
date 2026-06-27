@@ -35,8 +35,14 @@ export async function getModel(
 }
 
 function createModel(config: SelectedLlmConfig): LanguageModel {
-  if (config.apiProvider.toLowerCase() !== "openai-compatible") {
-    throw new Error(`暂不支持 LLM API Provider：${config.apiProvider}。`);
+  // 所有非 Anthropic 厂商统一走 openai-compatible 通道：
+  // OpenAI / DeepSeek / Azure / OpenRouter / Ollama / 阿里云百炼(DashScope)/ 智谱 GLM 等，
+  // 只需配置正确的 baseUrl + apiKey + 模型名即可。
+  // Anthropic 走独立的 /messages 协议，与 openai-compatible 不兼容，需单独接入（暂未支持）。
+  if (config.apiProvider.toLowerCase() === "anthropic") {
+    throw new Error(
+      "Anthropic 暂未接入：它使用 /messages 协议，与项目的 openai-compatible 通道不兼容。请在设置中选择其他 OpenAI 兼容厂商，或使用 OpenRouter 中转 Claude。"
+    );
   }
   const provider = createOpenAICompatible({
     name: config.id,

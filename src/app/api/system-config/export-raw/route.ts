@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { LLM_CONFIG_KEY } from "@/lib/ai/llm-config";
 import { AGENT_CONFIG_KEY } from "@/lib/ai/agent-config";
 import { OSS_CONFIG_KEY } from "@/lib/oss-config";
+import { STORAGE_CONFIG_KEY } from "@/lib/storage-config";
 import { WECHAT_CONFIG_KEY } from "@/lib/wechat/config";
 import { withApiLog, logMutation } from "@/lib/api-log";
 
@@ -20,6 +21,7 @@ export const dynamic = "force-dynamic";
 const EXPORT_KEYS = [
   LLM_CONFIG_KEY,
   AGENT_CONFIG_KEY,
+  STORAGE_CONFIG_KEY,
   OSS_CONFIG_KEY,
   WECHAT_CONFIG_KEY,
 ];
