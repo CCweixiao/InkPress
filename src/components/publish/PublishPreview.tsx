@@ -81,7 +81,7 @@ export function PublishPreview({
             {error}
           </div>
         ) : (
-          <div className="max-h-[60vh] overflow-y-auto rounded-md border border-border bg-white dark:bg-slate-900 p-4">
+          <div className="max-h-[60vh] overflow-y-auto rounded-md border border-border bg-white dark:bg-neutral-900 p-4">
             <div
               className="wechat-article-content"
               dangerouslySetInnerHTML={{ __html: html ?? "" }}

@@ -31,7 +31,7 @@ function renderLine(line: string) {
   try {
     parsed = JSON.parse(line);
   } catch {
-    return { level: "raw", text: line, time: "", msg: line, color: "text-zinc-700 dark:text-zinc-300" };
+    return { level: "raw", text: line, time: "", msg: line, color: "text-neutral-700 dark:text-neutral-300" };
   }
   const level = String(parsed?.level ?? "info");
   const msg = String(parsed?.msg ?? "");
@@ -47,8 +47,8 @@ function renderLine(line: string) {
       : level === "warn"
         ? "text-amber-600 dark:text-amber-400"
         : level === "debug" || level === "trace"
-          ? "text-slate-500 dark:text-slate-400"
-          : "text-zinc-700 dark:text-zinc-300";
+          ? "text-neutral-500 dark:text-neutral-400"
+          : "text-neutral-700 dark:text-neutral-300";
   return { level, text, time, msg, color, module: parsed?.module };
 }
 
@@ -203,10 +203,10 @@ export function LogsViewer() {
         {/* 日志内容 */}
         <div
           ref={containerRef}
-          className="rounded-md border border-border bg-zinc-50 dark:bg-zinc-950 p-3 h-[480px] overflow-auto font-mono text-xs leading-relaxed"
+          className="rounded-md border border-border bg-zinc-50 dark:bg-[#141414] p-3 h-[480px] overflow-auto font-mono text-xs leading-relaxed"
         >
           {rendered.length === 0 ? (
-            <div className="text-zinc-400 dark:text-zinc-500 text-center py-8">
+            <div className="text-neutral-400 dark:text-neutral-500 text-center py-8">
               {loading ? "加载中…" : "暂无日志记录"}
             </div>
           ) : (

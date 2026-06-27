@@ -126,16 +126,16 @@ export function WeChatPreview({
         </span>
       </div>
 
-      <div className="wechat-phone mx-auto w-full max-w-[350px] overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_22px_60px_rgba(15,23,42,0.12)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_22px_60px_rgba(0,0,0,0.4)]">
-        <div className="flex h-9 items-center justify-center border-b border-slate-100 bg-white dark:border-slate-700 dark:bg-slate-900">
-          <span className="h-1.5 w-14 rounded-full bg-slate-200 dark:bg-slate-600" />
+      <div className="wechat-phone mx-auto w-full max-w-[350px] overflow-hidden rounded-[30px] border border-neutral-200 bg-white shadow-[0_22px_60px_rgba(0,0,0,0.12)] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-[0_22px_60px_rgba(0,0,0,0.4)]">
+        <div className="flex h-9 items-center justify-center border-b border-neutral-100 bg-white dark:border-neutral-700 dark:bg-neutral-900">
+          <span className="h-1.5 w-14 rounded-full bg-neutral-200 dark:bg-neutral-600" />
         </div>
         <article className="wechat-article px-5 pb-10 pt-6">
-          <header className="mb-7 border-b border-slate-100 pb-5 dark:border-slate-700">
-            <h1 className="m-0 text-[22px] font-bold leading-[1.45] tracking-[-0.02em] text-[#171717] dark:text-slate-100">
+          <header className="mb-7 border-b border-neutral-100 pb-5 dark:border-neutral-700">
+            <h1 className="m-0 text-[22px] font-bold leading-[1.45] tracking-[-0.02em] text-[#171717] dark:text-neutral-100">
               {title || "无标题文章"}
             </h1>
-            <div className="mt-3 flex items-center gap-2 text-[11px] text-[#9a9a9a] dark:text-slate-500">
+            <div className="mt-3 flex items-center gap-2 text-[11px] text-[#9a9a9a] dark:text-neutral-500">
               <span className="font-medium text-[#576b95]">InkPress</span>
               <span>·</span>
               <span>刚刚</span>
@@ -150,8 +150,8 @@ export function WeChatPreview({
             />
           ) : (
             <div className="py-20 text-center">
-              <div className="mx-auto mb-3 h-10 w-10 rounded-2xl bg-slate-50 dark:bg-slate-800" />
-              <p className="text-xs leading-6 text-slate-400 dark:text-slate-500">
+              <div className="mx-auto mb-3 h-10 w-10 rounded-2xl bg-neutral-50 dark:bg-neutral-800" />
+              <p className="text-xs leading-6 text-neutral-400 dark:text-neutral-500">
                 开始写作后，精美排版会实时呈现在这里
               </p>
             </div>
