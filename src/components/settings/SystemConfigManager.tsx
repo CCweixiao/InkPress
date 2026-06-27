@@ -10,6 +10,8 @@ import {
   FolderCode,
   GripVertical,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
 } from "lucide-react";
 import {
@@ -534,37 +536,6 @@ export function SystemConfigManager({
     });
   }
 
-  function removeStorageOss() {
-    if (!window.confirm("确认清空 OSS 存储配置？默认存储将切回本地。")) return;
-    clearMsg();
-    const next: StorageForm = {
-      ...storageForm,
-      defaultProvider: "local",
-      providers: {
-        ...storageForm.providers,
-        aliyunOss: { ...EMPTY_STORAGE.providers.aliyunOss },
-      },
-    };
-    setStorageForm(next);
-    startTransition(async () => {
-      const res = await fetch("/api/system-config", {
-        method: storageConfig ? "PUT" : "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          key: STORAGE_CONFIG_KEY,
-          value: JSON.stringify(next, null, 2),
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "删除失败。");
-        return;
-      }
-      await refreshConfigs();
-      setMessage("OSS 存储配置已清空。");
-    });
-  }
-
   return (
     <div className="space-y-4">
       {/* 导入导出工具栏 */}
@@ -604,7 +575,7 @@ export function SystemConfigManager({
           onChange={setStorageForm}
           onSave={saveStorage}
           onTest={testStorage}
-          onRemoveOss={removeStorageOss}
+          onTabChange={clearMsg}
           pending={pending}
           ossExists={storageForm.providers.aliyunOss.enabled}
         />
@@ -636,6 +607,10 @@ function AgentEditor({
   onSave: () => void;
   pending: boolean;
 }) {
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
   function updateProject(index: number, patch: Partial<AgentProjectForm>) {
     onChange({
       ...value,
@@ -644,6 +619,51 @@ function AgentEditor({
       ),
     });
   }
+
+  function removeProject(index: number) {
+    onChange({
+      ...value,
+      projects: value.projects.filter((_, i) => i !== index),
+    });
+    // 删除后收缩展开集合：被删下标移除，其后下标前移
+    setExpanded((prev) => {
+      const next = new Set<number>();
+      prev.forEach((i) => {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      });
+      return next;
+    });
+  }
+
+  function toggleExpand(index: number) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  function addProject() {
+    const newIdx = value.projects.length;
+    onChange({
+      ...value,
+      projects: [
+        ...value.projects,
+        { id: `project-${newIdx + 1}`, name: "", root: "" },
+      ],
+    });
+    // 跳到新项目所在页并展开，便于立即填写
+    setPage(Math.floor(newIdx / pageSize));
+    setExpanded((prev) => new Set(prev).add(newIdx));
+  }
+
+  const total = value.projects.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(0, page), pageCount - 1);
+  const start = safePage * pageSize;
+  const paged = value.projects.slice(start, start + pageSize);
 
   return (
     <div className="space-y-5">
@@ -727,24 +747,7 @@ function AgentEditor({
               可选。对话中也能直接输入绝对路径并进行一次性授权。
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onChange({
-                ...value,
-                projects: [
-                  ...value.projects,
-                  {
-                    id: `project-${value.projects.length + 1}`,
-                    name: "",
-                    root: "",
-                  },
-                ],
-              })
-            }
-          >
+          <Button type="button" variant="outline" size="sm" onClick={addProject}>
             <Plus className="h-4 w-4" />
             添加项目
           </Button>
@@ -756,62 +759,146 @@ function AgentEditor({
             暂无长期信任项目；仍可在对话中临时授权本地路径
           </div>
         ) : (
-          value.projects.map((project, index) => (
-            <div
-              key={`${project.id}-${index}`}
-              className="rounded-md border border-border p-4"
-            >
-              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                <Field label="项目 ID">
-                  <Input
-                    value={project.id}
-                    placeholder="datastoria"
-                    onChange={(event) =>
-                      updateProject(index, { id: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="显示名称">
-                  <Input
-                    value={project.name}
-                    placeholder="Datastoria"
-                    onChange={(event) =>
-                      updateProject(index, { name: event.target.value })
-                    }
-                  />
-                </Field>
-                <div className="flex items-end">
+          <>
+            <div className="rounded-md border border-border overflow-hidden">
+              {/* 表头 */}
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 px-3 py-2 bg-muted/50 border-b border-border text-xs font-medium text-muted-foreground">
+                <div>项目 ID</div>
+                <div>显示名称</div>
+                <div>项目路径</div>
+                <div className="text-right">操作</div>
+              </div>
+              {/* 行（当前页） */}
+              {paged.map((project, i) => {
+                const idx = start + i;
+                const isOpen = expanded.has(idx);
+                return (
+                  <div
+                    key={idx}
+                    className="border-b border-border last:border-0"
+                  >
+                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 px-3 py-2 items-center">
+                      <div className="text-sm font-medium truncate min-w-0">
+                        {project.id || "—"}
+                      </div>
+                      <div className="text-sm truncate min-w-0 text-muted-foreground">
+                        {project.name || "—"}
+                      </div>
+                      <div className="text-xs font-mono truncate min-w-0 text-muted-foreground">
+                        {project.root || "—"}
+                      </div>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          aria-label={isOpen ? "收起" : "展开"}
+                          onClick={() => toggleExpand(idx)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <ChevronDown
+                            className={cn(
+                              "h-4 w-4 transition-transform",
+                              isOpen && "rotate-180"
+                            )}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="移除"
+                          onClick={() => removeProject(idx)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                    {isOpen && (
+                      <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/20 grid gap-3 sm:grid-cols-2">
+                        <Field label="项目 ID">
+                          <Input
+                            value={project.id}
+                            placeholder="datastoria"
+                            onChange={(e) =>
+                              updateProject(idx, { id: e.target.value })
+                            }
+                          />
+                        </Field>
+                        <Field label="显示名称">
+                          <Input
+                            value={project.name}
+                            placeholder="Datastoria"
+                            onChange={(e) =>
+                              updateProject(idx, { name: e.target.value })
+                            }
+                          />
+                        </Field>
+                        <Field label="项目绝对路径" full>
+                          <Input
+                            value={project.root}
+                            className="font-mono text-xs"
+                            placeholder="/Users/name/OpenProjects/project"
+                            onChange={(e) =>
+                              updateProject(idx, { root: e.target.value })
+                            }
+                          />
+                        </Field>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 分页 */}
+            <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+              <div className="text-xs text-muted-foreground">
+                共 {total} 个项目
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">每页</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(0);
+                    }}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-1">
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    className="text-red-600"
-                    onClick={() =>
-                      onChange({
-                        ...value,
-                        projects: value.projects.filter((_, i) => i !== index),
-                      })
-                    }
+                    className="h-8"
+                    disabled={safePage <= 0}
+                    onClick={() => setPage(safePage - 1)}
                   >
-                    <Trash2 className="h-4 w-4" />
-                    移除
+                    <ChevronLeft className="h-4 w-4" />
+                    上一页
+                  </Button>
+                  <span className="text-xs text-muted-foreground px-2 tabular-nums">
+                    第 {safePage + 1} / {pageCount} 页
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    disabled={safePage >= pageCount - 1}
+                    onClick={() => setPage(safePage + 1)}
+                  >
+                    下一页
+                    <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
-              <div className="mt-3">
-                <Field label="项目绝对路径">
-                  <Input
-                    value={project.root}
-                    className="font-mono text-xs"
-                    placeholder="/Users/name/OpenProjects/project"
-                    onChange={(event) =>
-                      updateProject(index, { root: event.target.value })
-                    }
-                  />
-                </Field>
-              </div>
             </div>
-          ))
+          </>
         )}
       </div>
     </div>
@@ -1481,7 +1568,7 @@ function StorageEditor({
   onChange,
   onSave,
   onTest,
-  onRemoveOss,
+  onTabChange,
   pending,
   ossExists,
 }: {
@@ -1490,13 +1577,17 @@ function StorageEditor({
   onChange: (v: StorageForm) => void;
   onSave: () => void;
   onTest: () => void;
-  onRemoveOss: () => void;
+  onTabChange: () => void;
   pending: boolean;
   ossExists: boolean;
 }) {
   const [storageTab, setStorageTab] = useState<"local" | "aliyun-oss">(
     value.defaultProvider
   );
+  function changeTab(tab: "local" | "aliyun-oss") {
+    setStorageTab(tab);
+    onTabChange();
+  }
   const oss = value.providers.aliyunOss;
   function updateOss(next: Partial<OssForm & { enabled: boolean }>) {
     const aliyunOss = { ...oss, ...next };
@@ -1553,49 +1644,14 @@ function StorageEditor({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground max-w-xl">
-          统一管理文章素材（图片、视频、音频、附件）的实际存储位置。上传文件时不再选择存储类型，系统会写入当前默认存储；代码解析、代码图谱和运行缓存仍保留在本地数据目录。
-        </p>
-        <div className="flex gap-2">
-          {ossExists && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onRemoveOss}
-              disabled={pending}
-              className="text-red-600 hover:text-red-700"
-            >
-              <Trash2 className="h-4 w-4" />
-              清空 OSS
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onTest}
-            disabled={pending || !ossExists}
-          >
-            <CheckCircle2 className="h-4 w-4" />
-            测试 OSS
-          </Button>
-          <Button onClick={onSave} disabled={pending} size="sm">
-            {pending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            保存配置
-          </Button>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground max-w-xl">
+        统一管理文章素材（图片、视频、音频、附件）的实际存储位置。上传文件时不再选择存储类型，系统会写入当前默认存储；代码解析、代码图谱和运行缓存仍保留在本地数据目录。
+      </p>
 
       <div className="flex gap-1 rounded-md bg-muted p-1 w-fit">
         <button
           type="button"
-          onClick={() => setStorageTab("local")}
+          onClick={() => changeTab("local")}
           className={cn(
             "px-3 py-1.5 rounded text-xs font-medium transition-colors",
             storageTab === "local"
@@ -1607,7 +1663,7 @@ function StorageEditor({
         </button>
         <button
           type="button"
-          onClick={() => setStorageTab("aliyun-oss")}
+          onClick={() => changeTab("aliyun-oss")}
           className={cn(
             "px-3 py-1.5 rounded text-xs font-medium transition-colors",
             storageTab === "aliyun-oss"
@@ -1639,6 +1695,16 @@ function StorageEditor({
                 if (checked) setDefaultProvider("local");
               }}
             />
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={onSave} disabled={pending} size="sm">
+              {pending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              保存配置
+            </Button>
           </div>
         </div>
       ) : (
@@ -1680,6 +1746,26 @@ function StorageEditor({
                 else setDefaultProvider("local");
               }}
             />
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onTest}
+              disabled={pending || !ossExists}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              测试 OSS
+            </Button>
+            <Button onClick={onSave} disabled={pending} size="sm">
+              {pending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              保存配置
+            </Button>
           </div>
         </div>
       )}
