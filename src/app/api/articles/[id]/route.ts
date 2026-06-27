@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { readContent, writeContent } from "@/lib/content-store";
+import {
+  readContentAt,
+  writeContentAt,
+  articleFilePath,
+} from "@/lib/content-store";
 import { withApiLog, logMutation } from "@/lib/api-log";
+import { TITLE_REGEX } from "@/lib/validation";
 
 const updateSchema = z.object({
-  title: z.string().max(200).optional(),
+  title: z
+    .string()
+    .max(200)
+    .regex(TITLE_REGEX, "标题包含不支持的字符")
+    .optional(),
   contentMd: z.string().optional(),
   digest: z.string().max(200).optional(),
   coverMediaId: z.string().nullable().optional(),
@@ -30,7 +39,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   const contentMd = article.contentPath
-    ? await readContent(article.id)
+    ? await readContentAt(article.contentPath)
     : (article.contentMd ?? "");
   return NextResponse.json({ article: { ...article, contentMd } });
 }
@@ -45,7 +54,18 @@ async function updateArticle(id: string, req: NextRequest) {
   // 正文写文件，不落库（contentMd 列仅作兼容）
   const { contentMd, ...rest } = parsed.data;
   if (typeof contentMd === "string") {
-    await writeContent(id, contentMd);
+    // contentPath 为正文位置的唯一真相源；缺失时按 spaceId 算出并回写
+    const existing = await prisma.article.findUnique({
+      where: { id },
+      select: { contentPath: true, spaceId: true },
+    });
+    const rel =
+      existing?.contentPath ??
+      articleFilePath({ articleId: id, spaceId: existing?.spaceId ?? null });
+    await writeContentAt(rel, contentMd);
+    if (!existing?.contentPath) {
+      await prisma.article.update({ where: { id }, data: { contentPath: rel } });
+    }
   }
   const article = await prisma.article.update({
     where: { id },

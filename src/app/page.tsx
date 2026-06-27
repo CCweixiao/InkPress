@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Boxes, FileCode2, FolderOpen, Palette, Settings, Sparkles, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getUiPreferences } from "@/lib/ui-preferences";
-import { previewSnippet } from "@/lib/content-store";
+import { previewSnippetAt } from "@/lib/content-store";
 import { APP_VERSION, REPO_URL, releaseTagUrl } from "@/lib/site";
 import { Button } from "@/components/ui/button";
 import { HomeView } from "@/components/spaces/HomeView";
@@ -50,7 +50,7 @@ export default async function HomePage() {
         id: a.id,
         title: a.title,
         contentMd: a.contentPath
-          ? await previewSnippet(a.id)
+          ? await previewSnippetAt(a.contentPath)
           : (a.contentMd ?? ""),
         digest: a.digest,
         status: a.status,

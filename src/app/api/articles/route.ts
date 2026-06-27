@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { writeContent, relativePath } from "@/lib/content-store";
+import { writeContentAt, articleFilePath } from "@/lib/content-store";
 import { withApiLog, logMutation } from "@/lib/api-log";
+import { TITLE_REGEX } from "@/lib/validation";
 
 const createSchema = z.object({
-  title: z.string().max(200).optional(),
+  title: z
+    .string()
+    .max(200)
+    .regex(TITLE_REGEX, "标题包含不支持的字符")
+    .optional(),
   themeId: z.string().optional(),
   spaceId: z.string().nullable().optional(),
 });
@@ -43,10 +48,15 @@ export const POST = withApiLog("POST /api/articles", async (req: NextRequest) =>
       spaceId: parsed.data.spaceId ?? null,
     },
   });
-  await writeContent(article.id, "");
+  // 正文按空间分目录：spaces/<sid>/articles/<aid>.md 或 articles/<aid>.md
+  const contentPath = articleFilePath({
+    articleId: article.id,
+    spaceId: article.spaceId,
+  });
+  await writeContentAt(contentPath, "");
   await prisma.article.update({
     where: { id: article.id },
-    data: { contentPath: relativePath(article.id) },
+    data: { contentPath },
   });
   logMutation("article", "create", { id: article.id, title: article.title, spaceId: article.spaceId });
   return NextResponse.json({ article }, { status: 201 });
