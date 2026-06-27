@@ -19,7 +19,7 @@ async function purgeOne(type: "article" | "space" | "asset", id: string) {
   else await purgeAsset(id);
 }
 
-/** 彻底删除回收站项（真删：文章删文件、素材删 OSS）。支持单个或批量。 */
+/** 彻底删除回收站项（真删：文章删文件、素材删统一存储对象）。支持单个或批量。 */
 export const POST = withApiLog("POST /api/recycle/purge", async (req: Request) => {
   const body = await req.json().catch(() => ({}));
 

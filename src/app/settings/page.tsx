@@ -39,7 +39,7 @@ export default function SettingsPage() {
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-8 space-y-6">
-        {/* 统一配置：AI 模型 / 写作 Agent / OSS / 微信公众号 */}
+        {/* 统一配置：AI 模型 / 写作 Agent / 存储 / 微信公众号 */}
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -47,7 +47,7 @@ export default function SettingsPage() {
               <CardTitle>系统配置</CardTitle>
             </div>
             <CardDescription>
-              在此可视化配置 AI 模型供应商、写作 Agent、OSS 对象存储与微信公众号凭证。
+              在此可视化配置 AI 模型供应商、写作 Agent、素材存储与微信公众号凭证。
               所有配置存储于本地数据库（仅本机可读），AI / 发布接口将自动加载，无需编辑环境变量。
             </CardDescription>
           </CardHeader>

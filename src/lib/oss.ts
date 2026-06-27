@@ -2,12 +2,14 @@ import OSS from "ali-oss";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
-  OSS_CONFIG_KEY,
   type OssConfig,
-  parseOssConfig,
 } from "@/lib/oss-config";
 import { prisma } from "@/lib/db";
 import { moduleLogger } from "@/lib/logger";
+import {
+  getStorageConfig,
+  hasAliyunOssStorageConfig,
+} from "@/lib/storage-config";
 
 const log = moduleLogger("oss");
 
@@ -20,25 +22,15 @@ export type UploadedFile = {
 };
 
 export async function getOssConfig(): Promise<OssConfig> {
-  const item = await prisma.systemConfig.findUnique({
-    where: { key: OSS_CONFIG_KEY },
-  });
-  if (!item) throw new Error("尚未配置 OSS，请先在「设置」中配置 OSS。");
-  return parseOssConfig(item.value);
+  const config = await getStorageConfig();
+  const oss = config.providers.aliyunOss;
+  if (!oss?.enabled) throw new Error("尚未配置 OSS，请先在「设置」中配置 OSS 存储。");
+  return oss;
 }
 
 /** OSS 是否已配置（不抛错，用于判断是否走 OSS 上传） */
 export async function hasOssConfig(): Promise<boolean> {
-  const item = await prisma.systemConfig.findUnique({
-    where: { key: OSS_CONFIG_KEY },
-  });
-  if (!item) return false;
-  try {
-    parseOssConfig(item.value);
-    return true;
-  } catch {
-    return false;
-  }
+  return hasAliyunOssStorageConfig();
 }
 
 function createClient(config: OssConfig) {
@@ -70,6 +62,14 @@ function publicUrl(config: OssConfig, key: string) {
     return `${normalized.replace("://", `://${config.bucket}.`)}/${key}`;
   }
   return `${normalized}/${key}`;
+}
+
+function safeObjectKey(key: string) {
+  const normalized = key.replaceAll("\\", "/").replace(/^\/+/, "");
+  if (!normalized || normalized.includes("../") || normalized.startsWith("..")) {
+    throw new Error("OSS 对象 key 不合法。");
+  }
+  return normalized;
 }
 
 function extensionFromName(filename: string) {
@@ -155,6 +155,40 @@ export async function uploadBufferToOss(
   };
 }
 
+export async function uploadBufferToOssKey(
+  buffer: Buffer,
+  key: string,
+  contentType: string
+): Promise<UploadedFile> {
+  const config = await getOssConfig();
+  const objectKey = safeObjectKey(key);
+  const start = Date.now();
+
+  try {
+    await createClient(config).put(objectKey, buffer, {
+      headers: {
+        "Content-Type": contentType,
+      },
+    });
+  } catch (err) {
+    log.error({ key: objectKey, size: buffer.byteLength, err }, "OSS 指定 key 上传失败");
+    throw err;
+  }
+
+  log.info(
+    { key: objectKey, size: buffer.byteLength, durationMs: Date.now() - start },
+    "OSS 指定 key 上传完成"
+  );
+
+  return {
+    key: objectKey,
+    url: publicUrl(config, objectKey),
+    name: path.basename(objectKey),
+    size: buffer.byteLength,
+    contentType,
+  };
+}
+
 export async function deleteFromOss(key: string) {
   const config = await getOssConfig();
   const start = Date.now();
@@ -229,10 +263,11 @@ export async function testOssConfig() {
 
 /** 按 mime 决定 OSS 存储目录与 Asset kind */
 export function classifyByContentType(contentType: string): {
-  kind: "image" | "video" | "file";
+  kind: "image" | "video" | "audio" | "file";
   dir: string;
 } {
   if (contentType.startsWith("image/")) return { kind: "image", dir: "images" };
   if (contentType.startsWith("video/")) return { kind: "video", dir: "videos" };
+  if (contentType.startsWith("audio/")) return { kind: "audio", dir: "audios" };
   return { kind: "file", dir: "files" };
 }

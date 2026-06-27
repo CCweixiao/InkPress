@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { uploadToOss, classifyByContentType } from "@/lib/oss";
+import { classifyByContentType } from "@/lib/oss";
 import { prisma } from "@/lib/db";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
 import { syncAssetToWechat } from "@/lib/wechat/asset-sync";
 import { withApiLog, logMutation } from "@/lib/api-log";
 import { moduleLogger } from "@/lib/logger";
+import { originalFilenameMetadata, putBufferObject } from "@/lib/storage";
 
 export const runtime = "nodejs";
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -13,7 +14,7 @@ const log = moduleLogger("upload.api");
 
 /**
  * 通用文件上传：multipart/form-data 字段 file = File
- * 上传到 OSS，并落 Asset 表。
+ * 写入统一存储层，并落 Asset 表。
  * 字段：file(必填)、articleId?、spaceId?、description?、tags?(逗号分隔)
  *       syncToWechat?(任意非空字符串=true) — 勾选后同步到公众号素材库
  */
@@ -44,15 +45,26 @@ export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   const syncToWechat = !!formData.get("syncToWechat");
 
   try {
-    const uploaded = await uploadToOss(file, dir);
+    const storageObject = await putBufferObject({
+      buffer: Buffer.from(await file.arrayBuffer()),
+      filename: file.name,
+      contentType,
+      kind: dir,
+      articleId,
+      spaceId,
+      metadata: originalFilenameMetadata(file.name),
+      preferCloud: true,
+    });
     const asset = await prisma.asset.create({
       data: {
         name: genAssetName(file.name, contentType), // 自动短 UUID 名
-        ossKey: uploaded.key,
-        url: uploaded.url,
+        ossKey: storageObject.key,
+        url: storageObject.url ?? `/api/storage/${storageObject.id}`,
         kind,
-        size: uploaded.size,
-        contentType: uploaded.contentType,
+        size: storageObject.size,
+        contentType: storageObject.contentType,
+        storageObjectId: storageObject.id,
+        metadataJson: storageObject.metadataJson,
         description,
         tagsJson,
         articleId,

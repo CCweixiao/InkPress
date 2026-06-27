@@ -2,16 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db";
-import {
-  hasOssConfig,
-  multipartUploadFileToOss,
-  classifyByContentType,
-} from "@/lib/oss";
+import { classifyByContentType } from "@/lib/oss";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
 import { syncAssetToWechat } from "@/lib/wechat/asset-sync";
 import { cacheDir } from "@/lib/paths";
 import { withApiLog, logMutation } from "@/lib/api-log";
 import { moduleLogger } from "@/lib/logger";
+import { originalFilenameMetadata, putFileObject } from "@/lib/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,7 +94,7 @@ async function receiveChunk(uploadId: string, index: number, data: Buffer) {
   return { received: files.length, total: meta.total };
 }
 
-/** 合并所有分片并上传 OSS + 写 Asset */
+/** 合并所有分片并写入统一存储层 + 写 Asset */
 async function completeUpload(uploadId: string) {
   const meta = await readMeta(uploadId);
   if (!meta) throw new Error("上传会话不存在或已过期");
@@ -116,23 +113,29 @@ async function completeUpload(uploadId: string) {
     await writeHandle.close();
   }
 
-  const { kind, dir: ossDir } = classifyByContentType(meta.contentType);
-  const uploaded = await multipartUploadFileToOss(
-    merged,
-    meta.fileName,
-    meta.contentType,
-    ossDir
-  );
+  const { kind, dir: storageKind } = classifyByContentType(meta.contentType);
+  const storageObject = await putFileObject({
+    filePath: merged,
+    filename: meta.fileName,
+    contentType: meta.contentType,
+    kind: storageKind,
+    articleId: meta.articleId ?? null,
+    spaceId: meta.spaceId ?? null,
+    metadata: originalFilenameMetadata(meta.fileName),
+    preferCloud: true,
+  });
 
   // 落 Asset（双重归属）。名称用自动生成的短 UUID，元数据从会话带入
   const asset = await prisma.asset.create({
     data: {
       name: genAssetName(meta.fileName, meta.contentType),
-      ossKey: uploaded.key,
-      url: uploaded.url,
+      ossKey: storageObject.key,
+      url: storageObject.url ?? `/api/storage/${storageObject.id}`,
       kind,
-      size: uploaded.size,
-      contentType: uploaded.contentType,
+      size: storageObject.size,
+      contentType: storageObject.contentType,
+      storageObjectId: storageObject.id,
+      metadataJson: storageObject.metadataJson,
       description: meta.description ?? "",
       tagsJson: meta.tagsJson ?? "[]",
       articleId: meta.articleId ?? null,
@@ -186,10 +189,6 @@ async function completeUpload(uploadId: string) {
 }
 
 export const POST = withApiLog("POST /api/upload/chunk", async (req: NextRequest) => {
-  if (!(await hasOssConfig())) {
-    return NextResponse.json({ error: "尚未配置 OSS。" }, { status: 400 });
-  }
-
   const url = new URL(req.url);
   const action = url.searchParams.get("action") ?? "chunk";
 

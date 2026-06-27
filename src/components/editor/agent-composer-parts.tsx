@@ -9,12 +9,16 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-export type ModelOption = { id: string; name: string; isDefault: boolean };
+export type ModelOption = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  isDefault: boolean;
+};
 export type Provider = {
   id: string;
   name: string;
   models: ModelOption[];
-  isDefault: boolean;
 };
 
 /** 供应商/模型选择状态：拉取 /api/ai/providers，管理 providerId + modelId。 */
@@ -31,13 +35,20 @@ export function useModelSelection() {
         if (!active) return;
         const list = data.providers ?? [];
         setProviders(list);
-        const provider = list.find((item) => item.isDefault) ?? list[0];
-        if (!provider) return;
-        setProviderId(provider.id);
-        setModelId(
-          (provider.models.find((model) => model.isDefault) ??
-            provider.models[0])?.id ?? ""
-        );
+        if (!list.length) return;
+        // default 现在是「全局唯一默认模型」（跨供应商）：扫描全部启用模型。
+        let nextProviderId = list[0].id;
+        let nextModelId = list[0].models[0]?.id ?? "";
+        for (const provider of list) {
+          const def = provider.models.find((model) => model.isDefault);
+          if (def) {
+            nextProviderId = provider.id;
+            nextModelId = def.id;
+            break;
+          }
+        }
+        setProviderId(nextProviderId);
+        setModelId(nextModelId);
       })
       .catch(() => undefined);
     return () => {
