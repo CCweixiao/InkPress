@@ -1,10 +1,12 @@
 {
   "version": 1,
   "skills": [
-    {"id":"wechat-writing","version":"2.0.0","license":"Proprietary","references":["OpenAI Agent Skills","Anthropic doc-coauthoring"],"evalSet":"writing"},
+    {"id":"wechat-writing","version":"2.1.0","license":"Proprietary","references":["OpenAI Agent Skills","Anthropic doc-coauthoring"],"evalSet":"writing"},
+    {"id":"wechat-knowledge-explainer","version":"1.0.0","license":"Proprietary","references":["OpenAI Agent Skills","Anthropic doc-coauthoring"],"evalSet":"knowledge-explainer"},
     {"id":"de-ai-writing","version":"1.0.0","license":"Upstream-derived","references":["OUBIGFA/De-AI-Prompt-Enhancer-Writer-Booster-SKILL"],"evalSet":"polish"},
     {"id":"editorial-review","version":"2.0.0","license":"Proprietary","references":["Anthropic doc-coauthoring"],"evalSet":"review"},
     {"id":"web-research","version":"2.0.0","license":"Proprietary","references":["OpenAI notion-research-documentation"],"evalSet":"research"},
+    {"id":"article-summary","version":"1.0.0","license":"Proprietary","references":["OpenAI Agent Skills"],"evalSet":"summary"},
     {"id":"project-to-article","version":"2.0.0","license":"Proprietary","references":["OpenCode explore agent"],"evalSet":"project-article"},
     {"id":"codebase-exploration","version":"1.0.0","license":"Proprietary","references":["OpenCode explore agent","OpenAI Codex"],"evalSet":"code-explore"},
     {"id":"technical-documentation","version":"1.0.0","license":"Proprietary","references":["Anthropic doc-coauthoring","Mermaid"],"evalSet":"technical-doc"},
