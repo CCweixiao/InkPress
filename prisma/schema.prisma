@@ -156,6 +156,33 @@ model TechnicalDocument {
   @@index([updatedAt])
 }
 
+/// 统一存储对象：只描述文件实际存放位置和完整性。
+/// SQLite 保留元数据；文件可位于本地 storage、阿里云 OSS 或未来的 S3/R2/COS/MinIO。
+model StorageObject {
+  id           String   @id @default(cuid())
+  provider     String // local | aliyun-oss | s3 | r2 | cos | qiniu | minio
+  bucket       String?
+  key          String // provider 内部对象 key；local 时为 storage 根下相对路径
+  localPath    String? // local provider 的相对路径，等同 key；保留字段便于迁移/审计
+  url          String? // 可访问 URL；local provider 通常为 /api/storage/<id>
+  contentType  String   @default("")
+  size         Int      @default(0)
+  sha256       String
+  etag         String?
+  visibility   String   @default("private") // private | public
+  status       String   @default("synced") // local-only | remote-only | synced | failed
+  metadataJson String   @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assets Asset[]
+
+  @@unique([provider, key])
+  @@index([sha256])
+  @@index([provider])
+  @@index([createdAt])
+}
+
 /// 代码知识图谱缓存元数据。
 /// 图谱文件本身落在 InkPress 本地数据目录，不进入文章素材统一存储层。
 model CodeGraphCache {
@@ -305,16 +332,18 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 }
 
-/// 素材库（OSS 上传的图片 / 视频 / 文件）
+/// 文章素材库（统一存储的图片 / 视频 / 音频 / 文件）
 /// 双重归属：可绑定到 Space（spaceId）和/或 Article（articleId）
 model Asset {
   id          String    @id @default(cuid())
   name        String // 展示名（自动生成的短 UUID，如 a1b2c3d4.png）
-  ossKey      String // OSS 对象 key（删除用）
-  url         String // 可访问 URL（CDN / OSS 默认域名）
-  kind        String // "image" | "video" | "file"
+  ossKey      String // 兼容旧字段：对象 key（OSS 或统一存储 key）
+  url         String // 兼容旧字段：可访问 URL（云 URL 或 /api/storage/<id>）
+  kind        String // "image" | "video" | "audio" | "file" | ...
   size        Int       @default(0) // 字节
   contentType String    @default("") // mime
+  storageObjectId String?
+  metadataJson String    @default("{}")
   // 元数据（供 AI 自动插图判断相关性）
   description String    @default("") // 素材描述
   tagsJson    String    @default("[]") // 标签（JSON 字符串数组）
@@ -334,11 +363,13 @@ model Asset {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  storageObject StorageObject? @relation(fields: [storageObjectId], references: [id], onDelete: SetNull)
   space   Space?   @relation(fields: [spaceId], references: [id])
   article Article? @relation(fields: [articleId], references: [id])
 
   @@index([kind])
   @@index([createdAt])
+  @@index([storageObjectId])
   @@index([spaceId])
   @@index([articleId])
   @@index([trashed])

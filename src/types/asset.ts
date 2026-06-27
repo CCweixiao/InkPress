@@ -1,5 +1,5 @@
 /** 素材类型（与 Asset.kind 一致） */
-export type AssetKind = "image" | "video" | "file";
+export type AssetKind = "image" | "video" | "audio" | "file";
 
 /** 公众号素材库同步状态：null=未尝试过同步（未勾选） */
 export type WxSyncStatus = "success" | "failed" | null;
@@ -17,6 +17,8 @@ export type Asset = {
   kind: AssetKind;
   size: number;
   contentType: string;
+  storageObjectId?: string | null;
+  metadataJson?: string;
   description: string;
   tagsJson: string;
   spaceId: string | null;

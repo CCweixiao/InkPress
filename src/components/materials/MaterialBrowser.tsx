@@ -115,7 +115,6 @@ export function MaterialBrowser({
   }
 
   async function handleUpload(files: FileList) {
-    if (!ossConfigured) return;
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
@@ -208,16 +207,6 @@ export function MaterialBrowser({
 
       {/* 右：素材网格 */}
       <div className="space-y-4">
-        {!ossConfigured && (
-          <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
-            尚未配置 OSS，素材上传不可用。请先到{" "}
-            <a href="/settings" className="underline font-medium">
-              设置 → OSS 配置
-            </a>
-            。
-          </div>
-        )}
-
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-medium">{scopeLabel}</div>
           <input
