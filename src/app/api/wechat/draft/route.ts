@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { convertToWeChat } from "@/lib/convert/to-wechat";
 import { uploadBodyImage } from "@/lib/wechat/material";
 import { addDraft, updateDraft } from "@/lib/wechat/draft";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
 import { moduleLogger } from "@/lib/logger";
 import { withApiLog } from "@/lib/api-log";
 
@@ -85,7 +85,7 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
   try {
     // 正文从文件读取（回退 contentMd 列兼容旧数据）
     const markdown = article.contentPath
-      ? await readContent(article.id)
+      ? await readContentAt(article.contentPath)
       : (article.contentMd ?? "");
     // 2. 转换（含图片上传替换；failedImages 为上传失败的外链，原样保留在 HTML 中）
     const { html, failedImages } = await convertToWeChat(

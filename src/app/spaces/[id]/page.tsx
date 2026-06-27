@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getUiPreferences } from "@/lib/ui-preferences";
-import { previewSnippet } from "@/lib/content-store";
+import { previewSnippetAt } from "@/lib/content-store";
 import { NewArticleButton } from "@/components/articles/NewArticleButton";
 import { SpaceDetail } from "@/components/spaces/SpaceDetail";
 import type { ArticleListItem } from "@/components/articles/ArticleCard";
@@ -38,7 +38,7 @@ export default async function SpaceDetailPage({ params }: Params) {
       id: a.id,
       title: a.title,
       contentMd: a.contentPath
-        ? await previewSnippet(a.id)
+        ? await previewSnippetAt(a.contentPath)
         : (a.contentMd ?? ""),
       digest: a.digest,
       status: a.status,

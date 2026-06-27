@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
 import { EditorWorkspace } from "@/components/editor/EditorWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export default async function EditorPage({ params }: Params) {
   if (!article) notFound();
 
   const contentMd = article.contentPath
-    ? await readContent(article.id)
+    ? await readContentAt(article.contentPath)
     : (article.contentMd ?? "");
 
   const themes = await prisma.theme.findMany({

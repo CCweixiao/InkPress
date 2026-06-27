@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { deleteContent } from "@/lib/content-store";
+import { deleteContentAt } from "@/lib/content-store";
 import { deleteFromOss } from "@/lib/oss";
 import { deleteStorageObject } from "@/lib/storage";
 import { deleteWxMaterial } from "@/lib/wechat/material";
@@ -53,7 +53,14 @@ async function purgeAssetResources(asset: {
 
 /** 彻底删除一篇文章：删正文文件 + 关联素材(OSS+微信+DB) + DB 行 */
 export async function purgeArticle(id: string) {
-  await deleteContent(id).catch(() => {});
+  // 取正文位置后按 contentPath 删文件（兼容无 contentPath 的旧数据：无则不删文件）
+  const article = await prisma.article.findUnique({
+    where: { id },
+    select: { contentPath: true },
+  });
+  if (article?.contentPath) {
+    await deleteContentAt(article.contentPath).catch(() => {});
+  }
   // 先清理其关联素材（外部资源 + DB 行），解除外键依赖
   const assets = await prisma.asset.findMany({
     where: { articleId: id },
