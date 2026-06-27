@@ -24,6 +24,7 @@ type RawConfig = { key: string; value: string };
 const KEY_LABELS: Record<string, string> = {
   "inkpress.llm": "AI 模型",
   "inkpress.agent": "写作 Agent",
+  "inkpress.storage": "存储配置",
   "inkpress.oss": "OSS 存储",
   "inkpress.wechat": "微信公众号",
 };
@@ -64,6 +65,14 @@ function summarize(key: string, parsed: unknown): string {
   }
   if (parsed && typeof parsed === "object") {
     const obj = parsed as Record<string, unknown>;
+    if (key === "inkpress.storage") {
+      const providers =
+        obj.providers && typeof obj.providers === "object"
+          ? (obj.providers as Record<string, unknown>)
+          : {};
+      const aliyun = providers.aliyunOss as Record<string, unknown> | undefined;
+      return `默认：${obj.defaultProvider ?? "local"}，OSS：${aliyun?.enabled ? "已启用" : "未启用"}`;
+    }
     if (key === "inkpress.oss") {
       return `bucket: ${obj.bucket ?? "-"}，domain: ${obj.domain ?? "-"}`;
     }

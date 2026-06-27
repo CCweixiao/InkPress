@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { deleteContent } from "@/lib/content-store";
 import { deleteFromOss } from "@/lib/oss";
+import { deleteStorageObject } from "@/lib/storage";
 import { deleteWxMaterial } from "@/lib/wechat/material";
 import { createHash } from "node:crypto";
 import { moduleLogger } from "@/lib/logger";
@@ -21,11 +22,18 @@ async function purgeAssetResources(asset: {
   ossKey: string;
   url: string;
   wxMediaId: string | null;
+  storageObjectId?: string | null;
 }): Promise<void> {
-  // 1. 删 OSS 对象
-  await deleteFromOss(asset.ossKey).catch((e) => {
-    log.warn({ ossKey: asset.ossKey, err: e }, "OSS 删除失败");
-  });
+  // 1. 删统一存储对象；旧数据没有 storageObjectId 时回退 OSS 删除。
+  if (asset.storageObjectId) {
+    await deleteStorageObject(asset.storageObjectId).catch((e) => {
+      log.warn({ storageObjectId: asset.storageObjectId, err: e }, "统一存储对象删除失败");
+    });
+  } else {
+    await deleteFromOss(asset.ossKey).catch((e) => {
+      log.warn({ ossKey: asset.ossKey, err: e }, "OSS 删除失败");
+    });
+  }
 
   // 2. 删微信永久素材（仅 add_material 产生的 media_id；uploadimg 正文图无 media_id 无需删）
   if (asset.wxMediaId) {
@@ -49,7 +57,7 @@ export async function purgeArticle(id: string) {
   // 先清理其关联素材（外部资源 + DB 行），解除外键依赖
   const assets = await prisma.asset.findMany({
     where: { articleId: id },
-    select: { id: true, ossKey: true, url: true, wxMediaId: true },
+    select: { id: true, ossKey: true, url: true, wxMediaId: true, storageObjectId: true },
   });
   for (const a of assets) {
     await purgeAssetResources(a);
@@ -65,7 +73,7 @@ export async function purgeSpace(id: string) {
   // 空间级素材（不绑文章的）解除外键依赖
   const assets = await prisma.asset.findMany({
     where: { spaceId: id, articleId: null },
-    select: { id: true, ossKey: true, url: true, wxMediaId: true },
+    select: { id: true, ossKey: true, url: true, wxMediaId: true, storageObjectId: true },
   });
   for (const a of assets) {
     await purgeAssetResources(a);
@@ -80,7 +88,7 @@ export async function purgeSpace(id: string) {
 export async function purgeAsset(id: string) {
   const asset = await prisma.asset.findUnique({
     where: { id },
-    select: { id: true, ossKey: true, url: true, wxMediaId: true },
+    select: { id: true, ossKey: true, url: true, wxMediaId: true, storageObjectId: true },
   });
   if (!asset) return;
   await purgeAssetResources(asset);

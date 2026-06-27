@@ -81,7 +81,6 @@ export function MaterialLibrary({
   }
 
   async function handleUpload(files: FileList) {
-    if (!ossConfigured) return;
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
@@ -150,16 +149,6 @@ export function MaterialLibrary({
 
   return (
     <div className="space-y-6">
-      {!ossConfigured && (
-        <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
-          尚未配置 OSS，素材上传不可用。请先到{" "}
-          <a href="/settings" className="underline font-medium">
-            设置 → OSS 配置
-          </a>{" "}
-          完成配置。
-        </div>
-      )}
-
       {/* 工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-md bg-muted p-1">
@@ -207,7 +196,7 @@ export function MaterialLibrary({
           <CardContent className="flex flex-col items-center justify-center py-20 text-center">
             <FolderOpen className="h-12 w-12 text-muted-foreground/40 mb-4" />
             <p className="text-muted-foreground">
-              {ossConfigured ? "还没有素材，点击右上角上传" : "配置 OSS 后即可上传素材"}
+              还没有素材，点击右上角上传
             </p>
           </CardContent>
         </Card>

@@ -12,20 +12,47 @@ import {
   Bot,
   FolderCode,
   MessageCircle,
+  GripVertical,
+  ChevronDown,
+  ExternalLink,
 } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { LLM_PRESETS } from "@/lib/llm-presets";
 import { ConfigImportExport } from "./ConfigImportExport";
 
 export const LLM_CONFIG_KEY = "inkpress.llm";
 export const OSS_CONFIG_KEY = "inkpress.oss";
+export const STORAGE_CONFIG_KEY = "inkpress.storage";
 export const AGENT_CONFIG_KEY = "inkpress.agent";
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
 
-type Tab = "llm" | "agent" | "oss" | "wechat";
+type Tab = "llm" | "agent" | "storage" | "wechat";
 
 type SystemConfig = {
   id: string;
@@ -35,15 +62,24 @@ type SystemConfig = {
   updatedAt: string;
 };
 
+type StorageInfo = {
+  localPath: string;
+};
+
+type LlmFormModel = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  isDefault: boolean;
+};
+
 type LlmForm = {
   id: string;
   name: string;
   apiProvider: string;
   baseUrl: string;
   apiKey: string;
-  model: string[];
-  enabled: boolean;
-  default: boolean;
+  models: LlmFormModel[];
   temperature: number;
 };
 
@@ -52,6 +88,14 @@ type OssForm = {
   domain: string;
   accessKeyId: string;
   accessKeySecret: string;
+};
+
+type StorageForm = {
+  defaultProvider: "local" | "aliyun-oss";
+  providers: {
+    local: { enabled: true };
+    aliyunOss: OssForm & { enabled: boolean };
+  };
 };
 
 type AgentProjectForm = {
@@ -73,15 +117,14 @@ type WechatForm = {
   secret: string;
 };
 
-const DEFAULT_LLM: LlmForm = {
-  id: "zhipu-glm",
-  name: "智谱 GLM",
+/** 自定义新增供应商的空模板（models 空、各连接字段空）。 */
+const EMPTY_LLM_PROVIDER: LlmForm = {
+  id: "",
+  name: "",
   apiProvider: "openai-compatible",
-  baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+  baseUrl: "",
   apiKey: "",
-  model: ["glm-4.6"],
-  enabled: true,
-  default: true,
+  models: [],
   temperature: 0.7,
 };
 
@@ -90,6 +133,17 @@ const EMPTY_OSS: OssForm = {
   domain: "",
   accessKeyId: "",
   accessKeySecret: "",
+};
+
+const EMPTY_STORAGE: StorageForm = {
+  defaultProvider: "local",
+  providers: {
+    local: { enabled: true },
+    aliyunOss: {
+      enabled: false,
+      ...EMPTY_OSS,
+    },
+  },
 };
 
 const EMPTY_WECHAT: WechatForm = {
@@ -105,32 +159,15 @@ const DEFAULT_AGENT: AgentForm = {
   contextBudgetTokens: 32000,
 };
 
-const PRESET_LLM: Array<Partial<LlmForm> & { id: string; name: string }> = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    apiProvider: "openai-compatible",
-    baseUrl: "https://api.openaiai.net/v1",
-    model: ["gpt-4o", "gpt-4o-mini"],
-  },
-  {
-    id: "zhipu-glm",
-    name: "智谱 GLM",
-    apiProvider: "openai-compatible",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    model: ["glm-4.6", "glm-4.5"],
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    apiProvider: "openai-compatible",
-    baseUrl: "https://api.deepseek.com/v1",
-    model: ["deepseek-chat", "deepseek-reasoner"],
-  },
-];
-
+/**
+ * 解析 inkpress.llm 的原始 JSON 字符串为表单状态。
+ * - 新形状：models 为对象数组，每项含 enabled/isDefault。
+ * - 旧形状（向后兼容）：供应商级 enabled/isDefault + models 为字符串数组 →
+ *   字符串模型继承 legacyEnabled；legacyDefault 时首个模型置为 default。
+ * - 空值返回 []，让 7 个预设以「未配置」形态出现在树里。
+ */
 function parseLlmValue(value?: string): LlmForm[] {
-  if (!value) return [{ ...DEFAULT_LLM }];
+  if (!value) return [];
   try {
     const parsed = JSON.parse(value);
     const items = Array.isArray(parsed) ? parsed : [parsed];
@@ -138,42 +175,73 @@ function parseLlmValue(value?: string): LlmForm[] {
       .filter((item) => item && typeof item === "object")
       .map((item, index) => {
         const c = item as Record<string, unknown> & {
-          isDefault?: boolean;
           apiUrl?: string;
           api?: string;
           key?: string;
           provider?: string;
         };
-        const rawModel = (c.models ?? c.model) as unknown;
-        const models = Array.isArray(rawModel)
-          ? rawModel
-              .map((m) => {
-                if (typeof m === "string") return m;
+        const legacyEnabled =
+          typeof c.enabled === "boolean" ? c.enabled : true;
+        const legacyDefault = Boolean(c.default ?? c.isDefault);
+        const rawModels = (c.models ?? c.model) as unknown;
+        const models: LlmFormModel[] = Array.isArray(rawModels)
+          ? (rawModels
+              .map((m, i) => {
+                if (typeof m === "string") {
+                  return {
+                    id: m,
+                    name: m,
+                    enabled: legacyEnabled,
+                    isDefault: i === 0 && legacyDefault,
+                  };
+                }
                 if (m && typeof m === "object") {
                   const mo = m as Record<string, unknown>;
-                  return String(mo.id ?? mo.name ?? "");
+                  const id = String(mo.id ?? mo.name ?? "");
+                  if (!id) return null;
+                  return {
+                    id,
+                    name: String(mo.name ?? mo.label ?? id),
+                    enabled:
+                      typeof mo.enabled === "boolean"
+                        ? mo.enabled
+                        : legacyEnabled,
+                    isDefault:
+                      typeof mo.isDefault === "boolean"
+                        ? mo.isDefault
+                        : typeof mo.default === "boolean"
+                          ? mo.default
+                          : i === 0 && legacyDefault,
+                  };
                 }
-                return "";
+                return null;
               })
-              .filter(Boolean)
-          : typeof rawModel === "string" && rawModel.trim()
-            ? [rawModel.trim()]
+              .filter((m): m is LlmFormModel => m !== null) as LlmFormModel[])
+          : typeof rawModels === "string" && rawModels.trim()
+            ? [
+                {
+                  id: rawModels.trim(),
+                  name: rawModels.trim(),
+                  enabled: legacyEnabled,
+                  isDefault: legacyDefault,
+                },
+              ]
             : [];
         return {
           id: String(c.id ?? `llm-${index + 1}`),
-          name: String(c.name ?? c.provider ?? c.apiProvider ?? `LLM ${index + 1}`),
+          name: String(
+            c.name ?? c.provider ?? c.apiProvider ?? `LLM ${index + 1}`
+          ),
           apiProvider: String(c.apiProvider ?? c.provider ?? "openai-compatible"),
           baseUrl: String(c.baseUrl ?? c.apiUrl ?? c.api ?? ""),
           apiKey: typeof c.apiKey === "string" ? c.apiKey : String(c.key ?? ""),
-          model: models,
-          enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-          default: Boolean(c.default ?? c.isDefault),
+          models,
           temperature: typeof c.temperature === "number" ? c.temperature : 0.7,
         };
       });
-    return configs.length ? configs : [{ ...DEFAULT_LLM }];
+    return configs;
   } catch {
-    return [{ ...DEFAULT_LLM }];
+    return [];
   }
 }
 
@@ -189,6 +257,63 @@ function parseOssValue(value?: string): OssForm {
     };
   } catch {
     return { ...EMPTY_OSS };
+  }
+}
+
+function parseStorageValue(value?: string, legacyOssValue?: string): StorageForm {
+  if (!value && legacyOssValue) {
+    const legacy = parseOssValue(legacyOssValue);
+    const enabled = !!(
+      legacy.bucket &&
+      legacy.domain &&
+      legacy.accessKeyId &&
+      legacy.accessKeySecret
+    );
+    return {
+      defaultProvider: enabled ? "aliyun-oss" : "local",
+      providers: {
+        local: { enabled: true },
+        aliyunOss: { ...legacy, enabled },
+      },
+    };
+  }
+  if (!value) return { ...EMPTY_STORAGE, providers: { ...EMPTY_STORAGE.providers, aliyunOss: { ...EMPTY_STORAGE.providers.aliyunOss } } };
+  try {
+    const parsed = JSON.parse(value) as {
+      defaultProvider?: string;
+      default?: string;
+      providers?: {
+        local?: { enabled?: boolean };
+        aliyunOss?: Partial<OssForm> & { enabled?: boolean };
+        "aliyun-oss"?: Partial<OssForm> & { enabled?: boolean };
+        oss?: Partial<OssForm> & { enabled?: boolean };
+      };
+    };
+    const oss =
+      parsed.providers?.aliyunOss ??
+      parsed.providers?.["aliyun-oss"] ??
+      parsed.providers?.oss;
+    const aliyunOss = {
+      enabled: oss?.enabled === true,
+      bucket: oss?.bucket ?? "",
+      domain: oss?.domain ?? "",
+      accessKeyId: oss?.accessKeyId ?? "",
+      accessKeySecret: oss?.accessKeySecret ?? "",
+    };
+    const defaultProvider =
+      (parsed.defaultProvider ?? parsed.default) === "aliyun-oss" &&
+      aliyunOss.enabled
+        ? "aliyun-oss"
+        : "local";
+    return {
+      defaultProvider,
+      providers: {
+        local: { enabled: true },
+        aliyunOss,
+      },
+    };
+  } catch {
+    return { ...EMPTY_STORAGE, providers: { ...EMPTY_STORAGE.providers, aliyunOss: { ...EMPTY_STORAGE.providers.aliyunOss } } };
   }
 }
 
@@ -240,17 +365,22 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
   const [error, setError] = useState("");
 
   const [configsState, setConfigsState] = useState<SystemConfig[]>(configs ?? []);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo>({ localPath: "" });
 
   // 客户端自取（脱敏），密钥不会进客户端
   useEffect(() => {
     if (configs) return; // 已由 SSR 提供
     fetch("/api/system-config")
       .then((r) => r.json())
-      .then((data) => setConfigsState(data.configs ?? []))
+      .then((data) => {
+        setConfigsState(data.configs ?? []);
+        setStorageInfo(data.storageInfo ?? { localPath: "" });
+      })
       .catch(() => {});
   }, [configs]);
 
   const llmConfig = configsState.find((c) => c.key === LLM_CONFIG_KEY);
+  const storageConfig = configsState.find((c) => c.key === STORAGE_CONFIG_KEY);
   const ossConfig = configsState.find((c) => c.key === OSS_CONFIG_KEY);
   const agentConfig = configsState.find((c) => c.key === AGENT_CONFIG_KEY);
   const wechatConfig = configsState.find((c) => c.key === WECHAT_CONFIG_KEY);
@@ -258,8 +388,8 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
   const [llmForms, setLlmForms] = useState<LlmForm[]>(() =>
     parseLlmValue(llmConfig?.value)
   );
-  const [ossForm, setOssForm] = useState<OssForm>(() =>
-    parseOssValue(ossConfig?.value)
+  const [storageForm, setStorageForm] = useState<StorageForm>(() =>
+    parseStorageValue(storageConfig?.value, ossConfig?.value)
   );
   const [agentForm, setAgentForm] = useState<AgentForm>(() =>
     parseAgentValue(agentConfig?.value)
@@ -274,7 +404,7 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
   useEffect(() => {
-    setOssForm(parseOssValue(ossConfig?.value));
+    setStorageForm(parseStorageValue(storageConfig?.value, ossConfig?.value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
   useEffect(() => {
@@ -287,7 +417,10 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
   }, [configsState]);
 
   const llmValue = useMemo(() => JSON.stringify(llmForms, null, 2), [llmForms]);
-  const ossValue = useMemo(() => JSON.stringify(ossForm, null, 2), [ossForm]);
+  const storageValue = useMemo(
+    () => JSON.stringify(storageForm, null, 2),
+    [storageForm]
+  );
   const agentValue = useMemo(
     () => JSON.stringify(agentForm, null, 2),
     [agentForm]
@@ -306,6 +439,7 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
     const res = await fetch("/api/system-config");
     const data = await res.json();
     setConfigsState(data.configs ?? []);
+    setStorageInfo(data.storageInfo ?? { localPath: "" });
   }
 
   function saveLlm() {
@@ -326,13 +460,13 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
     });
   }
 
-  function saveOss() {
+  function saveStorage() {
     clearMsg();
     startTransition(async () => {
       const res = await fetch("/api/system-config", {
-        method: ossConfig ? "PUT" : "POST",
+        method: storageConfig ? "PUT" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: OSS_CONFIG_KEY, value: ossValue }),
+        body: JSON.stringify({ key: STORAGE_CONFIG_KEY, value: storageValue }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -340,7 +474,7 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
         return;
       }
       await refreshConfigs();
-      setMessage("OSS 配置已保存。");
+      setMessage("存储配置已保存。");
     });
   }
 
@@ -380,27 +514,39 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
     });
   }
 
-  function testOss() {
+  function testStorage() {
     clearMsg();
     startTransition(async () => {
       const res = await fetch("/api/system-config/test", { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "OSS 配置测试失败。");
+        setError(data.error || "OSS 存储测试失败。");
         return;
       }
-      setMessage(data.message || "OSS 配置测试通过。");
+      setMessage(data.message || "OSS 存储测试通过。");
     });
   }
 
-  function removeOss() {
-    if (!ossConfig || !window.confirm("确认删除 OSS 配置？")) return;
+  function removeStorageOss() {
+    if (!window.confirm("确认清空 OSS 存储配置？默认存储将切回本地。")) return;
     clearMsg();
+    const next: StorageForm = {
+      ...storageForm,
+      defaultProvider: "local",
+      providers: {
+        ...storageForm.providers,
+        aliyunOss: { ...EMPTY_STORAGE.providers.aliyunOss },
+      },
+    };
+    setStorageForm(next);
     startTransition(async () => {
       const res = await fetch("/api/system-config", {
-        method: "DELETE",
+        method: storageConfig ? "PUT" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: OSS_CONFIG_KEY }),
+        body: JSON.stringify({
+          key: STORAGE_CONFIG_KEY,
+          value: JSON.stringify(next, null, 2),
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -408,8 +554,7 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
         return;
       }
       await refreshConfigs();
-      setOssForm({ ...EMPTY_OSS });
-      setMessage("OSS 配置已删除。");
+      setMessage("OSS 存储配置已清空。");
     });
   }
 
@@ -457,18 +602,18 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
         </button>
         <button
           onClick={() => {
-            setTab("oss");
+            setTab("storage");
             clearMsg();
           }}
           className={cn(
             "flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors",
-            tab === "oss"
+            tab === "storage"
               ? "bg-background shadow-sm"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
           <Cloud className="h-4 w-4" />
-          OSS 存储
+          存储配置
         </button>
         <button
           onClick={() => {
@@ -510,14 +655,15 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
           exists={!!wechatConfig}
         />
       ) : (
-        <OssEditor
-          value={ossForm}
-          onChange={setOssForm}
-          onSave={saveOss}
-          onTest={testOss}
-          onRemove={removeOss}
+        <StorageEditor
+          value={storageForm}
+          localPath={storageInfo.localPath}
+          onChange={setStorageForm}
+          onSave={saveStorage}
+          onTest={testStorage}
+          onRemoveOss={removeStorageOss}
           pending={pending}
-          exists={!!ossConfig}
+          ossExists={storageForm.providers.aliyunOss.enabled}
         />
       )}
 
@@ -731,6 +877,85 @@ function AgentEditor({
 
 /* ------------------------- LLM 编辑器 ------------------------- */
 
+/** 供应商树节点：已配置（来自 llmForms，可拖）或未配置预设（灰显，不可拖）。 */
+type ProviderTreeNode = {
+  id: string;
+  name: string;
+  apiProvider: string;
+  baseUrl: string;
+  apiKey: string;
+  models: LlmFormModel[];
+  temperature: number;
+  isConfigured: boolean;
+  isPreset: boolean;
+  docsUrl?: string;
+  /** 在 llmForms 中的下标；未配置为 -1。 */
+  formIndex: number;
+};
+
+type ProviderMutations = {
+  patchProvider: (node: ProviderTreeNode, patch: Partial<LlmForm>) => void;
+  patchModel: (
+    node: ProviderTreeNode,
+    modelIdx: number,
+    patch: Partial<LlmFormModel>
+  ) => void;
+  setModelDefault: (node: ProviderTreeNode, modelIdx: number) => void;
+  setModelEnabled: (
+    node: ProviderTreeNode,
+    modelIdx: number,
+    enabled: boolean
+  ) => void;
+  addModel: (node: ProviderTreeNode, id: string) => void;
+  removeModel: (node: ProviderTreeNode, modelIdx: number) => void;
+  removeProvider: (node: ProviderTreeNode) => void;
+};
+
+/**
+ * 构建供应商树：
+ * - 已配置节点（forms 的 DB 顺序，可拖）+ 未配置预设（JSON 原序，灰显）。
+ * - 匹配纯按 id：forms.id === preset.id 视为已配置预设。
+ */
+function buildProviderTree(forms: LlmForm[]): ProviderTreeNode[] {
+  const configured: ProviderTreeNode[] = forms.map((f, i) => {
+    const preset = LLM_PRESETS.find((p) => p.id === f.id);
+    return {
+      id: f.id,
+      name: f.name,
+      apiProvider: f.apiProvider,
+      baseUrl: f.baseUrl,
+      apiKey: f.apiKey,
+      models: f.models,
+      temperature: f.temperature,
+      isConfigured: true,
+      isPreset: Boolean(preset),
+      docsUrl: preset?.docsUrl,
+      formIndex: i,
+    };
+  });
+  const unconfigured: ProviderTreeNode[] = LLM_PRESETS.filter(
+    (p) => !forms.some((f) => f.id === p.id)
+  ).map((p) => ({
+    id: p.id,
+    name: p.name,
+    apiProvider: p.apiProvider,
+    baseUrl: p.baseUrl,
+    apiKey: "",
+    models: p.models.map((m, i) => ({
+      id: m.id,
+      name: m.name,
+      enabled: true,
+      isDefault: i === 0,
+    })),
+    temperature: 0.7,
+    isConfigured: false,
+    isPreset: true,
+    docsUrl: p.docsUrl,
+    formIndex: -1,
+  }));
+  return [...configured, ...unconfigured];
+}
+
 function LlmEditor({
   value,
   onChange,
@@ -742,48 +967,185 @@ function LlmEditor({
   onSave: () => void;
   pending: boolean;
 }) {
-  function update(index: number, patch: Partial<LlmForm>) {
-    onChange(
-      value
-        .map((item, i) =>
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const tree = useMemo(() => buildProviderTree(value), [value]);
+  const providerItemIds = useMemo(
+    () => tree.map((n) => `provider:${n.id}`),
+    [tree]
+  );
+
+  // 把节点物化进 llmForms（未配置预设首次编辑时），返回物化后的 forms 与下标。
+  function ensureForm(
+    node: ProviderTreeNode
+  ): { forms: LlmForm[]; index: number } {
+    if (node.formIndex >= 0) return { forms: value, index: node.formIndex };
+    const newForm: LlmForm = {
+      id: node.id,
+      name: node.name,
+      apiProvider: node.apiProvider,
+      baseUrl: node.baseUrl,
+      apiKey: node.apiKey,
+      models: node.models,
+      temperature: node.temperature,
+    };
+    return { forms: [...value, newForm], index: value.length };
+  }
+
+  const mutations: ProviderMutations = {
+    patchProvider(node, patch) {
+      const { forms, index } = ensureForm(node);
+      onChange(
+        forms.map((f, i) => (i === index ? { ...f, ...patch } : f))
+      );
+    },
+    patchModel(node, modelIdx, patch) {
+      const { forms, index } = ensureForm(node);
+      onChange(
+        forms.map((f, i) =>
           i === index
-            ? patch.default
-              ? { ...item, ...patch, enabled: true }
-              : { ...item, ...patch }
-            : item
+            ? {
+                ...f,
+                models: f.models.map((m, j) =>
+                  j === modelIdx ? { ...m, ...patch } : m
+                ),
+              }
+            : f
         )
-        .map((item, i) =>
-          patch.default && i !== index ? { ...item, default: false } : item
+      );
+    },
+    setModelDefault(node, modelIdx) {
+      // 全局唯一默认：清空所有模型 isDefault，仅置目标；默认模型同时启用。
+      const { forms, index } = ensureForm(node);
+      onChange(
+        forms.map((f, i) => ({
+          ...f,
+          models: f.models.map((m, j) => ({
+            ...m,
+            isDefault: i === index && j === modelIdx,
+            enabled: i === index && j === modelIdx ? true : m.enabled,
+          })),
+        }))
+      );
+    },
+    setModelEnabled(node, modelIdx, enabled) {
+      const { forms, index } = ensureForm(node);
+      let next = forms.map((f, i) =>
+        i === index
+          ? {
+              ...f,
+              models: f.models.map((m, j) =>
+                j === modelIdx ? { ...m, enabled } : m
+              ),
+            }
+          : f
+      );
+      if (!enabled) {
+        const disabledModel = next[index].models[modelIdx];
+        if (disabledModel.isDefault) {
+          // 跨供应商首个 enabled 非默认模型提为新 default；找不到则留空（后端兜底）
+          const candidate = next
+            .flatMap((f) => f.models)
+            .find((m) => m.enabled && m !== disabledModel);
+          next = next.map((f) => ({
+            ...f,
+            models: f.models.map((m) => ({
+              ...m,
+              isDefault: m === candidate,
+            })),
+          }));
+        }
+      }
+      onChange(next);
+    },
+    addModel(node, id) {
+      const trimmed = id.trim();
+      if (!trimmed) return;
+      const { forms, index } = ensureForm(node);
+      if (forms[index].models.some((m) => m.id === trimmed)) return;
+      onChange(
+        forms.map((f, i) =>
+          i === index
+            ? {
+                ...f,
+                models: [
+                  ...f.models,
+                  { id: trimmed, name: trimmed, enabled: true, isDefault: false },
+                ],
+              }
+            : f
         )
-    );
+      );
+    },
+    removeModel(node, modelIdx) {
+      const { forms, index } = ensureForm(node);
+      const removing = forms[index].models[modelIdx];
+      let next = forms.map((f, i) =>
+        i === index
+          ? { ...f, models: f.models.filter((_, j) => j !== modelIdx) }
+          : f
+      );
+      if (removing.isDefault) {
+        const candidate = next.flatMap((f) => f.models).find((m) => m.enabled);
+        next = next.map((f) => ({
+          ...f,
+          models: f.models.map((m) => ({ ...m, isDefault: m === candidate })),
+        }));
+      }
+      onChange(next);
+    },
+    removeProvider(node) {
+      if (node.formIndex < 0) return;
+      // 移除后若该供应商曾持有全局默认，由后端 parseLlmConfigs 兜底重选
+      onChange(value.filter((_, i) => i !== node.formIndex));
+    },
+  };
+
+  function onDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const aid = String(active.id);
+    const oid = String(over.id);
+    if (aid.startsWith("provider:") && oid.startsWith("provider:")) {
+      const from = value.findIndex((f) => `provider:${f.id}` === aid);
+      const to = value.findIndex((f) => `provider:${f.id}` === oid);
+      if (from < 0 || to < 0) return; // 涉及未配置预设 → 不允许拖拽
+      onChange(arrayMove(value, from, to));
+    } else if (aid.startsWith("model:") && oid.startsWith("model:")) {
+      const aParts = aid.split(":");
+      const oParts = oid.split(":");
+      const aPid = aParts[1];
+      const oPid = oParts[1];
+      if (aPid !== oPid) return; // 跨供应商拖模型 → 弹回
+      const fi = value.findIndex((f) => f.id === aPid);
+      if (fi < 0) return;
+      const aMid = aParts.slice(2).join(":");
+      const oMid = oParts.slice(2).join(":");
+      const mFrom = value[fi].models.findIndex((m) => m.id === aMid);
+      const mTo = value[fi].models.findIndex((m) => m.id === oMid);
+      if (mFrom < 0 || mTo < 0) return;
+      onChange(
+        value.map((f, i) =>
+          i === fi ? { ...f, models: arrayMove(f.models, mFrom, mTo) } : f
+        )
+      );
+    }
   }
-  function remove(index: number) {
-    onChange(value.filter((_, i) => i !== index));
-  }
-  function addPreset(preset: (typeof PRESET_LLM)[number]) {
-    if (value.some((item) => item.id === preset.id)) return;
-    onChange([
-      ...value,
-      {
-        ...DEFAULT_LLM,
-        ...preset,
-        apiKey: "",
-        enabled: true,
-        default: false,
-        temperature: 0.7,
-      } as LlmForm,
-    ]);
+
+  function addCustomProvider() {
+    const id = `llm-${Date.now().toString(36)}`;
+    onChange([...value, { ...EMPTY_LLM_PROVIDER, id, name: "" }]);
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            配置 OpenAI、智谱 GLM、DeepSeek 等 OpenAI 兼容协议的模型供应商。
-            可配多个，选择一个为「默认」。
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          配置 OpenAI、智谱 GLM、DeepSeek 等 OpenAI 兼容协议的模型供应商。
+          启用/默认在模型级，可拖拽供应商与模型排序；下拉顺序跟随本树。
+        </p>
         <Button onClick={onSave} disabled={pending} size="sm">
           {pending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -794,154 +1156,30 @@ function LlmEditor({
         </Button>
       </div>
 
-      {/* 快捷预设 */}
-      <div className="flex flex-wrap gap-2">
-        <span className="text-xs text-muted-foreground self-center mr-1">
-          快捷添加：
-        </span>
-        {PRESET_LLM.map((preset) => {
-          const added = value.some((item) => item.id === preset.id);
-          return (
-            <Button
-              key={preset.id}
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={added}
-              onClick={() => addPreset(preset)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {preset.name}
-              {added && "（已添加）"}
-            </Button>
-          );
-        })}
-      </div>
-
-      {value.map((item, index) => (
-        <div
-          key={index}
-          className="rounded-md border border-border p-4 space-y-3"
+      <DndContext
+        id="llm-editor"
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        modifiers={[restrictToVerticalAxis]}
+        onDragEnd={onDragEnd}
+      >
+        <SortableContext
+          items={providerItemIds}
+          strategy={verticalListSortingStrategy}
         >
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold">
-              供应商 {index + 1}
-              {item.default && (
-                <span className="ml-2 text-xs text-primary">（默认）</span>
-              )}
-            </span>
-            <button
-              type="button"
-              onClick={() => remove(index)}
-              className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              移除
-            </button>
+          <div className="space-y-2">
+            {tree.map((node) => (
+              <ProviderRow key={node.id} node={node} mutations={mutations} />
+            ))}
           </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="ID（唯一标识）">
-              <Input
-                value={item.id}
-                placeholder="deepseek"
-                onChange={(e) => update(index, { id: e.target.value })}
-                className="h-9"
-              />
-            </Field>
-            <Field label="显示名称">
-              <Input
-                value={item.name}
-                placeholder="DeepSeek"
-                onChange={(e) => update(index, { name: e.target.value })}
-                className="h-9"
-              />
-            </Field>
-            <Field label="Base URL">
-              <Input
-                value={item.baseUrl}
-                placeholder="https://api.deepseek.com/v1"
-                onChange={(e) => update(index, { baseUrl: e.target.value })}
-                className="h-9"
-              />
-            </Field>
-            <Field label="API Key">
-              <Input
-                value={item.apiKey === "********" ? "" : item.apiKey}
-                type="password"
-                placeholder={item.apiKey === "********" ? "已配置（留空保持不变）" : "sk-..."}
-                onChange={(e) => update(index, { apiKey: e.target.value })}
-                className="h-9"
-              />
-            </Field>
-            <Field label="模型列表（每行一个）" full>
-              <Textarea
-                value={item.model.join("\n")}
-                placeholder={"deepseek-chat\ndeepseek-reasoner"}
-                rows={Math.max(2, item.model.length)}
-                onChange={(e) =>
-                  update(index, {
-                    model: e.target.value
-                      .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
-                className="font-mono text-xs"
-              />
-            </Field>
-            <Field label="Temperature">
-              <Input
-                value={item.temperature}
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                onChange={(e) =>
-                  update(index, { temperature: Number(e.target.value) })
-                }
-                className="h-9"
-              />
-            </Field>
-            <div className="flex items-end gap-4 pb-1">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={item.enabled}
-                  onChange={(e) => update(index, { enabled: e.target.checked })}
-                />
-                启用
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={item.default}
-                  onChange={(e) => update(index, { default: e.target.checked })}
-                />
-                默认
-              </label>
-            </div>
-          </div>
-        </div>
-      ))}
+        </SortableContext>
+      </DndContext>
 
       <Button
         type="button"
         variant="outline"
         size="sm"
-        onClick={() =>
-          onChange([
-            ...value,
-            {
-              ...DEFAULT_LLM,
-              id: `llm-${value.length + 1}`,
-              name: `LLM ${value.length + 1}`,
-              baseUrl: "",
-              model: [],
-              default: false,
-            },
-          ])
-        }
+        onClick={addCustomProvider}
       >
         <Plus className="h-4 w-4" />
         添加自定义供应商
@@ -950,25 +1188,402 @@ function LlmEditor({
   );
 }
 
-/* ------------------------- OSS 编辑器 ------------------------- */
+/** 供应商行：可拖拽（配置后）+ 折叠表单。未配置预设灰显、禁用拖拽。 */
+function ProviderRow({
+  node,
+  mutations,
+}: {
+  node: ProviderTreeNode;
+  mutations: ProviderMutations;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({
+      id: `provider:${node.id}`,
+      disabled: !node.isConfigured,
+    });
+  const [open, setOpen] = useState(
+    node.isConfigured && node.models.length === 0
+  );
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+  const enabledCount = node.models.filter((m) => m.enabled).length;
 
-function OssEditor({
+  return (
+    <Collapsible
+      ref={setNodeRef}
+      style={style}
+      open={open}
+      onOpenChange={setOpen}
+      className={cn(
+        "rounded-md border border-border bg-card",
+        !node.isConfigured && "opacity-60"
+      )}
+    >
+      <div className="flex items-center gap-1.5 px-2 py-2.5">
+        <button
+          type="button"
+          aria-label="拖动供应商排序"
+          className={cn(
+            "shrink-0 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing",
+            !node.isConfigured && "invisible"
+          )}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <CollapsibleTrigger
+          hideIcon
+          className="flex flex-1 items-center gap-2 text-left outline-none"
+        >
+          <span
+            className={cn(
+              "truncate text-sm font-medium",
+              !node.isConfigured && "text-muted-foreground"
+            )}
+          >
+            {node.name || node.id || "未命名供应商"}
+          </span>
+          {!node.isConfigured && (
+            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+              未配置
+            </Badge>
+          )}
+          {node.isConfigured && node.models.some((m) => m.isDefault) && (
+            <Badge variant="default" className="px-1.5 py-0 text-[10px]">
+              默认
+            </Badge>
+          )}
+          {node.isConfigured && (
+            <span className="text-xs text-muted-foreground">
+              {node.models.length} 个模型
+              {enabledCount < node.models.length ? `（${enabledCount} 启用）` : ""}
+            </span>
+          )}
+        </CollapsibleTrigger>
+        <CollapsibleTrigger
+          hideIcon
+          aria-label={open ? "收起" : "展开"}
+          className="shrink-0 w-auto p-1 text-muted-foreground"
+        >
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 transition-transform",
+              open && "rotate-180"
+            )}
+          />
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent>
+        <div className="space-y-3 border-t border-border px-3 py-3">
+          <ProviderFormFields node={node} mutations={mutations} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** 供应商展开内容：连接字段 + 模型列表（嵌套可拖）+ 添加模型 + 移除。 */
+function ProviderFormFields({
+  node,
+  mutations,
+}: {
+  node: ProviderTreeNode;
+  mutations: ProviderMutations;
+}) {
+  const [newModelId, setNewModelId] = useState("");
+  const apiKeyMasked = node.apiKey === "********";
+  const modelIds = node.models.map((m) => `model:${node.id}:${m.id}`);
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="API Key">
+          <Input
+            type="password"
+            value={apiKeyMasked ? "" : node.apiKey}
+            placeholder={
+              apiKeyMasked ? "已配置（留空保持不变）" : "sk-..."
+            }
+            onChange={(e) =>
+              mutations.patchProvider(node, { apiKey: e.target.value })
+            }
+            className="h-9"
+          />
+        </Field>
+        <Field label="Base URL">
+          <Input
+            value={node.baseUrl}
+            placeholder="https://api.deepseek.com/v1"
+            onChange={(e) =>
+              mutations.patchProvider(node, { baseUrl: e.target.value })
+            }
+            className="h-9"
+          />
+        </Field>
+        <Field label="API 协议">
+          <Input
+            value={node.apiProvider}
+            placeholder="openai-compatible"
+            onChange={(e) =>
+              mutations.patchProvider(node, { apiProvider: e.target.value })
+            }
+            className="h-9"
+          />
+        </Field>
+        <Field label="显示名称">
+          <Input
+            value={node.name}
+            placeholder="DeepSeek"
+            onChange={(e) =>
+              mutations.patchProvider(node, { name: e.target.value })
+            }
+            className="h-9"
+          />
+        </Field>
+        <Field label="Temperature">
+          <Input
+            type="number"
+            min={0}
+            max={2}
+            step={0.1}
+            value={node.temperature}
+            onChange={(e) =>
+              mutations.patchProvider(node, {
+                temperature: Number(e.target.value),
+              })
+            }
+            className="h-9"
+          />
+        </Field>
+        {node.docsUrl && (
+          <div className="flex items-end">
+            <a
+              href={node.docsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              获取密钥
+            </a>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">
+            模型（启用 / 默认在模型级，可拖拽排序）
+          </span>
+        </div>
+        <SortableContext items={modelIds} strategy={verticalListSortingStrategy}>
+          {node.models.length === 0 ? (
+            <div className="rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+              暂无模型，添加一个模型 ID 开始使用
+            </div>
+          ) : (
+            node.models.map((m, idx) => (
+              <ModelRow
+                key={m.id}
+                node={node}
+                modelIdx={idx}
+                mutations={mutations}
+              />
+            ))
+          )}
+        </SortableContext>
+        <div className="flex gap-2">
+          <Input
+            value={newModelId}
+            placeholder="模型 id，如 gpt-4o"
+            onChange={(e) => setNewModelId(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                mutations.addModel(node, newModelId);
+                setNewModelId("");
+              }
+            }}
+            className="h-9"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              mutations.addModel(node, newModelId);
+              setNewModelId("");
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            添加模型
+          </Button>
+        </div>
+      </div>
+
+      {node.isConfigured && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-red-600 hover:text-red-700"
+            onClick={() => mutations.removeProvider(node)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {node.isPreset ? "移除（回到未配置）" : "移除供应商"}
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** 模型行：拖柄 + id 标签 + 名称 + 启用 + 默认 + 删除。 */
+function ModelRow({
+  node,
+  modelIdx,
+  mutations,
+}: {
+  node: ProviderTreeNode;
+  modelIdx: number;
+  mutations: ProviderMutations;
+}) {
+  const model = node.models[modelIdx];
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({
+      id: `model:${node.id}:${model.id}`,
+      disabled: !node.isConfigured,
+    });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border px-2 py-1.5"
+    >
+      <button
+        type="button"
+        aria-label="拖动模型排序"
+        className={cn(
+          "shrink-0 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing",
+          !node.isConfigured && "invisible"
+        )}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      <span
+        className="max-w-[40%] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+        title={model.id}
+      >
+        {model.id}
+      </span>
+      <Input
+        value={model.name}
+        placeholder={model.id}
+        onChange={(e) =>
+          mutations.patchModel(node, modelIdx, { name: e.target.value })
+        }
+        className="h-8 min-w-[120px] flex-1 text-xs"
+      />
+      <label className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+        <Switch
+          checked={model.enabled}
+          onCheckedChange={(v) =>
+            mutations.setModelEnabled(node, modelIdx, v)
+          }
+          aria-label="启用模型"
+        />
+        启用
+      </label>
+      <label className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+        <input
+          type="radio"
+          name="llm-global-default"
+          checked={model.isDefault}
+          onChange={() => mutations.setModelDefault(node, modelIdx)}
+          aria-label="设为默认模型"
+          className="h-3.5 w-3.5"
+        />
+        默认
+      </label>
+      <button
+        type="button"
+        aria-label="删除模型"
+        onClick={() => mutations.removeModel(node, modelIdx)}
+        className="shrink-0 p-1 text-red-600 hover:text-red-700"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------- 存储编辑器 ------------------------- */
+
+function StorageEditor({
   value,
+  localPath,
   onChange,
   onSave,
   onTest,
-  onRemove,
+  onRemoveOss,
   pending,
-  exists,
+  ossExists,
 }: {
-  value: OssForm;
-  onChange: (v: OssForm) => void;
+  value: StorageForm;
+  localPath: string;
+  onChange: (v: StorageForm) => void;
   onSave: () => void;
   onTest: () => void;
-  onRemove: () => void;
+  onRemoveOss: () => void;
   pending: boolean;
-  exists: boolean;
+  ossExists: boolean;
 }) {
+  const [storageTab, setStorageTab] = useState<"local" | "aliyun-oss">(
+    value.defaultProvider
+  );
+  const oss = value.providers.aliyunOss;
+  function updateOss(next: Partial<OssForm & { enabled: boolean }>) {
+    const aliyunOss = { ...oss, ...next };
+    onChange({
+      ...value,
+      defaultProvider:
+        value.defaultProvider === "aliyun-oss" && !aliyunOss.enabled
+          ? "local"
+          : value.defaultProvider,
+      providers: {
+        ...value.providers,
+        aliyunOss,
+      },
+    });
+  }
+  function setDefaultProvider(provider: "local" | "aliyun-oss") {
+    if (provider === "aliyun-oss") {
+      updateOss({ enabled: true });
+    }
+    onChange({
+      ...value,
+      defaultProvider: provider,
+      providers: {
+        ...value.providers,
+        aliyunOss: {
+          ...value.providers.aliyunOss,
+          enabled: provider === "aliyun-oss" ? true : value.providers.aliyunOss.enabled,
+        },
+      },
+    });
+  }
   const fields: Array<{
     key: keyof OssForm;
     label: string;
@@ -996,21 +1611,20 @@ function OssEditor({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground max-w-xl">
-          配置阿里云 OSS，用于上传文章配图、视频等素材。编辑器粘贴图片会优先上传到
-          OSS 拿稳定外链，发布时自动转成公众号 src。
+          统一管理文章素材（图片、视频、音频、附件）的实际存储位置。上传文件时不再选择存储类型，系统会写入当前默认存储；代码解析、代码图谱和运行缓存仍保留在本地数据目录。
         </p>
         <div className="flex gap-2">
-          {exists && (
+          {ossExists && (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={onRemove}
+              onClick={onRemoveOss}
               disabled={pending}
               className="text-red-600 hover:text-red-700"
             >
               <Trash2 className="h-4 w-4" />
-              删除
+              清空 OSS
             </Button>
           )}
           <Button
@@ -1018,10 +1632,10 @@ function OssEditor({
             variant="outline"
             size="sm"
             onClick={onTest}
-            disabled={pending || !exists}
+            disabled={pending || !ossExists}
           >
             <CheckCircle2 className="h-4 w-4" />
-            测试连接
+            测试 OSS
           </Button>
           <Button onClick={onSave} disabled={pending} size="sm">
             {pending ? (
@@ -1034,28 +1648,100 @@ function OssEditor({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {fields.map((field) => (
-          <Field key={field.key} label={field.label} full={field.full}>
-            <Input
-              value={
-                field.type === "password" && value[field.key] === "********"
-                  ? ""
-                  : value[field.key]
-              }
-              type={field.type ?? "text"}
-              placeholder={
-                field.type === "password" && value[field.key] === "********"
-                  ? "已配置（留空保持不变）"
-                  : field.placeholder
-              }
-              onChange={(e) =>
-                onChange({ ...value, [field.key]: e.target.value })
-              }
-              className="h-9"
+      <div className="flex gap-1 rounded-md bg-muted p-1 w-fit">
+        <button
+          type="button"
+          onClick={() => setStorageTab("local")}
+          className={cn(
+            "px-3 py-1.5 rounded text-xs font-medium transition-colors",
+            storageTab === "local"
+              ? "bg-background shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          本地存储
+        </button>
+        <button
+          type="button"
+          onClick={() => setStorageTab("aliyun-oss")}
+          className={cn(
+            "px-3 py-1.5 rounded text-xs font-medium transition-colors",
+            storageTab === "aliyun-oss"
+              ? "bg-background shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          OSS 存储
+        </button>
+      </div>
+
+      {storageTab === "local" ? (
+        <div className="space-y-4">
+          <div className="grid gap-3">
+            <Field label="本地数据文件路径" full>
+              <Input value={localPath || "加载中..."} readOnly className="h-9 font-mono text-xs" />
+            </Field>
+          </div>
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <div className="text-sm font-medium">设为默认存储</div>
+              <div className="text-xs text-muted-foreground">
+                新上传的文章素材会写入本地数据目录；已有素材不迁移。
+              </div>
+            </div>
+            <Switch
+              checked={value.defaultProvider === "local"}
+              onCheckedChange={(checked) => {
+                if (checked) setDefaultProvider("local");
+              }}
             />
-          </Field>
-        ))}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {fields.map((field) => (
+              <Field key={field.key} label={field.label} full={field.full}>
+                <Input
+                  value={
+                    field.type === "password" && oss[field.key] === "********"
+                      ? ""
+                      : oss[field.key]
+                  }
+                  type={field.type ?? "text"}
+                  placeholder={
+                    field.type === "password" && oss[field.key] === "********"
+                      ? "已配置（留空保持不变）"
+                      : field.placeholder
+                  }
+                  onChange={(e) =>
+                    updateOss({ enabled: true, [field.key]: e.target.value })
+                  }
+                  className="h-9"
+                />
+              </Field>
+            ))}
+          </div>
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <div className="text-sm font-medium">设为默认存储</div>
+              <div className="text-xs text-muted-foreground">
+                新上传的文章素材将直接写入 OSS；已有素材不迁移，本地仍用于代码图谱和运行缓存。
+              </div>
+            </div>
+            <Switch
+              checked={value.defaultProvider === "aliyun-oss"}
+              onCheckedChange={(checked) => {
+                if (checked) setDefaultProvider("aliyun-oss");
+                else setDefaultProvider("local");
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+        当前默认存储：{value.defaultProvider === "aliyun-oss" ? "OSS 存储" : "本地存储"}。修改后仅对新上传素材生效。
       </div>
     </div>
   );
