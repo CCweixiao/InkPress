@@ -156,6 +156,39 @@ model TechnicalDocument {
   @@index([updatedAt])
 }
 
+/// 代码知识图谱缓存元数据。
+/// 图谱文件本身落在 InkPress 本地数据目录，不进入文章素材统一存储层。
+model CodeGraphCache {
+  id           String   @id @default(cuid())
+  provider     String   @default("graphify")
+  status       String   @default("pending") // pending | building | ready | failed | stale
+  spaceId      String?
+  articleId    String?
+  sourceKey    String
+  projectName  String   @default("")
+  root         String   @default("")
+  snapshotHash String   @default("")
+  gitHead      String?
+  graphAssetId String?
+  reportAssetId String?
+  htmlAssetId  String?
+  graphPath    String?
+  reportPath   String?
+  htmlPath     String?
+  nodeCount    Int      @default(0)
+  edgeCount    Int      @default(0)
+  lastError    String?
+  metadataJson String   @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([sourceKey])
+  @@index([spaceId])
+  @@index([articleId])
+  @@index([snapshotHash])
+  @@index([status])
+}
+
 model TechnicalDocumentVersion {
   id                  String   @id @default(cuid())
   technicalDocumentId String
