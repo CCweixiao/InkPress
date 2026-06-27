@@ -7,11 +7,7 @@ import {
   Loader2,
   Plus,
   CheckCircle2,
-  Sparkles,
-  Cloud,
-  Bot,
   FolderCode,
-  MessageCircle,
   GripVertical,
   ChevronDown,
   ExternalLink,
@@ -45,6 +41,7 @@ import {
 import { cn } from "@/lib/utils";
 import { LLM_PRESETS } from "@/lib/llm-presets";
 import { ConfigImportExport } from "./ConfigImportExport";
+import { ProviderLogo } from "./provider-logos";
 
 export const LLM_CONFIG_KEY = "inkpress.llm";
 export const OSS_CONFIG_KEY = "inkpress.oss";
@@ -52,7 +49,7 @@ export const STORAGE_CONFIG_KEY = "inkpress.storage";
 export const AGENT_CONFIG_KEY = "inkpress.agent";
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
 
-type Tab = "llm" | "agent" | "storage" | "wechat";
+export type ConfigTab = "llm" | "agent" | "storage" | "wechat";
 
 type SystemConfig = {
   id: string;
@@ -358,8 +355,13 @@ function parseAgentValue(value?: string): AgentForm {
   }
 }
 
-export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
-  const [tab, setTab] = useState<Tab>("llm");
+export function SystemConfigManager({
+  activeTab,
+  configs,
+}: {
+  activeTab: ConfigTab;
+  configs?: SystemConfig[];
+}) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -434,6 +436,11 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
     setMessage("");
     setError("");
   }
+
+  // 切换 Tab 时清空旧的 message/error 提示
+  useEffect(() => {
+    clearMsg();
+  }, [activeTab]);
 
   async function refreshConfigs() {
     const res = await fetch("/api/system-config");
@@ -568,85 +575,21 @@ export function SystemConfigManager({ configs }: { configs?: SystemConfig[] }) {
         <ConfigImportExport onImported={refreshConfigs} />
       </div>
 
-      {/* Tab 切换 */}
-      <div className="flex gap-1 rounded-md bg-muted p-1 w-fit">
-        <button
-          onClick={() => {
-            setTab("agent");
-            clearMsg();
-          }}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors",
-            tab === "agent"
-              ? "bg-background shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <Bot className="h-4 w-4" />
-          写作 Agent
-        </button>
-        <button
-          onClick={() => {
-            setTab("llm");
-            clearMsg();
-          }}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors",
-            tab === "llm"
-              ? "bg-background shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <Sparkles className="h-4 w-4" />
-          AI 模型
-        </button>
-        <button
-          onClick={() => {
-            setTab("storage");
-            clearMsg();
-          }}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors",
-            tab === "storage"
-              ? "bg-background shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <Cloud className="h-4 w-4" />
-          存储配置
-        </button>
-        <button
-          onClick={() => {
-            setTab("wechat");
-            clearMsg();
-          }}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors",
-            tab === "wechat"
-              ? "bg-background shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <MessageCircle className="h-4 w-4" />
-          微信公众号
-        </button>
-      </div>
-
-      {tab === "llm" ? (
+      {activeTab === "llm" ? (
         <LlmEditor
           value={llmForms}
           onChange={setLlmForms}
           onSave={saveLlm}
           pending={pending}
         />
-      ) : tab === "agent" ? (
+      ) : activeTab === "agent" ? (
         <AgentEditor
           value={agentForm}
           onChange={setAgentForm}
           onSave={saveAgent}
           pending={pending}
         />
-      ) : tab === "wechat" ? (
+      ) : activeTab === "wechat" ? (
         <WechatEditor
           value={wechatForm}
           onChange={setWechatForm}
@@ -1239,6 +1182,7 @@ function ProviderRow({
           hideIcon
           className="flex flex-1 items-center gap-2 text-left outline-none"
         >
+          <ProviderLogo id={node.id} />
           <span
             className={cn(
               "truncate text-sm font-medium",
