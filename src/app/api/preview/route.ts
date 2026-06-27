@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { convertToWeChat } from "@/lib/convert/to-wechat";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
 
 /**
  * 服务端完整转换预览：markdown → 公众号 inline HTML
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!md && articleId) {
     const article = await prisma.article.findUnique({ where: { id: articleId } });
     md = article?.contentPath
-      ? await readContent(article.id)
+      ? await readContentAt(article.contentPath)
       : (article?.contentMd ?? "");
   }
   if (!md.trim()) {

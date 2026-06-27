@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
 import { articleVersionHash } from "@/lib/ai/article-version";
 
 type Params = { params: Promise<{ id: string }> };
@@ -33,7 +33,7 @@ export async function GET(_req: Request, { params }: Params) {
       articleProposal.status === "pending"
     ) {
       const currentMarkdown = articleProposal.article.contentPath
-        ? await readContent(articleProposal.articleId)
+        ? await readContentAt(articleProposal.article.contentPath)
         : articleProposal.article.contentMd;
       const currentHash = articleVersionHash({
         title: articleProposal.article.title,

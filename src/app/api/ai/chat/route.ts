@@ -7,7 +7,7 @@ import {
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
-  readContent,
+  readContentAt,
   readTechnicalDocumentContent,
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
@@ -94,7 +94,7 @@ async function loadTarget(target: AgentTarget): Promise<LoadedTarget | null> {
       target,
       title: article.title,
       markdown: article.contentPath
-        ? await readContent(article.id)
+        ? await readContentAt(article.contentPath)
         : article.contentMd,
       digest: article.digest ?? "",
     };

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { withApiLog, logMutation } from "@/lib/api-log";
+import { NAME_REGEX } from "@/lib/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,9 +10,18 @@ export const dynamic = "force-dynamic";
 type Params = { params: Promise<{ id: string }> };
 
 const updateSchema = z.object({
-  name: z.string().trim().min(1).max(60).optional(),
-  description: z.string().max(300).optional(),
-  tags: z.array(z.string()).max(10).optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1, "请输入空间名称")
+    .max(20, "空间名称不能超过 20 字")
+    .regex(NAME_REGEX, "空间名称包含不支持的字符")
+    .optional(),
+  description: z.string().max(100, "空间描述不能超过 100 字").optional(),
+  tags: z
+    .array(z.string().trim().max(10, "单个标签不能超过 10 字"))
+    .max(5, "最多 5 个标签")
+    .optional(),
   sortOrder: z.number().int().optional(),
   pinned: z.boolean().optional(),
 });
@@ -37,6 +47,15 @@ export const PUT = withApiLog("PUT /api/spaces/[id]", async (req: NextRequest, {
   const parsed = updateSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+  // 重名校验：仅当本次提交了 name 时检查，排除自身，仅对未软删空间判重
+  if (parsed.data.name) {
+    const duplicated = await prisma.space.findFirst({
+      where: { name: parsed.data.name, trashed: false, id: { not: id } },
+    });
+    if (duplicated) {
+      return NextResponse.json({ error: "空间名称已存在" }, { status: 400 });
+    }
   }
   const { tags, ...rest } = parsed.data;
   const data: Record<string, unknown> = { ...rest };

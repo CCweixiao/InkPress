@@ -3,7 +3,7 @@ import { z } from "zod";
 import { generateText } from "ai";
 import { getModel } from "@/lib/ai/provider";
 import { prisma } from "@/lib/db";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
 
 export const runtime = "nodejs";
 
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   }
 
   const markdown = article.contentPath
-    ? await readContent(article.id)
+    ? await readContentAt(article.contentPath)
     : (article.contentMd ?? "");
   if (!markdown.trim()) {
     return NextResponse.json({ error: "文章内容为空，无法生成摘要" }, { status: 400 });

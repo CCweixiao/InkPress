@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { NAME_REGEX } from "@/lib/validation";
 
 export type SpaceForm = {
   id?: string;
@@ -54,15 +55,36 @@ export function SpaceDialog({
 
   async function save() {
     setError("");
-    if (!name.trim()) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
       setError("请输入空间名称");
       return;
     }
-    setLoading(true);
+    if (trimmedName.length > 20) {
+      setError("空间名称不能超过 20 字");
+      return;
+    }
+    if (!NAME_REGEX.test(trimmedName)) {
+      setError("空间名称包含不支持的字符");
+      return;
+    }
+    if (description.length > 100) {
+      setError("空间描述不能超过 100 字");
+      return;
+    }
     const tags = tagsInput
       .split(/[,，]/)
       .map((t) => t.trim())
       .filter(Boolean);
+    if (tags.length > 5) {
+      setError("最多 5 个标签");
+      return;
+    }
+    if (tags.some((t) => t.length > 10)) {
+      setError("单个标签不能超过 10 字");
+      return;
+    }
+    setLoading(true);
     try {
       const isEdit = !!initial?.id;
       const res = await fetch(
@@ -102,7 +124,7 @@ export function SpaceDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="如：技术分享"
-              maxLength={60}
+              maxLength={20}
             />
           </div>
           <div className="space-y-1.5">
@@ -112,7 +134,7 @@ export function SpaceDialog({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="这个空间用来放什么类型的文章…"
               rows={3}
-              maxLength={300}
+              maxLength={100}
             />
           </div>
           <div className="space-y-1.5">
@@ -122,6 +144,13 @@ export function SpaceDialog({
               onChange={(e) => setTagsInput(e.target.value)}
               placeholder="前端, AI, 随笔"
             />
+            <p className="text-xs text-muted-foreground">
+              {tagsInput
+                .split(/[,，]/)
+                .map((t) => t.trim())
+                .filter(Boolean).length}
+              /5 · 每个标签最多 10 字
+            </p>
           </div>
           {/* 置顶开关：置顶后排序优先（默认空间除外，其不可编辑） */}
           <label className="flex items-center gap-2 cursor-pointer select-none">
