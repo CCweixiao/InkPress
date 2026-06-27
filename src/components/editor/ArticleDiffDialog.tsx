@@ -135,23 +135,23 @@ export function ArticleDiffDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[96vh] w-[98vw] max-w-none overflow-hidden rounded-2xl border-slate-200 bg-slate-50 p-0 gap-0 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
-        <DialogHeader className="border-b border-slate-200 bg-white px-6 py-4 pr-14 dark:border-slate-800 dark:bg-slate-950">
+      <DialogContent className="h-[96vh] w-[98vw] max-w-none overflow-hidden rounded-2xl border-neutral-200 bg-neutral-50 p-0 gap-0 shadow-2xl dark:border-neutral-800 dark:bg-neutral-950">
+        <DialogHeader className="border-b border-neutral-200 bg-white px-6 py-4 pr-14 dark:border-neutral-800 dark:bg-neutral-950">
           <div className="flex flex-wrap items-start gap-4">
             <div className="flex min-w-0 flex-1 items-start gap-3">
               <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-600 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
                 <FileDiff className="h-4.5 w-4.5" />
               </div>
               <div className="min-w-0">
-                <DialogTitle className="flex flex-wrap items-center gap-2 text-lg font-semibold tracking-normal text-slate-950 dark:text-slate-50">
+                <DialogTitle className="flex flex-wrap items-center gap-2 text-lg font-semibold tracking-normal text-neutral-950 dark:text-neutral-50">
                   {proposal.proposalKind === "technical-document"
                     ? "技术文档修改审查"
                     : "文章修改审查"}
-                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+                  <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
                     {proposal.stats.oldLines} → {proposal.stats.newLines} 行
                   </span>
                 </DialogTitle>
-                <DialogDescription className="mt-1 max-w-5xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+                <DialogDescription className="mt-1 max-w-5xl text-sm leading-6 text-neutral-600 dark:text-neutral-400">
                   {proposal.summary}
                 </DialogDescription>
               </div>
@@ -164,8 +164,8 @@ export function ArticleDiffDialog({
           </div>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-          <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center gap-3 border-b border-neutral-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
+          <div className="flex items-center rounded-lg border border-neutral-200 bg-neutral-100 p-1 dark:border-neutral-800 dark:bg-neutral-900">
             <Button
               size="sm"
               variant={view === "split" ? "default" : "ghost"}
@@ -189,24 +189,24 @@ export function ArticleDiffDialog({
             size="sm"
             variant="outline"
             onClick={() => setFold((value) => !value)}
-            className="h-9 border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+            className="h-9 border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
           >
             <FoldVertical className="h-4 w-4" />
             {fold ? "展开未修改" : "折叠未修改"}
           </Button>
           <div className="ml-auto flex items-center gap-2">
-            <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+            <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-medium text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
               {changeRows.length ? currentActiveChange + 1 : 0}/{changeRows.length}
             </span>
-            <Button size="icon" variant="outline" className="h-9 w-9 rounded-lg border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950" onClick={() => navigate(-1)} title="上一处">
+            <Button size="icon" variant="outline" className="h-9 w-9 rounded-lg border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950" onClick={() => navigate(-1)} title="上一处">
               <ArrowUp className="h-4 w-4" />
             </Button>
-            <Button size="icon" variant="outline" className="h-9 w-9 rounded-lg border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950" onClick={() => navigate(1)} title="下一处">
+            <Button size="icon" variant="outline" className="h-9 w-9 rounded-lg border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950" onClick={() => navigate(1)} title="下一处">
               <ArrowDown className="h-4 w-4" />
             </Button>
             {canDecide && (
               <>
-                <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-800" />
+                <div className="mx-1 h-6 w-px bg-neutral-200 dark:bg-neutral-800" />
                 <Button size="sm" onClick={onApply} disabled={applying} title="应用" className="h-9 rounded-lg">
                   {applying ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -215,7 +215,7 @@ export function ArticleDiffDialog({
                   )}
                   应用
                 </Button>
-                <Button size="sm" variant="outline" onClick={onReject} disabled={applying} title="放弃" className="h-9 rounded-lg border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                <Button size="sm" variant="outline" onClick={onReject} disabled={applying} title="放弃" className="h-9 rounded-lg border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
                   <X className="h-3.5 w-3.5" />
                   放弃
                 </Button>
@@ -226,24 +226,24 @@ export function ArticleDiffDialog({
 
         {(proposal.baseTitle !== (proposal.title ?? proposal.baseTitle) ||
           proposal.baseDigest !== (proposal.digest ?? proposal.baseDigest)) && (
-          <div className="grid gap-px border-b border-slate-200 bg-slate-200 text-xs dark:border-slate-800 dark:bg-slate-800 md:grid-cols-2">
+          <div className="grid gap-px border-b border-neutral-200 bg-neutral-200 text-xs dark:border-neutral-800 dark:bg-neutral-800 md:grid-cols-2">
             <div className="bg-red-50/90 p-4 dark:bg-red-950/30">
               <div className="mb-1 font-semibold text-red-700 dark:text-red-300">原标题 / 摘要</div>
-              <div className="font-medium text-slate-900 dark:text-slate-100">{proposal.baseTitle || "（无标题）"}</div>
-              <div className="mt-1 leading-5 text-slate-600 dark:text-slate-400">{proposal.baseDigest || "（无摘要）"}</div>
+              <div className="font-medium text-neutral-900 dark:text-neutral-100">{proposal.baseTitle || "（无标题）"}</div>
+              <div className="mt-1 leading-5 text-neutral-600 dark:text-neutral-400">{proposal.baseDigest || "（无摘要）"}</div>
             </div>
             <div className="bg-emerald-50/90 p-4 dark:bg-emerald-950/30">
               <div className="mb-1 font-semibold text-emerald-700 dark:text-emerald-300">新标题 / 摘要</div>
-              <div className="font-medium text-slate-900 dark:text-slate-100">{proposal.title ?? proposal.baseTitle}</div>
-              <div className="mt-1 leading-5 text-slate-600 dark:text-slate-400">{proposal.digest ?? proposal.baseDigest}</div>
+              <div className="font-medium text-neutral-900 dark:text-neutral-100">{proposal.title ?? proposal.baseTitle}</div>
+              <div className="mt-1 leading-5 text-neutral-600 dark:text-neutral-400">{proposal.digest ?? proposal.baseDigest}</div>
             </div>
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-auto bg-[#090d18] text-slate-200 font-mono text-[12.5px] leading-5">
+        <div className="min-h-0 flex-1 overflow-auto bg-[#161616] text-neutral-200 font-mono text-[12.5px] leading-5">
           {view === "split" ? (
             <div className="min-w-[900px]">
-              <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-slate-700/80 bg-slate-900/95 shadow-[0_10px_26px_rgba(2,6,23,0.28)] backdrop-blur">
+              <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-neutral-700/80 bg-neutral-900/95 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur">
                 <DiffPaneHeader tone="old" label="原内容" lines={proposal.stats.oldLines} />
                 <DiffPaneHeader tone="new" label="新内容" lines={proposal.stats.newLines} />
               </div>
@@ -314,7 +314,7 @@ export function ArticleDiffDialog({
                       if (changeIndex >= 0 && lineIndex === 0) changeRefs.current[changeIndex] = element;
                     }}
                     className={cn(
-                      "grid grid-cols-[34px_56px_1fr] scroll-mt-24 border-b border-slate-900/70",
+                      "grid grid-cols-[34px_56px_1fr] scroll-mt-24 border-b border-neutral-900/70",
                       line.tone,
                       changeIndex === currentActiveChange &&
                         lineIndex === 0 &&
@@ -324,8 +324,8 @@ export function ArticleDiffDialog({
                       if (changeIndex >= 0) setActiveChange(changeIndex);
                     }}
                   >
-                    <span className="select-none border-r border-slate-800/80 text-center text-slate-500">{line.sign}</span>
-                    <span className="select-none border-r border-slate-800/80 bg-slate-950/25 px-2 text-right text-slate-500">{line.number ?? ""}</span>
+                    <span className="select-none border-r border-neutral-800/80 text-center text-neutral-500">{line.sign}</span>
+                    <span className="select-none border-r border-neutral-800/80 bg-neutral-950/25 px-2 text-right text-neutral-500">{line.number ?? ""}</span>
                     <pre className="whitespace-pre-wrap break-words px-3 py-0.5">
                       {row.kind === "modified" ? (
                         <InlineText oldText={row.oldText ?? ""} newText={row.newText ?? ""} side={line.side} />
@@ -379,7 +379,7 @@ function DiffPaneHeader({
       className={cn(
         "flex items-center justify-between px-4 py-2.5 text-xs font-medium",
         tone === "old"
-          ? "border-r border-slate-700/80 text-red-100"
+          ? "border-r border-neutral-700/80 text-red-100"
           : "text-emerald-100"
       )}
     >
@@ -392,7 +392,7 @@ function DiffPaneHeader({
         />
         {label}
       </span>
-      <span className="text-[11px] font-normal text-slate-500">{lines} 行</span>
+      <span className="text-[11px] font-normal text-neutral-500">{lines} 行</span>
     </div>
   );
 }
@@ -405,16 +405,16 @@ function FoldRow({
   onExpand: () => void;
 }) {
   return (
-    <div className="col-span-2 flex items-center justify-center gap-3 border-y border-slate-800 bg-slate-900/80 py-1.5 text-slate-500">
-      <span className="h-px w-16 bg-slate-800" />
+    <div className="col-span-2 flex items-center justify-center gap-3 border-y border-neutral-800 bg-neutral-900/80 py-1.5 text-neutral-500">
+      <span className="h-px w-16 bg-neutral-800" />
       <button
         type="button"
         onClick={onExpand}
-        className="rounded-md px-2 py-0.5 text-[11px] font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+        className="rounded-md px-2 py-0.5 text-[11px] font-medium text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
       >
         已折叠 {foldedCount} 行未修改内容
       </button>
-      <span className="h-px w-16 bg-slate-800" />
+      <span className="h-px w-16 bg-neutral-800" />
     </div>
   );
 }
@@ -436,15 +436,15 @@ function SplitLine({
   return (
     <div
       className={cn(
-        "grid grid-cols-[56px_1fr] border-b border-slate-900/70",
-        isOld && "border-r border-slate-800/90",
+        "grid grid-cols-[56px_1fr] border-b border-neutral-900/70",
+        isOld && "border-r border-neutral-800/90",
         changed &&
           (isOld
             ? "border-l-2 border-l-red-400/80 bg-red-950/45 text-red-50"
             : "border-l-2 border-l-emerald-400/80 bg-emerald-950/45 text-emerald-50")
       )}
     >
-      <span className="select-none border-r border-slate-800/80 bg-slate-950/25 px-2 text-right text-slate-500">
+      <span className="select-none border-r border-neutral-800/80 bg-neutral-950/25 px-2 text-right text-neutral-500">
         {number ?? ""}
       </span>
       <pre className="whitespace-pre-wrap break-words px-3 py-0.5">
