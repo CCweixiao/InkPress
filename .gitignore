@@ -25,7 +25,9 @@
 /out/
 
 # production
-/build
+/build/*
+# 保留 electron-builder 打包图标源（默认 buildResources=build/）
+!/build/icon.png
 
 # misc
 .DS_Store
