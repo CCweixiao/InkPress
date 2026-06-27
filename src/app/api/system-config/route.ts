@@ -2,11 +2,17 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { LLM_CONFIG_KEY, parseLlmConfigs } from "@/lib/ai/llm-config";
 import { OSS_CONFIG_KEY, parseOssConfig } from "@/lib/oss-config";
+import {
+  STORAGE_CONFIG_KEY,
+  localStorageDisplayPath,
+  maskStorageConfigValue,
+  mergeStorageMaskedSecrets,
+  parseStorageConfig,
+} from "@/lib/storage-config";
 import { AGENT_CONFIG_KEY, parseAgentConfig } from "@/lib/ai/agent-config";
 import { WECHAT_CONFIG_KEY, parseWechatConfig } from "@/lib/wechat/config";
 import { APPEARANCE_CONFIG_KEY, parseAppearanceConfig } from "@/lib/appearance-config";
 import { I18N_CONFIG_KEY, parseI18nConfig } from "@/lib/i18n-config";
-import { LLM_PRESETS_KEY, parseLlmPresets } from "@/lib/llm-presets";
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
 import { prisma } from "@/lib/db";
 import { withApiLog, logMutation } from "@/lib/api-log";
@@ -23,13 +29,13 @@ const deleteSchema = z.object({ key: z.string().trim().min(1) });
 
 /** 保存前按 key 分别校验 value 的 JSON 结构 */
 function validateConfigValue(key: string, value: string) {
-  if (key === OSS_CONFIG_KEY) parseOssConfig(value);
+  if (key === STORAGE_CONFIG_KEY) parseStorageConfig(value);
+  else if (key === OSS_CONFIG_KEY) parseOssConfig(value);
   else if (key === LLM_CONFIG_KEY) parseLlmConfigs(value);
   else if (key === AGENT_CONFIG_KEY) parseAgentConfig(value);
   else if (key === WECHAT_CONFIG_KEY) parseWechatConfig(value);
   else if (key === APPEARANCE_CONFIG_KEY) parseAppearanceConfig(value);
   else if (key === I18N_CONFIG_KEY) parseI18nConfig(value);
-  else if (key === LLM_PRESETS_KEY) parseLlmPresets(value);
   else parseJsonObjectOrArrayConfig(value);
 }
 
@@ -52,6 +58,9 @@ function maskConfigs(
       } catch {
         return item;
       }
+    }
+    if (item.key === STORAGE_CONFIG_KEY) {
+      return { ...item, value: maskStorageConfigValue(item.value) };
     }
     if (item.key === OSS_CONFIG_KEY) {
       try {
@@ -129,7 +138,11 @@ export async function GET() {
   const configs = await prisma.systemConfig.findMany({
     orderBy: { key: "asc" },
   });
-  return NextResponse.json({ ok: true, configs: maskConfigs(configs) });
+  return NextResponse.json({
+    ok: true,
+    configs: maskConfigs(configs),
+    storageInfo: { localPath: localStorageDisplayPath() },
+  });
 }
 
 export const POST = withApiLog("POST /api/system-config", async (req: Request) => {
@@ -160,6 +173,7 @@ export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => 
   let value = parsed.data.value;
   if (
     parsed.data.key === LLM_CONFIG_KEY ||
+    parsed.data.key === STORAGE_CONFIG_KEY ||
     parsed.data.key === OSS_CONFIG_KEY ||
     parsed.data.key === AGENT_CONFIG_KEY ||
     parsed.data.key === WECHAT_CONFIG_KEY
@@ -234,7 +248,10 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
       }
       return JSON.stringify(newVal, null, 2);
     }
-    // OSS
+    if (key === STORAGE_CONFIG_KEY) {
+      return mergeStorageMaskedSecrets(oldJson, newJson);
+    }
+    // legacy OSS
     if (newVal.accessKeySecret === "********") {
       newVal.accessKeySecret = oldVal.accessKeySecret ?? "";
     }

@@ -25,7 +25,6 @@ import {
 type Provider = {
   id: string;
   name: string;
-  isDefault: boolean;
   models: { id: string; name: string; isDefault: boolean }[];
 };
 
@@ -69,12 +68,20 @@ export function SkillGenerateDialog({
         .then((data) => {
           const list: Provider[] = data.providers ?? [];
           setProviders(list);
-          const def = list.find((p) => p.isDefault) ?? list[0];
-          if (def) {
-            setProviderId(def.id);
-            const m = def.models.find((mm) => mm.isDefault) ?? def.models[0];
-            setModelId(m?.id ?? "");
+          if (!list.length) return;
+          // default 为「全局唯一默认模型」（跨供应商）
+          let defProvider = list[0];
+          let defModel = defProvider.models[0];
+          for (const p of list) {
+            const m = p.models.find((mm) => mm.isDefault);
+            if (m) {
+              defProvider = p;
+              defModel = m;
+              break;
+            }
           }
+          setProviderId(defProvider.id);
+          setModelId(defModel?.id ?? "");
         })
         .catch(() => {});
     }
