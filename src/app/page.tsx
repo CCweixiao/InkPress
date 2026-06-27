@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Boxes, FileCode2, FolderOpen, Palette, Settings, Sparkles, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { getUiPreferences } from "@/lib/ui-preferences";
 import { previewSnippet } from "@/lib/content-store";
 import { APP_VERSION, REPO_URL, releaseTagUrl } from "@/lib/site";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,8 @@ import type { SpaceItem } from "@/components/spaces/SpaceSection";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  // SSR 读回 UI 偏好（网格/列表）作为首帧值，避免闪烁
+  const uiPreferences = await getUiPreferences();
   // 取空间 + 文章（含封面 Asset URL）
   const [spaces, articles, coverAssets] = await Promise.all([
     prisma.space.findMany({
@@ -150,7 +153,11 @@ export default async function HomePage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8 space-y-6">
-        <HomeView spaces={grouped} unclassified={unclassified} />
+        <HomeView
+          spaces={grouped}
+          unclassified={unclassified}
+          initialViewMode={uiPreferences.viewMode}
+        />
       </main>
 
       {/* 回到顶部 */}
