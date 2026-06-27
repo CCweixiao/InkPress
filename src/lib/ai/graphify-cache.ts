@@ -12,8 +12,8 @@ import { listProjectFiles, resolveProjectRoot } from "@/lib/ai/project-access";
 
 const log = moduleLogger("graphify-cache");
 const execFileAsync = promisify(execFile);
-const GRAPHIFY_TIMEOUT_MS = 10 * 60 * 1000;
-const FAILED_RETRY_MS = 60 * 60 * 1000;
+export const GRAPHIFY_TIMEOUT_MS = 10 * 60 * 1000;
+export const FAILED_RETRY_MS = 60 * 60 * 1000;
 const GRAPHIFY_CODE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",
@@ -78,7 +78,7 @@ function safeSegment(value: string) {
     .slice(0, 96) || "unknown";
 }
 
-function sourceKey(project: AgentProjectConfig) {
+export function sourceKey(project: AgentProjectConfig) {
   return project.id || crypto.createHash("sha256").update(project.root).digest("hex").slice(0, 16);
 }
 
@@ -96,7 +96,7 @@ export function graphifyOutDir(project: AgentProjectConfig, snapshotHash: string
   return path.join(codeGraphCacheBase(project, snapshotHash), "graphify-out");
 }
 
-function relativeToStorage(absolutePath: string) {
+export function relativeToStorage(absolutePath: string) {
   const root = path.resolve(storageDir());
   const absolute = path.resolve(absolutePath);
   if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`)) {
@@ -105,14 +105,14 @@ function relativeToStorage(absolutePath: string) {
   return path.relative(root, absolute).replaceAll(path.sep, "/");
 }
 
-async function pathExists(target: string) {
+export async function pathExists(target: string) {
   return fs
     .stat(target)
     .then((stat) => stat.isFile() || stat.isDirectory())
     .catch(() => false);
 }
 
-async function graphifyAvailable() {
+export async function graphifyAvailable() {
   try {
     await execFileAsync("graphify", ["--help"], { timeout: 5_000 });
     return true;
@@ -133,11 +133,12 @@ async function gitHead(root: string) {
   }
 }
 
-async function upsertCache(input: {
+export async function upsertCache(input: {
   project: AgentProjectConfig;
   root: string;
   snapshotHash: string;
   status: "building" | "ready" | "failed" | "stale";
+  provider?: string;
   graphPath?: string | null;
   reportPath?: string | null;
   htmlPath?: string | null;
@@ -146,9 +147,10 @@ async function upsertCache(input: {
   lastError?: string | null;
   metadata?: Record<string, unknown>;
 }) {
+  const provider = input.provider ?? "graphify";
   const existing = await prisma.codeGraphCache.findFirst({
     where: {
-      provider: "graphify",
+      provider,
       sourceKey: sourceKey(input.project),
       snapshotHash: input.snapshotHash,
       spaceId: null,
@@ -156,6 +158,7 @@ async function upsertCache(input: {
     },
   });
   const data = {
+    provider,
     projectName: input.project.name,
     root: input.root,
     gitHead: await gitHead(input.root),
@@ -173,7 +176,6 @@ async function upsertCache(input: {
   }
   return prisma.codeGraphCache.create({
     data: {
-      provider: "graphify",
       sourceKey: sourceKey(input.project),
       snapshotHash: input.snapshotHash,
       spaceId: null,
@@ -267,7 +269,7 @@ async function linkOrCopyFile(source: string, target: string) {
   });
 }
 
-async function prepareGraphifyCodeMirror(project: AgentProjectConfig, root: string, base: string) {
+export async function prepareGraphifyCodeMirror(project: AgentProjectConfig, root: string, base: string) {
   const mirror = path.join(base, "code-input");
   await fs.rm(mirror, { recursive: true, force: true });
   const listed = await listProjectFiles(project, { limit: 5_000 });
@@ -401,122 +403,13 @@ export async function ensureGraphifyProjectIndex(
   snapshotHash: string,
   options: { refresh?: boolean } = {}
 ) {
-  const root = await resolveProjectRoot(project);
-  const outDir = graphifyOutDir(project, snapshotHash);
-  const graphPath = path.join(outDir, "graph.json");
-  const reportPath = path.join(outDir, "GRAPH_REPORT.md");
-  const htmlPath = path.join(outDir, "graph.html");
-  const existing = await prisma.codeGraphCache.findFirst({
-    where: {
-      provider: "graphify",
-      sourceKey: sourceKey(project),
-      snapshotHash,
-      status: "ready",
-      spaceId: null,
-      articleId: null,
-    },
-    orderBy: { updatedAt: "desc" },
+  // 薄壳转发到统一编排器；强制使用 graphify CLI provider 以保持向后兼容。
+  const { ensureCodeGraphCache } = await import("@/lib/ai/code-graph-provider");
+  return ensureCodeGraphCache({
+    project,
+    snapshotHash,
+    options: { refresh: options.refresh, provider: "graphify" },
   });
-  if (
-    !options.refresh &&
-    existing?.graphPath &&
-    (await pathExists(path.join(storageDir(), existing.graphPath)))
-  ) {
-    return readGraphifyProjectIndex(project, snapshotHash);
-  }
-  const failed = await prisma.codeGraphCache.findFirst({
-    where: {
-      provider: "graphify",
-      sourceKey: sourceKey(project),
-      snapshotHash,
-      status: "failed",
-      spaceId: null,
-      articleId: null,
-    },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (
-    !options.refresh &&
-    failed &&
-    Date.now() - failed.updatedAt.getTime() < FAILED_RETRY_MS
-  ) {
-    return null;
-  }
-  if (!options.refresh && await pathExists(graphPath)) {
-    return readGraphifyProjectIndex(project, snapshotHash);
-  }
-  if (!(await graphifyAvailable())) {
-    await upsertCache({
-      project,
-      root,
-      snapshotHash,
-      status: "failed",
-      lastError: "未找到 graphify 命令。请安装官方 PyPI 包 graphifyy，CLI 命令为 graphify。",
-      metadata: { install: "uv tool install graphifyy" },
-    });
-    return null;
-  }
-
-  await fs.mkdir(codeGraphCacheBase(project, snapshotHash), { recursive: true });
-  await upsertCache({ project, root, snapshotHash, status: "building" });
-  const scan = await prepareGraphifyCodeMirror(project, root, codeGraphCacheBase(project, snapshotHash));
-  const graphifyEnv = {
-    ...process.env,
-    GRAPHIFY_OUT: outDir,
-    GRAPHIFY_NO_TIPS: "1",
-  };
-  const args = await pathExists(graphPath)
-    ? ["update", scan.scanRoot, "--no-cluster"]
-    : ["extract", scan.scanRoot, "--out", codeGraphCacheBase(project, snapshotHash), "--no-cluster"];
-  try {
-    await execFileAsync("graphify", args, {
-      cwd: codeGraphCacheBase(project, snapshotHash),
-      env: graphifyEnv,
-      timeout: GRAPHIFY_TIMEOUT_MS,
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    const index = await readGraphifyProjectIndex(project, snapshotHash);
-    if (!index) {
-      throw new Error("Graphify 构建完成但 graph.json 为空或不可解析。");
-    }
-    await upsertCache({
-      project,
-      root,
-      snapshotHash,
-      status: "ready",
-      graphPath: relativeToStorage(graphPath),
-      reportPath: (await pathExists(reportPath)) ? relativeToStorage(reportPath) : null,
-      htmlPath: (await pathExists(htmlPath)) ? relativeToStorage(htmlPath) : null,
-      nodeCount: index.symbols.length,
-      edgeCount: index.edges.length,
-      metadata: {
-        command: ["graphify", ...args],
-        graphifyOut: outDir,
-        originalRoot: root,
-        scanRoot: scan.scanRoot,
-        mirroredFiles: scan.fileCount,
-      },
-    });
-    return index;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await upsertCache({
-      project,
-      root,
-      snapshotHash,
-      status: "failed",
-      lastError: message.slice(0, 1000),
-      metadata: {
-        command: ["graphify", ...args],
-        graphifyOut: outDir,
-        originalRoot: root,
-        scanRoot: scan.scanRoot,
-        mirroredFiles: scan.fileCount,
-      },
-    });
-    log.warn({ projectId: project.id, message }, "Graphify 构建失败，回退到本地静态索引");
-    return null;
-  }
 }
 
 export async function queryGraphifyProject(input: {
@@ -525,62 +418,21 @@ export async function queryGraphifyProject(input: {
   question: string;
   budget?: number;
 }) {
-  const index = await ensureGraphifyProjectIndex(input.project, input.snapshotHash);
-  const graphPath = path.join(graphifyOutDir(input.project, input.snapshotHash), "graph.json");
-  if (!index || !(await pathExists(graphPath))) {
+  const { graphifyCliProvider } = await import("@/lib/ai/code-graph-provider");
+  // 先确保图谱已构建（命中缓存即读盘，未命中且 CLI 不可用时返回 ok:false）。
+  await ensureGraphifyProjectIndex(input.project, input.snapshotHash);
+  if (!graphifyCliProvider.query) {
     return {
       ok: false,
       usedGraph: false,
       snapshotHash: input.snapshotHash,
-      output: "当前快照没有可用的 Graphify 代码图谱。",
+      output: "graphify provider 未实现 query。",
     };
   }
-  if (!(await graphifyAvailable())) {
-    return {
-      ok: false,
-      usedGraph: false,
-      snapshotHash: input.snapshotHash,
-      output: "已存在 graph.json，但当前环境没有 graphify CLI，无法执行图谱 query。",
-    };
-  }
-  try {
-    const { stdout } = await execFileAsync(
-      "graphify",
-      [
-        "query",
-        input.question,
-        "--graph",
-        graphPath,
-        "--budget",
-        String(Math.min(20_000, Math.max(1_000, input.budget ?? 8_000))),
-      ],
-      {
-        cwd: codeGraphCacheBase(input.project, input.snapshotHash),
-        env: {
-          ...process.env,
-          GRAPHIFY_OUT: graphifyOutDir(input.project, input.snapshotHash),
-          GRAPHIFY_NO_TIPS: "1",
-        },
-        timeout: 60_000,
-        maxBuffer: 2 * 1024 * 1024,
-      }
-    );
-    return {
-      ok: true,
-      usedGraph: true,
-      snapshotHash: input.snapshotHash,
-      output: stdout.trim().slice(0, 40_000),
-      stats: {
-        symbols: index.symbols.length,
-        edges: index.edges.length,
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      usedGraph: false,
-      snapshotHash: input.snapshotHash,
-      output: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return graphifyCliProvider.query({
+    project: input.project,
+    snapshotHash: input.snapshotHash,
+    question: input.question,
+    budget: input.budget,
+  });
 }

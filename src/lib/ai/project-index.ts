@@ -6,7 +6,6 @@ import { parser as pythonParser } from "@lezer/python";
 import { cacheDir } from "@/lib/paths";
 import { moduleLogger } from "@/lib/logger";
 import type { AgentProjectConfig } from "@/lib/ai/agent-config";
-import { ensureGraphifyProjectIndex } from "@/lib/ai/graphify-cache";
 
 const log = moduleLogger("project-index");
 import type {
@@ -67,14 +66,6 @@ function nodeLines(node: Node) {
   };
 }
 
-async function hashFile(absolutePath: string) {
-  const content = await fs.readFile(absolutePath);
-  return {
-    hash: crypto.createHash("sha256").update(content).digest("hex"),
-    content,
-  };
-}
-
 function cachePath(projectId: string) {
   const safe = projectId.replace(/[^a-zA-Z0-9_-]/g, "_");
   return path.join(cacheDir(), "code-index", safe, "index.json");
@@ -118,24 +109,34 @@ function parseTypeScript(
   edges: CodeRelation[],
   errors: ProjectIndex["parseErrors"]
 ) {
-  const project = new Project({
-    compilerOptions: { allowJs: true, checkJs: false },
-    skipAddingFilesFromTsConfig: true,
-  });
-  try {
-    project.addSourceFilesAtPaths(
-      files.map((file) => path.join(root, file)).filter((file) => !file.endsWith(".d.ts"))
-    );
-  } catch (error) {
-    errors.push({
-      path: "tsconfig.json",
-      message: error instanceof Error ? error.message : "TypeScript 项目加载失败",
+  // ts-morph 会把每个 TS 文件装载为常驻 AST。超大项目一次性全部装载会导致内存峰值过高。
+  // 分批处理：每批独立 Project，循环结束后即可被 GC，把 AST 驻留约束在单批规模。
+  // 代价：跨批次的 call/import 符号解析会降级为 syntactic（符号清单本身仍完整）。
+  // 批大小 400：TS 文件数 ≤ 400 的项目（绝大多数）行为与单 Project 完全一致。
+  const TS_PARSE_CHUNK = 400;
+  const fileSet = new Set(files);
+  for (let start = 0; start < files.length; start += TS_PARSE_CHUNK) {
+    const batch = files.slice(start, start + TS_PARSE_CHUNK);
+    const project = new Project({
+      compilerOptions: { allowJs: true, checkJs: false },
+      skipAddingFilesFromTsConfig: true,
     });
-  }
+    try {
+      project.addSourceFilesAtPaths(
+        batch
+          .map((file) => path.join(root, file))
+          .filter((file) => !file.endsWith(".d.ts"))
+      );
+    } catch (error) {
+      errors.push({
+        path: "tsconfig.json",
+        message: error instanceof Error ? error.message : "TypeScript 项目加载失败",
+      });
+    }
 
   for (const source of project.getSourceFiles()) {
     const relative = path.relative(root, source.getFilePath()).replaceAll(path.sep, "/");
-    if (relative.startsWith("..") || !files.includes(relative)) continue;
+    if (relative.startsWith("..") || !fileSet.has(relative)) continue;
 
     for (const declaration of [
       ...source.getFunctions(),
@@ -207,6 +208,7 @@ function parseTypeScript(
         evidence: evidence(relative, line, call.getEndLineNumber(), `调用 ${expression.getText()}`),
       });
     }
+  }
   }
 }
 
@@ -476,34 +478,64 @@ export async function buildProjectIndex(project: AgentProjectConfig): Promise<Pr
   const listed = await listProjectFiles(project, { limit: MAX_INDEX_FILES });
   const sourceFiles = listed.files.filter((file) => languageFor(file) !== "text");
   const files: ProjectIndex["files"] = [];
-  const contents = new Map<string, string>();
+  const parseErrors: ProjectIndex["parseErrors"] = [];
 
+  // 第一遍只 stat，不读正文：snapshot 基于 (path,size,mtime)，与 getProjectSnapshotHash 同公式。
+  // 不再为计算哈希而读取全部源码——超大项目缓存命中时省去整轮文件读，I/O 从 O(N reads) 降到 O(N stats)。
+  const fingerprintParts: string[] = [];
   for (const relative of sourceFiles) {
     const absolute = path.join(root, relative);
     const stat = await fs.stat(absolute).catch(() => null);
     if (!stat?.isFile() || stat.size > MAX_FILE_BYTES) continue;
-    const hashed = await hashFile(absolute);
     files.push({
       path: relative,
       language: languageFor(relative),
-      hash: hashed.hash,
+      hash: "",
       size: stat.size,
     });
-    contents.set(relative, hashed.content.toString("utf8"));
+    fingerprintParts.push(`${relative}:${stat.size}:${stat.mtimeMs}`);
   }
 
   const snapshotHash = crypto
     .createHash("sha256")
-    .update(files.map((file) => `${file.path}:${file.hash}`).sort().join("\n"))
+    .update(fingerprintParts.sort().join("\n"))
     .digest("hex");
   const symbols: SymbolEvidence[] = [];
   const edges: CodeRelation[] = [];
-  const parseErrors: ProjectIndex["parseErrors"] = [];
-  const tsFiles = files.filter((file) => file.language === "typescript").map((file) => file.path);
-  parseTypeScript(root, tsFiles, symbols, edges, parseErrors);
+  // TypeScript 由 ts-morph 自行从磁盘读取并构建 AST，无需我们持有正文。
+  parseTypeScript(
+    root,
+    files.filter((file) => file.language === "typescript").map((file) => file.path),
+    symbols,
+    edges,
+    parseErrors
+  );
 
+  // 非 TS：流式按需读取——每个文件读完即解析即释放，不再用 contents Map 常驻全部正文。
+  // 内存峰值从「全部源码正文 + ts-morph 全部 AST」收敛到「单文件正文 + ts-morph 单批 AST」。
+  let skippedUnreadable = 0;
   for (const file of files) {
-    const text = contents.get(file.path) ?? "";
+    if (file.language === "typescript") continue;
+    const absolute = path.join(root, file.path);
+    let text: string;
+    try {
+      const buffer = await fs.readFile(absolute);
+      // 二进制文件（含 NUL 字节）跳过：文本解析器无法处理，且会污染符号表。
+      if (buffer.includes(0)) {
+        skippedUnreadable++;
+        continue;
+      }
+      text = buffer.toString("utf8");
+    } catch (error) {
+      // 单文件读取失败（权限拒绝、坏符号链接、特殊文件）只跳过该文件，
+      // 不让超大项目里一个不可读文件触发整次 failed → 1h 冷却。
+      skippedUnreadable++;
+      parseErrors.push({
+        path: file.path,
+        message: `读取失败：${error instanceof Error ? error.message.split("\n")[0] : "未知错误"}`,
+      });
+      continue;
+    }
     if (file.language === "java") {
       await validateJavaSyntax(file.path, text, parseErrors);
       parseJavaFile(file.path, text, symbols, edges, parseErrors);
@@ -516,6 +548,12 @@ export async function buildProjectIndex(project: AgentProjectConfig): Promise<Pr
     } else if (file.language === "c" || file.language === "cpp") {
       parseCStyleFile(file.path, text, file.language, symbols, edges);
     }
+  }
+  if (skippedUnreadable > 0) {
+    log.warn(
+      { projectId: project.id, skippedUnreadable, totalCandidates: sourceFiles.length },
+      "buildProjectIndex: 跳过部分不可读/二进制文件，继续对剩余文件建立索引"
+    );
   }
 
   const now = new Date().toISOString();
@@ -556,8 +594,19 @@ export async function getProjectIndex(
   options: { refresh?: boolean } = {}
 ) {
   const currentSnapshotHash = await getProjectSnapshotHash(project);
-  const graphIndex = await ensureGraphifyProjectIndex(project, currentSnapshotHash, {
-    refresh: options.refresh,
+  // 默认优先用原生图谱（零 Python 依赖）；失败再试 graphify CLI；仍失败则走纯索引构建。
+  const { ensureCodeGraphCache } = await import("@/lib/ai/code-graph-provider");
+  const nativeIndex = await ensureCodeGraphCache({
+    project,
+    snapshotHash: currentSnapshotHash,
+    options: { refresh: options.refresh, provider: "native" },
+  });
+  if (nativeIndex) return nativeIndex;
+
+  const graphIndex = await ensureCodeGraphCache({
+    project,
+    snapshotHash: currentSnapshotHash,
+    options: { refresh: options.refresh, provider: "graphify" },
   });
   if (graphIndex) return graphIndex;
 
@@ -587,15 +636,17 @@ export async function getProjectIndex(
 export async function getProjectSnapshotHash(project: AgentProjectConfig) {
   const root = await resolveProjectRoot(project);
   const listed = await listProjectFiles(project, { limit: MAX_INDEX_FILES });
-  const hashes: string[] = [];
+  // 基于 (path,size,mtime) 计算快照指纹，只 stat 不读正文。
+  // 这是缓存命中判定时每次探索都会走的路径——避免读取全部源码，把超大项目的
+  // 「即使命中缓存也要全量读文件」降为纯 stat。与 buildProjectIndex 内部使用同一公式。
+  const fingerprints: string[] = [];
   for (const relative of listed.files.filter((file) => languageFor(file) !== "text")) {
     const absolute = path.join(root, relative);
     const stat = await fs.stat(absolute).catch(() => null);
     if (!stat?.isFile() || stat.size > MAX_FILE_BYTES) continue;
-    const hashed = await hashFile(absolute);
-    hashes.push(`${relative}:${hashed.hash}`);
+    fingerprints.push(`${relative}:${stat.size}:${stat.mtimeMs}`);
   }
-  return crypto.createHash("sha256").update(hashes.sort().join("\n")).digest("hex");
+  return crypto.createHash("sha256").update(fingerprints.sort().join("\n")).digest("hex");
 }
 
 export async function getCachedProjectIndex(project: AgentProjectConfig) {
