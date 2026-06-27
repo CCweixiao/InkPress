@@ -413,7 +413,7 @@ ${projectCatalog || "（无）"}`,
     ...(routed.needsWeb || input.config.tavilyApiKey.trim()
       ? ["web_search", "web_extract"]
       : []),
-    ...(project ? ["explore_project"] : []),
+    ...(project ? ["explore_project", "build_code_graph"] : []),
     ...(routed.needsGitHistory && project ? ["analyze_code_changes"] : []),
   ];
 
