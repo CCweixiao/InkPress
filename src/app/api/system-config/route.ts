@@ -12,6 +12,7 @@ import {
 import { AGENT_CONFIG_KEY, parseAgentConfig } from "@/lib/ai/agent-config";
 import { WECHAT_CONFIG_KEY, parseWechatConfig } from "@/lib/wechat/config";
 import { APPEARANCE_CONFIG_KEY, parseAppearanceConfig } from "@/lib/appearance-config";
+import { UI_PREFERENCES_KEY, parseUiPreferences } from "@/lib/ui-preferences";
 import { I18N_CONFIG_KEY, parseI18nConfig } from "@/lib/i18n-config";
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
 import { prisma } from "@/lib/db";
@@ -35,6 +36,7 @@ function validateConfigValue(key: string, value: string) {
   else if (key === AGENT_CONFIG_KEY) parseAgentConfig(value);
   else if (key === WECHAT_CONFIG_KEY) parseWechatConfig(value);
   else if (key === APPEARANCE_CONFIG_KEY) parseAppearanceConfig(value);
+  else if (key === UI_PREFERENCES_KEY) parseUiPreferences(value);
   else if (key === I18N_CONFIG_KEY) parseI18nConfig(value);
   else parseJsonObjectOrArrayConfig(value);
 }

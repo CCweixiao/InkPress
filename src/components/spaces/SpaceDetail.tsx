@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ViewToggle, type ViewMode } from "@/components/common/ViewToggle";
+import { ViewToggle, useViewMode, type ViewMode } from "@/components/common/ViewToggle";
 import { ArticleCard, type ArticleListItem } from "@/components/articles/ArticleCard";
 import { SpaceDialog, type SpaceForm } from "./SpaceDialog";
 import { cn } from "@/lib/utils";
@@ -34,12 +34,14 @@ function parseTags(tagsJson: string): string[] {
 export function SpaceDetail({
   space,
   articles,
+  initialViewMode,
 }: {
   space: Space;
   articles: ArticleListItem[];
+  initialViewMode?: ViewMode;
 }) {
   const router = useRouter();
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useViewMode(initialViewMode);
   const [editOpen, setEditOpen] = useState(false);
   const [page, setPage] = useState(1);
   const tags = parseTags(space.tagsJson);
