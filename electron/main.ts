@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import net from "node:net";
+import { SPLASH_LOGO_DATA_URL } from "./splash-logo";
 
 /**
  * InkPress Electron 主进程（自包含，不依赖 src/lib，便于 electron-builder 打包）。
@@ -22,6 +23,7 @@ let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let serverPort = PREFERRED_PORT;
 let isQuitting = false;
+let splash: BrowserWindow | null = null;
 
 /**
  * 是否处于打包形态。
@@ -213,6 +215,73 @@ function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
   });
 }
 
+/* ============ 启动 splash ============ */
+
+/**
+ * 启动过渡页 HTML：logo + 「正在启动 InkPress…」+ CSS 旋转 loading。
+ * logo 以 base64 data URL 内嵌（splash 在 Next server 起来前显示，无法从 public/ 取；
+ * 打包后 build/icon.png 也不进 app bundle）。dev / packaged 两种形态都稳。
+ */
+function splashHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #ffffff; color: #334155;
+    -webkit-user-select: none; user-select: none;
+  }
+  .logo { width: 128px; height: 128px; }
+  .title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid #e2e8f0; border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: ip-spin 0.8s linear infinite;
+  }
+  @keyframes ip-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <img class="logo" src="${SPLASH_LOGO_DATA_URL}" alt="InkPress" />
+  <div class="title">正在启动 InkPress…</div>
+  <div class="spinner"></div>
+</body>
+</html>`;
+}
+
+function showSplash() {
+  splash = new BrowserWindow({
+    width: 480,
+    height: 360,
+    frame: false,
+    center: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: true,
+    backgroundColor: "#ffffff",
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  splash.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(splashHTML()));
+  splash.on("closed", () => {
+    splash = null;
+  });
+}
+
+function closeSplash() {
+  if (splash && !splash.isDestroyed()) splash.close();
+  splash = null;
+}
+
 async function createWindow(port: number) {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -234,23 +303,26 @@ async function createWindow(port: number) {
 }
 
 async function bootstrap() {
+  showSplash();
   try {
     bootstrapData();
     serverPort = await pickPort(PREFERRED_PORT);
     serverProc = startServer(serverPort);
     await waitForServer(serverPort);
     await createWindow(serverPort);
+    closeSplash();
   } catch (e) {
     console.error("[electron] 启动失败：", e);
     // 失败时清理 server 子进程，避免孤儿进程占用端口
     // （waitForServer 超时、createWindow 抛异常等情况下 serverProc 可能已 spawn）
     await killServer();
+    closeSplash();
     mainWindow = new BrowserWindow({ width: 600, height: 400 });
     const msg = e instanceof Error ? e.message : String(e);
     mainWindow.loadURL(
       "data:text/html;charset=utf-8," +
         encodeURIComponent(
-          `<body style="font-family:system-ui;padding:40px;color:#b91c1c"><h2>InkPress 启动失败</h2><pre>${msg}</pre></body>`
+          `<body style="font-family:system-ui;padding:40px;color:#b91c1c"><img src="${SPLASH_LOGO_DATA_URL}" style="width:56px;height:56px;display:block;margin:0 auto 16px" alt="InkPress" /><h2>InkPress 启动失败</h2><pre>${msg}</pre></body>`
         )
     );
   }
