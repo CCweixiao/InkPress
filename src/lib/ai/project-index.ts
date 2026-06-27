@@ -2,10 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { Node, Project, SyntaxKind } from "ts-morph";
-import { parse as parseJava } from "java-parser";
 import { parser as pythonParser } from "@lezer/python";
 import { cacheDir } from "@/lib/paths";
+import { moduleLogger } from "@/lib/logger";
 import type { AgentProjectConfig } from "@/lib/ai/agent-config";
+import { ensureGraphifyProjectIndex } from "@/lib/ai/graphify-cache";
+
+const log = moduleLogger("project-index");
 import type {
   CodeRelation,
   ProjectIndex,
@@ -19,7 +22,7 @@ import {
 } from "@/lib/ai/project-access";
 
 const INDEX_VERSION = 1;
-const MAX_INDEX_FILES = 1_500;
+const MAX_INDEX_FILES = 3_000;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SYMBOLS = 8_000;
 const MAX_EDGES = 12_000;
@@ -32,6 +35,10 @@ function languageFor(file: string) {
   }
   if (extension === ".java") return "java";
   if (extension === ".py") return "python";
+  if (extension === ".go") return "go";
+  if (extension === ".rs") return "rust";
+  if ([".c", ".h"].includes(extension)) return "c";
+  if ([".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"].includes(extension)) return "cpp";
   return "text";
 }
 
@@ -210,14 +217,6 @@ function parseJavaFile(
   edges: CodeRelation[],
   errors: ProjectIndex["parseErrors"]
 ) {
-  try {
-    parseJava(text);
-  } catch (error) {
-    errors.push({
-      path: pathname,
-      message: error instanceof Error ? error.message : "Java 解析失败",
-    });
-  }
   const lines = text.split("\n");
   let container = "";
   lines.forEach((lineText, index) => {
@@ -270,6 +269,22 @@ function parseJavaFile(
       });
     }
   });
+}
+
+async function validateJavaSyntax(
+  pathname: string,
+  text: string,
+  errors: ProjectIndex["parseErrors"]
+) {
+  try {
+    const mod = await import("java-parser");
+    mod.parse(text);
+  } catch (error) {
+    errors.push({
+      path: pathname,
+      message: error instanceof Error ? error.message : "Java 解析失败",
+    });
+  }
 }
 
 function parsePythonFile(
@@ -330,12 +345,136 @@ function parsePythonFile(
   });
 }
 
+function parseGoFile(
+  pathname: string,
+  text: string,
+  symbols: SymbolEvidence[],
+  edges: CodeRelation[]
+) {
+  let inImportBlock = false;
+  text.split("\n").forEach((lineText, index) => {
+    const line = index + 1;
+    const type = lineText.match(/\b(type)\s+([A-Za-z_]\w*)\s+(struct|interface)\b/);
+    if (type) {
+      addSymbol(symbols, {
+        name: type[2],
+        kind: type[3] === "struct" ? "Struct" : "Interface",
+        language: "go",
+        path: pathname,
+        startLine: line,
+        endLine: line,
+      });
+    }
+    const fn = lineText.match(/\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_]\w*)\s*\(/);
+    if (fn) {
+      addSymbol(symbols, {
+        name: fn[1],
+        kind: "Function",
+        language: "go",
+        path: pathname,
+        startLine: line,
+        endLine: line,
+      });
+    }
+    if (/^\s*import\s*\(/.test(lineText)) inImportBlock = true;
+    const singleImport = lineText.match(/^\s*import\s+(?:[.\w]+\s+)?["`]([^"`]+)["`]/);
+    const blockImport = inImportBlock
+      ? lineText.match(/^\s*(?:[.\w]+\s+)?["`]([^"`]+)["`]/)
+      : null;
+    const imported = singleImport?.[1] ?? blockImport?.[1];
+    if (imported) {
+      addEdge(edges, {
+        from: pathname,
+        to: imported,
+        kind: "imports",
+        confidence: "syntactic",
+        evidence: evidence(pathname, line, line, `导入 ${imported}`),
+      });
+    }
+    if (inImportBlock && lineText.includes(")")) inImportBlock = false;
+  });
+}
+
+function parseRustFile(
+  pathname: string,
+  text: string,
+  symbols: SymbolEvidence[],
+  edges: CodeRelation[]
+) {
+  text.split("\n").forEach((lineText, index) => {
+    const line = index + 1;
+    const declaration = lineText.match(/\b(?:pub\s+)?(fn|struct|enum|trait|impl)\s+([A-Za-z_]\w*)/);
+    if (declaration) {
+      addSymbol(symbols, {
+        name: declaration[2],
+        kind: declaration[1] === "fn" ? "Function" : declaration[1],
+        language: "rust",
+        path: pathname,
+        startLine: line,
+        endLine: line,
+      });
+    }
+    const imported = lineText.match(/^\s*(?:pub\s+)?(?:use|mod)\s+([^;{]+)[;{]/);
+    if (imported) {
+      addEdge(edges, {
+        from: pathname,
+        to: imported[1].trim(),
+        kind: "imports",
+        confidence: "syntactic",
+        evidence: evidence(pathname, line, line, `导入 ${imported[1].trim()}`),
+      });
+    }
+  });
+}
+
+function parseCStyleFile(
+  pathname: string,
+  text: string,
+  language: "c" | "cpp",
+  symbols: SymbolEvidence[],
+  edges: CodeRelation[]
+) {
+  text.split("\n").forEach((lineText, index) => {
+    const line = index + 1;
+    const type = lineText.match(/\b(class|struct|enum)\s+([A-Za-z_]\w*)/);
+    if (type) {
+      addSymbol(symbols, {
+        name: type[2],
+        kind: type[1],
+        language,
+        path: pathname,
+        startLine: line,
+        endLine: line,
+      });
+    }
+    const fn = lineText.match(/^\s*(?:[\w:*&<>\[\]\s]+)\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)?)\s*\([^;]*\)\s*(?:const\s*)?\{/);
+    if (fn && !["if", "for", "while", "switch"].includes(fn[1])) {
+      addSymbol(symbols, {
+        name: fn[1],
+        kind: "Function",
+        language,
+        path: pathname,
+        startLine: line,
+        endLine: line,
+      });
+    }
+    const included = lineText.match(/^\s*#\s*include\s+[<"]([^>"]+)[>"]/);
+    if (included) {
+      addEdge(edges, {
+        from: pathname,
+        to: included[1],
+        kind: "imports",
+        confidence: "syntactic",
+        evidence: evidence(pathname, line, line, `包含 ${included[1]}`),
+      });
+    }
+  });
+}
+
 export async function buildProjectIndex(project: AgentProjectConfig): Promise<ProjectIndex> {
   const root = await resolveProjectRoot(project);
   const listed = await listProjectFiles(project, { limit: MAX_INDEX_FILES });
-  const sourceFiles = listed.files.filter((file) =>
-    ["typescript", "java", "python"].includes(languageFor(file))
-  );
+  const sourceFiles = listed.files.filter((file) => languageFor(file) !== "text");
   const files: ProjectIndex["files"] = [];
   const contents = new Map<string, string>();
 
@@ -366,9 +505,16 @@ export async function buildProjectIndex(project: AgentProjectConfig): Promise<Pr
   for (const file of files) {
     const text = contents.get(file.path) ?? "";
     if (file.language === "java") {
+      await validateJavaSyntax(file.path, text, parseErrors);
       parseJavaFile(file.path, text, symbols, edges, parseErrors);
     } else if (file.language === "python") {
       parsePythonFile(file.path, text, symbols, edges, parseErrors);
+    } else if (file.language === "go") {
+      parseGoFile(file.path, text, symbols, edges);
+    } else if (file.language === "rust") {
+      parseRustFile(file.path, text, symbols, edges);
+    } else if (file.language === "c" || file.language === "cpp") {
+      parseCStyleFile(file.path, text, file.language, symbols, edges);
     }
   }
 
@@ -389,10 +535,19 @@ export async function buildProjectIndex(project: AgentProjectConfig): Promise<Pr
       symbols.length >= MAX_SYMBOLS ||
       edges.length >= MAX_EDGES,
   };
-  const target = cachePath(project.id);
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, JSON.stringify(index), "utf8");
-  void cleanupOldIndexes();
+  if (files.length === 0) {
+    // 空文件列表 → symbols/edges 必然全空，且 snapshotHash=SHA256("") 会与后续校验自洽，
+    // 造成"空索引永久锁定"。这里跳过缓存写入，让下次调用强制重建。
+    log.warn(
+      { projectId: project.id, root, parseErrors: parseErrors.length },
+      "buildProjectIndex: 源文件列表为空，跳过缓存写入以避免空索引锁定"
+    );
+  } else {
+    const target = cachePath(project.id);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, JSON.stringify(index), "utf8");
+    void cleanupOldIndexes();
+  }
   return index;
 }
 
@@ -400,6 +555,12 @@ export async function getProjectIndex(
   project: AgentProjectConfig,
   options: { refresh?: boolean } = {}
 ) {
+  const currentSnapshotHash = await getProjectSnapshotHash(project);
+  const graphIndex = await ensureGraphifyProjectIndex(project, currentSnapshotHash, {
+    refresh: options.refresh,
+  });
+  if (graphIndex) return graphIndex;
+
   if (!options.refresh) {
     const cached = await fs.readFile(cachePath(project.id), "utf8").catch(() => "");
     if (cached) {
@@ -408,7 +569,8 @@ export async function getProjectIndex(
         if (
           parsed.version === INDEX_VERSION &&
           parsed.root === (await resolveProjectRoot(project)) &&
-          parsed.snapshotHash === (await getProjectSnapshotHash(project))
+          parsed.snapshotHash === currentSnapshotHash &&
+          (parsed.files?.length ?? 0) > 0
         ) {
           parsed.accessedAt = new Date().toISOString();
           await fs.writeFile(cachePath(project.id), JSON.stringify(parsed), "utf8");
@@ -426,9 +588,7 @@ export async function getProjectSnapshotHash(project: AgentProjectConfig) {
   const root = await resolveProjectRoot(project);
   const listed = await listProjectFiles(project, { limit: MAX_INDEX_FILES });
   const hashes: string[] = [];
-  for (const relative of listed.files.filter((file) =>
-    ["typescript", "java", "python"].includes(languageFor(file))
-  )) {
+  for (const relative of listed.files.filter((file) => languageFor(file) !== "text")) {
     const absolute = path.join(root, relative);
     const stat = await fs.stat(absolute).catch(() => null);
     if (!stat?.isFile() || stat.size > MAX_FILE_BYTES) continue;

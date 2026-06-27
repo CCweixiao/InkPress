@@ -3,12 +3,14 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentProjectConfig } from "@/lib/ai/agent-config";
+import { moduleLogger } from "@/lib/logger";
 
+const log = moduleLogger("project-access");
 const execFileAsync = promisify(execFile);
 const MAX_READ_BYTES = 256 * 1024;
 const MAX_READ_LINES = 240;
 const MAX_SEARCH_RESULTS = 50;
-const MAX_GLOB_RESULTS = 500;
+const MAX_GLOB_RESULTS = 5_000;
 const MAX_TREE_RESULTS = 800;
 const BLOCKED_SEGMENTS = new Set([
   ".git",
@@ -72,6 +74,7 @@ export async function listProjectFiles(
   ];
   if (input.glob?.trim()) args.push("-g", input.glob.trim());
   let all: string[];
+  let rgFailed: { code?: string; message?: string } | undefined;
   try {
     const { stdout } = await execFileAsync("rg", [...args, "."], {
       cwd: root,
@@ -83,8 +86,26 @@ export async function listProjectFiles(
       .filter(Boolean)
       .map((item) => item.replace(/^\.\//, "").replaceAll("\\", "/"))
       .filter((item) => !isBlockedRelativePath(item));
-  } catch {
+  } catch (error) {
+    // rg 不可用（ENOENT：系统无独立 ripgrep，shell alias 不被 execFile 解析）
+    // 或被沙箱/超时拒绝时，退回 Node 原生遍历。记录原因，避免"文件列表为空"变成无声黑洞。
+    const err = error as { code?: string; message?: string };
+    rgFailed = { code: err?.code, message: err?.message?.split("\n")[0] };
+    log.warn(
+      { project: project.name, root, code: err?.code },
+      err?.code === "ENOENT"
+        ? "ripgrep 不可用（execFile 找不到 rg），退回 Node 遍历"
+        : "ripgrep 执行失败，退回 Node 遍历"
+    );
     all = await walkProjectFiles(root, input.glob);
+  }
+  if (all.length === 0) {
+    // 空文件列表会让 buildProjectIndex 产生 0 符号 0 关系，且空快照哈希会自洽锁定缓存。
+    // 必须留痕，便于定位是权限/沙箱/cwd 漂移还是项目本身无源码。
+    log.error(
+      { project: project.name, root, rgFailed },
+      "listProjectFiles 返回空文件列表（后续将得到 0 符号 0 关系）"
+    );
   }
   return {
     project: project.name,
