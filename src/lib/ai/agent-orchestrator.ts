@@ -79,6 +79,7 @@ type IntentContext = {
   isPolish: boolean;
   isSummarize: boolean;
   isCreate: boolean;
+  isKnowledgeExplainer: boolean;
 };
 
 function computeContext(message: string): IntentContext {
@@ -103,6 +104,10 @@ function computeContext(message: string): IntentContext {
     isSummarize:
       /总结|摘要|概括|提炼|要点|归纳|梗概|digest|小结|tldr|tl;?dr/i.test(text),
     isCreate: /写一篇|生成文章|创作|撰写|写成文章/.test(text),
+    isKnowledgeExplainer:
+      /科普|通俗|普通人|小白|解释|讲清楚|讲明白|看懂|读懂|专业资料|领域知识|别太学术|有趣/.test(
+        text
+      ),
   };
 }
 
@@ -148,6 +153,11 @@ const INTENT_RULES: IntentRule[] = [
   { intent: "polish", when: (c) => c.isPolish, skills: ["de-ai-writing"] },
   { intent: "research", when: (c) => c.isResearch, skills: ["web-research"] },
   { intent: "summarize", when: (c) => c.isSummarize, skills: ["article-summary"] },
+  {
+    intent: "create-article",
+    when: (c) => c.isCreate && c.isKnowledgeExplainer,
+    skills: ["wechat-writing", "wechat-knowledge-explainer"],
+  },
   { intent: "create-article", when: (c) => c.isCreate, skills: ["wechat-writing"] },
   {
     intent: "out-of-scope",
