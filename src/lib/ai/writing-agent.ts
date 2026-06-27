@@ -18,6 +18,8 @@ import {
 } from "@/lib/ai/git-analysis";
 import { moduleLogger } from "@/lib/logger";
 import { extractArticleOutline } from "@/lib/ai/current-article";
+import { getProjectSnapshotHash } from "@/lib/ai/project-index";
+import { ensureCodeGraphCache } from "@/lib/ai/code-graph-provider";
 
 const log = moduleLogger("ai.agent");
 
@@ -352,6 +354,48 @@ export async function createWritingAgent(input: {
         // 完整证据走 data part 到 UI；喂模型/落库的 output 用界定后的瘦身版本。
         await input.onCodeEvidence?.(result);
         return slimCodeEvidence(result);
+      }),
+    }),
+    build_code_graph: tool({
+      title: "构建代码图谱",
+      description: input.project
+        ? `为“${input.project.name}”构建代码知识图谱（原生零依赖，或可选 Graphify CLI），产出符号/调用/依赖关系，以及 Markdown 报告与可视化。`
+        : "需要先指定项目才能构建代码图谱。",
+      inputSchema: z.object({
+        projectId: z.string().optional(),
+        provider: z.enum(["native", "graphify"]).optional(),
+      }),
+      execute: withToolLog("build_code_graph", async ({ projectId, provider }) => {
+        const target = projectId
+          ? input.config.projects.find((item) => item.id === projectId)
+          : input.project;
+        if (!target) {
+          throw new Error("未找到目标项目，请确认 projectId 或先授权代码源。");
+        }
+        const snapshotHash = await getProjectSnapshotHash(target).catch(() => "");
+        if (!snapshotHash) {
+          throw new Error(`无法计算项目“${target.name}”的快照哈希，请检查路径。`);
+        }
+        const index = await ensureCodeGraphCache({
+          project: target,
+          snapshotHash,
+          options: { provider: provider ?? "native" },
+        });
+        if (!index) {
+          return {
+            ok: false,
+            projectId: target.id,
+            error: "代码图谱构建失败。原生 provider 应始终可用，请检查项目源码是否可读。",
+          };
+        }
+        return {
+          ok: true,
+          projectId: target.id,
+          snapshotHash: index.snapshotHash,
+          nodeCount: index.symbols.length,
+          edgeCount: index.edges.length,
+          note: "代码图谱已构建，可在 /code-graphs 页面查看 Markdown 报告与可视化。",
+        };
       }),
     }),
     analyze_code_changes: tool({

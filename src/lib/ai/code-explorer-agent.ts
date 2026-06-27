@@ -7,6 +7,7 @@ const log = moduleLogger("code-explorer");
 import type {
   CodeEvidencePackage,
   CodeRelation,
+  ProjectIndex,
   SourceEvidence,
 } from "@/lib/ai/code-evidence";
 import {
@@ -23,7 +24,7 @@ import {
   queryProjectReferences,
   queryProjectSymbols,
 } from "@/lib/ai/project-index";
-import { queryGraphifyProject } from "@/lib/ai/graphify-cache";
+import { graphifyCliProvider, type GraphQueryResult } from "@/lib/ai/code-graph-provider";
 
 const sourceSchema = z.object({
   path: z.string(),
@@ -91,6 +92,66 @@ function extractJson(text: string) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
   const candidate = fenced ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
   return JSON.parse(candidate);
+}
+
+/** 原生图谱兜底查询：基于 ProjectIndex 的符号/边做关键词检索，返回 Top N 相关符号 + 相邻边。 */
+function nativeKeywordQuery(index: ProjectIndex, question: string): GraphQueryResult {
+  const keywords = question
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    .slice(0, 16);
+  const scored = index.symbols
+    .map((symbol) => {
+      const haystack = `${symbol.name} ${symbol.path} ${symbol.container ?? ""}`.toLowerCase();
+      let score = 0;
+      for (const keyword of keywords) {
+        if (!haystack.includes(keyword)) continue;
+        score += symbol.name.toLowerCase().includes(keyword) ? 3 : 1;
+      }
+      return { symbol, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 30);
+  const topSymbols = scored.map((item) => item.symbol);
+  const topIds = new Set(topSymbols.map((symbol) => symbol.id));
+  const topNames = new Set(topSymbols.map((symbol) => symbol.name.toLowerCase()));
+  const adjacentEdges = index.edges
+    .filter((edge) => {
+      const from = edge.from.toLowerCase();
+      const to = edge.to.toLowerCase();
+      return (
+        [...topIds].some((id) => from.includes(id.toLowerCase()) || to.includes(id.toLowerCase())) ||
+        [...topNames].some((name) => from.includes(name) || to.includes(name))
+      );
+    })
+    .slice(0, 60);
+
+  const lines: string[] = [];
+  lines.push(`原生图谱检索（${index.symbols.length} 符号 / ${index.edges.length} 边）`);
+  if (topSymbols.length === 0) {
+    lines.push("未匹配到相关符号。建议拆分关键词或使用 project_symbols/project_search 精确查找。");
+  } else {
+    lines.push(`匹配符号 Top ${topSymbols.length}：`);
+    for (const symbol of topSymbols) {
+      lines.push(`- ${symbol.kind} ${symbol.name} — ${symbol.path}#L${symbol.startLine}`);
+    }
+    if (adjacentEdges.length > 0) {
+      lines.push(``, `相邻关系 Top ${adjacentEdges.length}：`);
+      for (const edge of adjacentEdges) {
+        lines.push(`- [${edge.kind}] ${edge.from} → ${edge.to}（${edge.evidence.path}#L${edge.evidence.startLine}）`);
+      }
+    }
+  }
+  return {
+    ok: true,
+    usedGraph: false,
+    snapshotHash: index.snapshotHash,
+    output: lines.join("\n").slice(0, 40_000),
+    stats: { symbols: index.symbols.length, edges: index.edges.length },
+  };
 }
 
 function fallbackEvidence(
@@ -181,19 +242,29 @@ export async function exploreProjectWithAgent(input: {
       execute: () => readProjectManifests(input.project),
     }),
     project_graph_query: tool({
-      description: "优先从本地 Graphify 代码图谱查询项目结构、调用链、模块关系；命中后再按需读取源码片段。",
+      description:
+        "优先从本地代码图谱查询项目结构、调用链、模块关系；命中后再按需读取源码片段。Graphify CLI 可用时走 CLI query，否则使用原生符号/边关键词检索兜底。",
       inputSchema: z.object({
         question: z.string().min(1),
         budget: z.number().int().min(1000).max(20000).optional(),
       }),
       execute: async (args) => {
         const index = await getProjectIndex(input.project);
-        return queryGraphifyProject({
-          project: input.project,
-          snapshotHash: index.snapshotHash,
-          question: args.question,
-          budget: args.budget,
-        });
+        // 先尝试 Graphify CLI query（CLI 可用且图谱已构建时走原路径）。
+        if (graphifyCliProvider.query && (await graphifyCliProvider.available())) {
+          try {
+            const result = await graphifyCliProvider.query({
+              project: input.project,
+              snapshotHash: index.snapshotHash,
+              question: args.question,
+              budget: args.budget,
+            });
+            if (result.ok) return result;
+          } catch {
+            // CLI 异常时降级到 native 关键词检索。
+          }
+        }
+        return nativeKeywordQuery(index, args.question);
       },
     }),
     project_symbols: tool({
