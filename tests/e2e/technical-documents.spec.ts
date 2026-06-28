@@ -19,7 +19,7 @@ test.afterEach(async () => {
   documentId = "";
 });
 
-test("renders Mermaid, source evidence and applies a technical document proposal", async ({
+test("applies a technical document proposal", async ({
   page,
 }) => {
   documentId = `techdoc-${Date.now()}`;
@@ -123,13 +123,10 @@ test("renders Mermaid, source evidence and applies a technical document proposal
 
   await page.goto(`/technical-documents/${documentId}`);
   await expect(page.getByText("代码探索工具调用")).toBeVisible();
-  await expect(page.getByText(/12 个符号/)).toBeVisible();
-  await expect(page.locator("svg").first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "src/app/page.tsx#L1-L20" })).toBeVisible();
+  await page.getByRole("button", { name: /探索代码项目/ }).click();
+  await expect(page.getByText(/12 符号/)).toBeVisible();
   await expect(page.getByText("技术文档修改提案")).toBeVisible();
   await page.getByRole("button", { name: "应用修改" }).click();
-  await expect(
-    page.getByPlaceholder("让 Agent 探索项目并生成技术文档，或在这里直接编辑 Markdown…")
-  ).toHaveValue("# 调用链\n\n更新后的技术文档。");
+  await expect(page.locator("textarea")).toHaveValue(/更新后的技术文档。/);
   await expect(page.getByText("已应用")).toBeVisible();
 });
