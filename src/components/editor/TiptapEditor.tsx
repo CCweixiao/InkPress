@@ -19,10 +19,12 @@ export function TiptapEditor({
   value,
   onChange,
   articleId,
+  placeholder = "开始写作，或从左侧用 AI 生成…",
 }: {
   value: string;
   onChange: (md: string) => void;
   articleId?: string;
+  placeholder?: string;
 }) {
   const editor = useEditor({
     extensions: [
@@ -40,7 +42,7 @@ export function TiptapEditor({
         transformCopiedText: true,
       }),
       Placeholder.configure({
-        placeholder: "开始写作，或从左侧用 AI 生成…",
+        placeholder,
       }),
       Image.configure({
         inline: true,
