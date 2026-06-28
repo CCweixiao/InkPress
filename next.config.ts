@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
     "@prisma/client",
     "adm-zip",
     "ali-oss",
+    "@resvg/resvg-js",
   ],
 };
 

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { classifyByContentType } from "@/lib/oss";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
 import { syncAssetToWechat } from "@/lib/wechat/asset-sync";
+import { isSvg, convertSvgToPng } from "@/lib/wechat/svg-to-png";
 import { cacheDir } from "@/lib/paths";
 import { withApiLog, logMutation } from "@/lib/api-log";
 import { moduleLogger } from "@/lib/logger";
@@ -32,6 +33,8 @@ type ChunkMeta = {
   articleId?: string | null;
   spaceId?: string | null;
   syncToWechat?: boolean;
+  /** 第一层：SVG → PNG 转换开关（默认 true） */
+  convertSvgToPng?: boolean;
 };
 
 function metaPath(uploadId: string) {
@@ -67,6 +70,7 @@ async function initUpload(
     articleId?: string | null;
     spaceId?: string | null;
     syncToWechat?: boolean;
+    convertSvgToPng?: boolean;
   }
 ) {
   await fs.mkdir(chunkDir(uploadId), { recursive: true });
@@ -80,6 +84,7 @@ async function initUpload(
     articleId: body.articleId ?? null,
     spaceId: body.spaceId ?? null,
     syncToWechat: !!body.syncToWechat,
+    convertSvgToPng: body.convertSvgToPng !== false,
   });
   return { uploadId, chunkSize: CHUNK_SIZE_DEFAULT };
 }
@@ -113,22 +118,52 @@ async function completeUpload(uploadId: string) {
     await writeHandle.close();
   }
 
-  const { kind, dir: storageKind } = classifyByContentType(meta.contentType);
+  // 第一层转换：SVG → PNG（公众号素材库不支持 SVG）
+  let finalPath = merged;
+  let finalContentType = meta.contentType;
+  let finalFilename = meta.fileName;
+  let convertedFromSvg = false;
+  if (meta.convertSvgToPng !== false && isSvg(meta.contentType, meta.fileName)) {
+    const pngPath = `${merged}.png`;
+    try {
+      const svgBuffer = await fs.readFile(merged);
+      const pngBuffer = await convertSvgToPng(svgBuffer);
+      await fs.writeFile(pngPath, pngBuffer);
+      finalPath = pngPath;
+      finalContentType = "image/png";
+      finalFilename = finalFilename.replace(/\.svgz?$/i, ".png");
+      convertedFromSvg = true;
+    } catch (e) {
+      // 转换失败：清理所有临时文件并抛错
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(merged, { force: true }).catch(() => {});
+      await fs.rm(pngPath, { force: true }).catch(() => {});
+      await fs.rm(metaPath(uploadId), { force: true }).catch(() => {});
+      throw new Error(
+        e instanceof Error ? e.message : "SVG 转 PNG 失败"
+      );
+    }
+  }
+
+  const { kind, dir: storageKind } = classifyByContentType(finalContentType);
   const storageObject = await putFileObject({
-    filePath: merged,
-    filename: meta.fileName,
-    contentType: meta.contentType,
+    filePath: finalPath,
+    filename: finalFilename,
+    contentType: finalContentType,
     kind: storageKind,
     articleId: meta.articleId ?? null,
     spaceId: meta.spaceId ?? null,
-    metadata: originalFilenameMetadata(meta.fileName),
+    metadata: {
+      ...originalFilenameMetadata(meta.fileName),
+      ...(convertedFromSvg ? { convertedFromSvg: true } : {}),
+    },
     preferCloud: true,
   });
 
   // 落 Asset（双重归属）。名称用自动生成的短 UUID，元数据从会话带入
   const asset = await prisma.asset.create({
     data: {
-      name: genAssetName(meta.fileName, meta.contentType),
+      name: genAssetName(finalFilename, finalContentType),
       ossKey: storageObject.key,
       url: storageObject.url ?? `/api/storage/${storageObject.id}`,
       kind,
@@ -183,6 +218,7 @@ async function completeUpload(uploadId: string) {
   // 清理临时文件
   await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   await fs.rm(merged, { force: true }).catch(() => {});
+  await fs.rm(`${merged}.png`, { force: true }).catch(() => {});
   await fs.rm(metaPath(uploadId), { force: true }).catch(() => {});
 
   return { asset: { ...asset, wxSyncStatus, wxSyncError } };
@@ -205,6 +241,7 @@ export const POST = withApiLog("POST /api/upload/chunk", async (req: NextRequest
         articleId?: string | null;
         spaceId?: string | null;
         syncToWechat?: boolean;
+        convertSvgToPng?: boolean;
       };
       if (!body.fileName?.trim()) {
         return NextResponse.json({ error: "缺少文件名" }, { status: 400 });

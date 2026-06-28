@@ -1,6 +1,7 @@
 import { wxUpload, ensureOk } from "./client";
 import { hasWechatConfig } from "./config";
 import { backfillMaterialCache } from "./material";
+import { ensureWechatCompatibleImage } from "./svg-to-png";
 import { classifyByContentType } from "@/lib/oss";
 import { prisma } from "@/lib/db";
 import { moduleLogger } from "@/lib/logger";
@@ -48,10 +49,17 @@ export async function syncAssetToWechat(params: {
       );
     }
 
-    const blob = new Blob([buf], { type: params.contentType });
+    // 第二层兜底：SVG → PNG（公众号不支持 SVG）。用转换后的 MIME 判 kind
+    const { buf: wxBuf, contentType: wxType, filename: wxFilename } =
+      await ensureWechatCompatibleImage({
+        buf,
+        contentType: params.contentType,
+        filename: params.filename,
+      });
+    const blob = new Blob([wxBuf], { type: wxType });
     const form = new FormData();
-    form.append("media", blob, params.filename);
-    const { kind } = classifyByContentType(params.contentType);
+    form.append("media", blob, wxFilename);
+    const { kind } = classifyByContentType(wxType);
 
     // 2. 图片走 uploadimg（返回正文图 URL），其余走 add_material（返回 media_id）
     if (kind === "image") {
@@ -63,15 +71,15 @@ export async function syncAssetToWechat(params: {
         await backfillMaterialCache(params.url, wxUrl).catch(() => {});
       }
       log.info(
-        { wxUrl, size: buf.byteLength, durationMs: Date.now() - start },
+        { wxUrl, size: wxBuf.byteLength, durationMs: Date.now() - start },
         "素材已同步到公众号（正文图）"
       );
       return { ok: true, wxUrl, wxMediaId: null };
     }
 
     // 视频 / 文件 → 永久素材
-    const wxType = kind === "video" ? "video" : "image";
-    const data = await wxUpload("/material/add_material", form, { type: wxType });
+    const materialType = kind === "video" ? "video" : "image";
+    const data = await wxUpload("/material/add_material", form, { type: materialType });
     ensureOk(data, "同步素材到公众号");
     const result = data as { media_id?: string; url?: string };
     log.info(
