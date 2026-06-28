@@ -182,7 +182,15 @@
           ]
         }
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "identity": "Developer ID Application: Yufan Yang (G7656J795G)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": {
+        "teamId": "G7656J795G"
+      }
     },
     "afterPack": "scripts/after-pack.cjs",
     "dmg": {

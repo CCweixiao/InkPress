@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Electron(V8) JIT 编译需要 -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Electron 渲染进程可能用到未签名的可执行内存 -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- 关键：加载未签名原生模块（better_sqlite3.node / @resvg/resvg-js）
+       必须禁用库验证，否则 hardened runtime 下 dylib 加载会被拒绝 -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- 允许加载第三方动态库到渲染进程（Electron 跨进程通信需要） -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>
