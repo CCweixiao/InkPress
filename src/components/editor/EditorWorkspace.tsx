@@ -118,7 +118,10 @@ export function EditorWorkspace({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!response.ok) throw new Error("保存当前文章失败。");
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`保存当前文章失败。${detail ? `（${detail}）` : ""}`);
+    }
     setSaveState("saved");
     setTimeout(() => setSaveState("idle"), 1500);
   };
