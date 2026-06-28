@@ -577,6 +577,375 @@ body {
   font-size: 0.88em;
 }
 
+/* 技术文档 / 代码图谱 Markdown 预览 */
+.technical-markdown {
+  --md-bg: var(--background);
+  --md-surface: var(--card);
+  --md-surface-soft: var(--muted);
+  --md-text: var(--foreground);
+  --md-muted: var(--muted-foreground);
+  --md-border: var(--border);
+  --md-heading: var(--editor-heading);
+  --md-heading-2: var(--editor-heading-2);
+  --md-code-bg: var(--editor-code-bg);
+  --md-code-color: var(--editor-code-color);
+  --md-table-head: color-mix(in srgb, var(--muted) 78%, var(--background));
+  --md-table-row: color-mix(in srgb, var(--muted) 28%, transparent);
+  --md-table-row-hover: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--md-text);
+  word-break: break-word;
+}
+
+.technical-markdown-preview {
+  min-height: calc(100vh - 3rem);
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--primary) 8%, transparent), transparent 22rem),
+    var(--md-bg);
+}
+
+.technical-markdown > :first-child {
+  margin-top: 0;
+}
+
+.technical-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.technical-markdown p {
+  margin: 0.8em 0;
+  color: var(--md-text);
+}
+
+.technical-markdown h1,
+.technical-markdown h2,
+.technical-markdown h3,
+.technical-markdown h4 {
+  color: var(--md-heading);
+  font-weight: 720;
+  letter-spacing: 0;
+}
+
+.technical-markdown h1 {
+  margin: 0.2em 0 0.85em;
+  font-size: 1.55em;
+  line-height: 1.32;
+}
+
+.technical-markdown h2 {
+  margin: 1.75em 0 0.8em;
+  padding-bottom: 0.42em;
+  border-bottom: 1px solid var(--md-border);
+  color: var(--md-heading-2);
+  font-size: 1.24em;
+  line-height: 1.38;
+}
+
+.technical-markdown h3 {
+  position: relative;
+  margin: 1.35em 0 0.58em;
+  padding-left: 0.75em;
+  font-size: 1.08em;
+  line-height: 1.45;
+}
+
+.technical-markdown h3::before {
+  position: absolute;
+  top: 0.25em;
+  bottom: 0.25em;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  content: "";
+}
+
+.technical-markdown h4 {
+  margin: 1.15em 0 0.5em;
+  font-size: 1em;
+}
+
+.technical-markdown a {
+  color: var(--primary);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+.technical-markdown a:hover {
+  border-bottom-color: var(--primary);
+}
+
+.technical-markdown strong {
+  color: var(--editor-strong);
+  font-weight: 700;
+}
+
+.technical-markdown ul,
+.technical-markdown ol {
+  margin: 0.75em 0;
+  padding-left: 1.45em;
+}
+
+.technical-markdown li {
+  margin: 0.3em 0;
+  padding-left: 0.12em;
+}
+
+.technical-markdown li::marker {
+  color: var(--primary);
+  font-weight: 650;
+}
+
+.technical-markdown blockquote {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border: 1px solid var(--md-border);
+  border-left: 4px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  background: var(--md-surface-soft);
+  color: var(--editor-blockquote-text);
+}
+
+.technical-markdown blockquote p {
+  margin: 0.25em 0;
+}
+
+.technical-markdown hr {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: 1px solid var(--editor-hr);
+}
+
+.technical-markdown code {
+  font-family: var(--font-mono), Menlo, Monaco, Consolas, monospace;
+}
+
+.technical-markdown :not(pre) > code {
+  padding: 0.16em 0.42em;
+  border: 1px solid color-mix(in srgb, var(--md-border) 78%, transparent);
+  border-radius: 5px;
+  background: var(--md-code-bg);
+  color: var(--md-code-color);
+  font-size: 0.9em;
+}
+
+.technical-markdown pre {
+  margin: 1.05em 0;
+  padding: 1em 1.1em;
+  overflow-x: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: #0d1117;
+  color: #d6deeb;
+  font-size: 0.92em;
+  line-height: 1.72;
+}
+
+.technical-markdown pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+}
+
+.technical-markdown .code-block {
+  margin: 1.05em 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--md-border) 70%, transparent);
+  border-radius: 8px;
+  background: #0d1117;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+}
+
+.technical-markdown .code__header {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #161b22;
+}
+
+.technical-markdown .code__dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.technical-markdown .code__dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ff5f57;
+}
+
+.technical-markdown .code__dots i:nth-child(2) {
+  background: #febc2e;
+}
+
+.technical-markdown .code__dots i:nth-child(3) {
+  background: #28c840;
+}
+
+.technical-markdown .code__lang {
+  color: #8b949e;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.technical-markdown .code-block pre {
+  margin: 0;
+  padding: 1.05em 1.15em 1.15em;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.technical-markdown .hljs-comment,
+.technical-markdown .hljs-quote {
+  color: #8b949e;
+}
+
+.technical-markdown .hljs-keyword,
+.technical-markdown .hljs-selector-tag,
+.technical-markdown .hljs-subst {
+  color: #ff7b72;
+}
+
+.technical-markdown .hljs-literal,
+.technical-markdown .hljs-number,
+.technical-markdown .hljs-tag .hljs-attr,
+.technical-markdown .hljs-template-variable,
+.technical-markdown .hljs-variable {
+  color: #79c0ff;
+}
+
+.technical-markdown .hljs-doctag,
+.technical-markdown .hljs-string,
+.technical-markdown .hljs-title,
+.technical-markdown .hljs-section,
+.technical-markdown .hljs-selector-id {
+  color: #a5d6ff;
+}
+
+.technical-markdown .hljs-type,
+.technical-markdown .hljs-class .hljs-title,
+.technical-markdown .hljs-built_in,
+.technical-markdown .hljs-builtin-name {
+  color: #ffa657;
+}
+
+.technical-markdown .hljs-symbol,
+.technical-markdown .hljs-bullet,
+.technical-markdown .hljs-link,
+.technical-markdown .hljs-meta,
+.technical-markdown .hljs-selector-attr,
+.technical-markdown .hljs-selector-pseudo {
+  color: #d2a8ff;
+}
+
+.technical-markdown .hljs-deletion {
+  color: #ffdcd7;
+  background: rgba(248, 81, 73, 0.24);
+}
+
+.technical-markdown .hljs-addition {
+  color: #aff5b4;
+  background: rgba(46, 160, 67, 0.24);
+}
+
+.technical-markdown table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 1.15em 0;
+  overflow-x: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  border-spacing: 0;
+  border-collapse: separate;
+  background: var(--md-surface);
+  font-size: 0.94em;
+  line-height: 1.6;
+}
+
+.technical-markdown thead {
+  background: var(--md-table-head);
+}
+
+.technical-markdown th,
+.technical-markdown td {
+  min-width: 7.5rem;
+  padding: 0.72em 0.9em;
+  border-right: 1px solid var(--md-border);
+  border-bottom: 1px solid var(--md-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.technical-markdown th {
+  color: var(--md-heading);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.technical-markdown td {
+  color: var(--md-text);
+}
+
+.technical-markdown th:last-child,
+.technical-markdown td:last-child {
+  border-right: 0;
+}
+
+.technical-markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.technical-markdown tbody tr:nth-child(even) {
+  background: var(--md-table-row);
+}
+
+.technical-markdown tbody tr:hover {
+  background: var(--md-table-row-hover);
+}
+
+.technical-markdown img,
+.technical-markdown svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.technical-markdown .mermaid {
+  margin: 1.1em 0;
+  padding: 1em;
+  overflow-x: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-surface);
+  text-align: center;
+}
+
+.technical-markdown .mermaid svg {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.technical-markdown .katex-display {
+  margin: 1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
+}
+
+.technical-markdown .katex {
+  color: var(--md-text);
+  font-size: 1.02em;
+}
+
 /* 公众号预览夜间模式：文章正文是 juice 内联的样式（高 specificity），
    需用 !important 覆盖内联颜色，使深色下文字/背景适配。
    注意：内联样式代表微信实际渲染结果，此处覆盖仅用于本地预览观感，
