@@ -902,15 +902,22 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             } as never);
           },
           onCodeEvidence: async (evidence) => {
+            const stats = evidence.indexStats;
             writer.write({
               type: "data-project-snapshot",
               id: crypto.randomUUID(),
               data: {
                 projectId: evidence.projectId,
                 snapshotHash: evidence.snapshotHash,
-                symbols: evidence.symbols.length,
-                edges: evidence.edges.length,
-                truncated: evidence.truncated,
+                files: stats?.files,
+                symbols: stats?.symbols ?? evidence.symbols.length,
+                edges: stats?.edges ?? evidence.edges.length,
+                modules: stats?.modules,
+                evidenceSymbols: stats?.evidenceSymbols ?? evidence.symbols.length,
+                evidenceEdges: stats?.evidenceEdges ?? evidence.edges.length,
+                evidenceTruncated: stats?.evidenceTruncated ?? false,
+                mode: evidence.mode,
+                truncated: stats?.indexTruncated ?? evidence.truncated,
               },
             } as never);
             for (const source of evidence.entryPoints.slice(0, 12)) {

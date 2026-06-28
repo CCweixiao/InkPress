@@ -6,7 +6,11 @@ import { moduleLogger } from "@/lib/logger";
 import type { AgentProjectConfig } from "@/lib/ai/agent-config";
 import type { ProjectIndex } from "@/lib/ai/code-evidence";
 import { resolveProjectRoot } from "@/lib/ai/project-access";
-import { buildProjectIndex } from "@/lib/ai/project-index";
+import {
+  buildProjectIndex,
+  hydrateProjectIndex,
+  type ProjectIndexBuildMode,
+} from "@/lib/ai/project-index";
 import { generateGraphReport } from "@/lib/ai/code-graph-report";
 import { generateGraphHtml } from "@/lib/ai/code-graph-html";
 import {
@@ -51,6 +55,8 @@ export interface CodeGraphProvider {
     project: AgentProjectConfig;
     root: string;
     snapshotHash: string;
+    mode?: ProjectIndexBuildMode;
+    artifacts?: boolean;
   }): Promise<GraphBuildResult & { index: ProjectIndex }>;
   query?(input: {
     project: AgentProjectConfig;
@@ -82,7 +88,8 @@ async function readProviderIndex(
   snapshotHash: string
 ): Promise<ProjectIndex | null> {
   if (provider === "graphify") {
-    return readGraphifyProjectIndex(project, snapshotHash);
+    const index = await readGraphifyProjectIndex(project, snapshotHash);
+    return index ? hydrateProjectIndex(index) : null;
   }
   const graphPath = path.join(graphifyOutDir(project, snapshotHash), "graph.json");
   const raw = await fs.readFile(graphPath, "utf8").catch(() => "");
@@ -93,7 +100,7 @@ async function readProviderIndex(
       return null;
     }
     parsed.accessedAt = new Date().toISOString();
-    return parsed;
+    return hydrateProjectIndex(parsed);
   } catch (error) {
     log.warn(
       { provider, message: error instanceof Error ? error.message : String(error) },
@@ -112,25 +119,27 @@ export const nativeProvider: CodeGraphProvider = {
   async available() {
     return true;
   },
-  async build({ project, root, snapshotHash }) {
-    const index = await buildProjectIndex(project);
+  async build({ project, root, snapshotHash, mode = "fast", artifacts = true }) {
+    const index = await buildProjectIndex(project, { mode, persist: false });
     const outDir = graphifyOutDir(project, snapshotHash);
     const graphPath = path.join(outDir, "graph.json");
     const reportPath = path.join(outDir, "GRAPH_REPORT.md");
     const htmlPath = path.join(outDir, "graph.html");
     await fs.mkdir(outDir, { recursive: true });
-    // 写入顺序：先报告和 HTML，最后原子写 graph.json。
-    // graph.json 的存在即代表整次三件套已完整落盘——超大项目构建耗时长、被中断概率高，
-    // 这样可避免出现「有 graph.json 但缺报告/HTML」的半成品，也避免截断的 graph.json 被当作合法缓存。
-    const report = generateGraphReport(index);
-    await writeAtomic(reportPath, report);
-    const html = await generateGraphHtml(index);
-    await writeAtomic(htmlPath, html);
+    if (artifacts) {
+      // 写入顺序：先报告和 HTML，最后原子写 graph.json。
+      // graph.json 的存在即代表整次三件套已完整落盘——超大项目构建耗时长、被中断概率高，
+      // 这样可避免出现「有 graph.json 但缺报告/HTML」的半成品，也避免截断的 graph.json 被当作合法缓存。
+      const report = generateGraphReport(index);
+      await writeAtomic(reportPath, report);
+      const html = await generateGraphHtml(index);
+      await writeAtomic(htmlPath, html);
+    }
     await writeAtomic(graphPath, JSON.stringify(index));
     return {
       graphPath,
-      reportPath,
-      htmlPath,
+      reportPath: artifacts ? reportPath : null,
+      htmlPath: artifacts ? htmlPath : null,
       nodeCount: index.symbols.length,
       edgeCount: index.edges.length,
       metadata: {
@@ -138,6 +147,9 @@ export const nativeProvider: CodeGraphProvider = {
         originalRoot: root,
         graphifyOut: outDir,
         files: index.files.length,
+        mode,
+        artifacts,
+        languages: index.languageStats,
         parseErrors: index.parseErrors.length,
         truncated: index.truncated,
       },
@@ -176,10 +188,11 @@ export const graphifyCliProvider: CodeGraphProvider = {
       timeout: GRAPHIFY_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     });
-    const index = await readGraphifyProjectIndex(project, snapshotHash);
-    if (!index) {
+    const rawIndex = await readGraphifyProjectIndex(project, snapshotHash);
+    if (!rawIndex) {
       throw new Error("Graphify 构建完成但 graph.json 为空或不可解析。");
     }
+    const index = hydrateProjectIndex(rawIndex);
     return {
       graphPath,
       reportPath: (await pathExists(reportPath)) ? reportPath : null,
@@ -278,6 +291,8 @@ export function getProvider(id: GraphProviderId): CodeGraphProvider {
   return id === "graphify" ? graphifyCliProvider : nativeProvider;
 }
 
+const buildLocks = new Map<string, Promise<ProjectIndex | null>>();
+
 /**
  * 构建编排器（替代 ensureGraphifyProjectIndex）。
  *
@@ -291,9 +306,16 @@ export function getProvider(id: GraphProviderId): CodeGraphProvider {
 export async function ensureCodeGraphCache(input: {
   project: AgentProjectConfig;
   snapshotHash: string;
-  options?: { refresh?: boolean; provider?: GraphProviderId };
+  options?: {
+    refresh?: boolean;
+    provider?: GraphProviderId;
+    mode?: ProjectIndexBuildMode;
+    artifacts?: boolean;
+  };
 }): Promise<ProjectIndex | null> {
   const provider = selectProvider(input.options?.provider);
+  const mode = input.options?.mode ?? "fast";
+  const artifacts = input.options?.artifacts ?? false;
   const { project, snapshotHash } = input;
   const root = await resolveProjectRoot(project);
   const key = sourceKey(project);
@@ -309,12 +331,22 @@ export async function ensureCodeGraphCache(input: {
     },
     orderBy: { updatedAt: "desc" },
   });
-  if (
-    !input.options?.refresh &&
-    ready?.graphPath &&
-    (await pathExists(path.join(storageDir(), ready.graphPath)))
-  ) {
-    return readProviderIndex(provider.id, project, snapshotHash);
+  const readyGraphExists =
+    ready?.graphPath && (await pathExists(path.join(storageDir(), ready.graphPath)));
+  const readyArtifactsExist =
+    !artifacts ||
+    provider.id !== "native" ||
+    Boolean(
+      ready?.reportPath &&
+        ready?.htmlPath &&
+        (await pathExists(path.join(storageDir(), ready.reportPath))) &&
+        (await pathExists(path.join(storageDir(), ready.htmlPath)))
+    );
+  if (!input.options?.refresh && readyGraphExists && readyArtifactsExist) {
+    const cached = await readProviderIndex(provider.id, project, snapshotHash);
+    if (cached && (provider.id !== "native" || (cached.buildMode ?? "fast") === mode)) {
+      return cached;
+    }
   }
 
   const failed = await prisma.codeGraphCache.findFirst({
@@ -339,7 +371,9 @@ export async function ensureCodeGraphCache(input: {
   const graphPath = path.join(graphifyOutDir(project, snapshotHash), "graph.json");
   if (!input.options?.refresh && (await pathExists(graphPath))) {
     const cached = await readProviderIndex(provider.id, project, snapshotHash);
-    if (cached) return cached;
+    if (cached && (provider.id !== "native" || (cached.buildMode ?? "fast") === mode)) {
+      return cached;
+    }
     // graph.json 存在但不可解析（截断/半成品/旧格式）→ 不直接返回 null，
     // 落入下方重建流程，避免脏 graph.json 永久卡死图谱功能。
     log.warn(
@@ -348,45 +382,55 @@ export async function ensureCodeGraphCache(input: {
     );
   }
 
-  await fs.mkdir(codeGraphCacheBase(project, snapshotHash), { recursive: true });
-  await upsertCache({
-    project,
-    root,
-    snapshotHash,
-    status: "building",
-    provider: provider.id,
-  });
-  try {
-    const built = await provider.build({ project, root, snapshotHash });
+  const lockKey = `${provider.id}:${key}:${snapshotHash}:${mode}:${artifacts ? "artifacts" : "index"}`;
+  const existingBuild = buildLocks.get(lockKey);
+  if (existingBuild) return existingBuild;
+
+  const buildPromise = (async () => {
+    await fs.mkdir(codeGraphCacheBase(project, snapshotHash), { recursive: true });
     await upsertCache({
       project,
       root,
       snapshotHash,
-      status: "ready",
       provider: provider.id,
-      graphPath: relativeToStorage(built.graphPath),
-      reportPath: built.reportPath ? relativeToStorage(built.reportPath) : null,
-      htmlPath: built.htmlPath ? relativeToStorage(built.htmlPath) : null,
-      nodeCount: built.nodeCount,
-      edgeCount: built.edgeCount,
-      metadata: built.metadata,
+      status: "building",
     });
-    return built.index;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await upsertCache({
-      project,
-      root,
-      snapshotHash,
-      status: "failed",
-      provider: provider.id,
-      lastError: message.slice(0, 1000),
-      metadata: { provider: provider.id },
-    });
-    log.warn(
-      { provider: provider.id, projectId: project.id, message: message.split("\n")[0] },
-      "代码图谱构建失败"
-    );
-    return null;
-  }
+    try {
+      const built = await provider.build({ project, root, snapshotHash, mode, artifacts });
+      await upsertCache({
+        project,
+        root,
+        snapshotHash,
+        status: "ready",
+        provider: provider.id,
+        graphPath: relativeToStorage(built.graphPath),
+        reportPath: built.reportPath ? relativeToStorage(built.reportPath) : null,
+        htmlPath: built.htmlPath ? relativeToStorage(built.htmlPath) : null,
+        nodeCount: built.nodeCount,
+        edgeCount: built.edgeCount,
+        metadata: built.metadata,
+      });
+      return built.index;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await upsertCache({
+        project,
+        root,
+        snapshotHash,
+        status: "failed",
+        provider: provider.id,
+        lastError: message.slice(0, 1000),
+        metadata: { provider: provider.id, artifacts },
+      });
+      log.warn(
+        { provider: provider.id, projectId: project.id, message: message.split("\n")[0] },
+        "代码图谱构建失败"
+      );
+      return null;
+    } finally {
+      buildLocks.delete(lockKey);
+    }
+  })();
+  buildLocks.set(lockKey, buildPromise);
+  return buildPromise;
 }

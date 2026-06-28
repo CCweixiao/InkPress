@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ProjectIndex } from "@/lib/ai/code-evidence";
+import { modulesFromIndex } from "@/lib/ai/code-graph-analysis";
 
 const MERMAID_PATH = path.join(
   path.resolve("node_modules", "mermaid", "dist"),
@@ -62,6 +63,19 @@ function buildModuleGraph(index: ProjectIndex): ModuleGraph {
   const addNode = (key: string) => {
     if (!nodes.has(key)) nodes.set(key, safeId("m", key));
   };
+  const modules = modulesFromIndex(index);
+  if (modules.length > 0) {
+    for (const graphModule of modules) addNode(graphModule.pathPrefix);
+    for (const graphModule of modules) {
+      for (const dep of graphModule.dependencies) {
+        if (graphModule.pathPrefix === dep.pathPrefix) continue;
+        addNode(dep.pathPrefix);
+        const key = `${graphModule.pathPrefix}→${dep.pathPrefix}`;
+        edges.set(key, (edges.get(key) ?? 0) + dep.count);
+      }
+    }
+    return { nodes, edges };
+  }
   for (const edge of index.edges) {
     if (edge.kind !== "imports") continue;
     const from = topDir(edge.from);
@@ -163,6 +177,7 @@ function buildCallSubgraphs(index: ProjectIndex): Map<string, string> {
 /** 生成自包含 HTML：内联 mermaid 11.x，离线可用。 */
 export async function generateGraphHtml(index: ProjectIndex): Promise<string> {
   const mermaidSource = await readMermaidSource();
+  const modules = modulesFromIndex(index);
   const moduleGraph = buildModuleGraph(index);
   const moduleMermaid = moduleGraphToMermaid(moduleGraph);
   const subgraphs = buildCallSubgraphs(index);
@@ -185,14 +200,47 @@ export async function generateGraphHtml(index: ProjectIndex): Promise<string> {
     })
     .join("\n");
 
+  const moduleRows = modules
+    .slice(0, 40)
+    .map((graphModule) => {
+      const deps = graphModule.dependencies
+        .slice(0, 4)
+        .map((dep) => `${escapeHtml(dep.pathPrefix)} ×${dep.count}`)
+        .join("<br />");
+      return `    <tr>
+      <td><code>${escapeHtml(graphModule.pathPrefix)}</code></td>
+      <td>${graphModule.fileCount}</td>
+      <td>${graphModule.symbolCount}</td>
+      <td>${graphModule.inboundImports}</td>
+      <td>${graphModule.outboundImports}</td>
+      <td>${escapeHtml(graphModule.responsibilities.join("；"))}</td>
+      <td>${deps || '<span class="muted">无跨模块依赖</span>'}</td>
+    </tr>`;
+    })
+    .join("\n");
+
+  const languageRows = (index.languageStats ?? [])
+    .slice(0, 16)
+    .map(
+      (stat) => `    <tr>
+      <td>${escapeHtml(stat.language)}</td>
+      <td>${stat.files}</td>
+      <td>${stat.bytes}</td>
+    </tr>`
+    )
+    .join("\n");
+
   // 精简数据嵌入：避免把完整大图谱塞进 HTML 造成体积爆炸。
   const slimData = {
     projectId: index.projectId,
     snapshotHash: index.snapshotHash,
     generatedAt: index.generatedAt,
+    buildMode: index.buildMode ?? "fast",
     files: index.files.length,
+    modules: modules.length,
     symbols: index.symbols.length,
     edges: index.edges.length,
+    languages: index.languageStats ?? [],
     edgeBreakdown: {
       calls: totalCalls,
       imports: totalImports,
@@ -222,22 +270,29 @@ export async function generateGraphHtml(index: ProjectIndex): Promise<string> {
   .stat b { font-size: 18px; display: block; }
   .stat span { font-size: 11px; color: #6b7280; }
   .graph-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border: 1px solid #e5e7eb; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+  th { font-size: 12px; color: #6b7280; background: #f9fafb; }
+  td:nth-child(2), td:nth-child(3), td:nth-child(4), td:nth-child(5) { text-align: right; white-space: nowrap; }
   .subgraph-block { margin: 10px 0; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; padding: 8px 12px; }
   .subgraph-title { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
   .subgraph-block[open] .subgraph-title { margin-bottom: 8px; }
   pre.mermaid { background: transparent; text-align: center; margin: 8px 0; }
   @media (prefers-color-scheme: dark) {
     body { background: #0b0f17; color: #e5e7eb; }
-    .stat, .graph-card, .subgraph-block { background: #111827; border-color: #1f2937; }
+    .stat, .graph-card, .subgraph-block, table { background: #111827; border-color: #1f2937; }
+    th, td { border-color: #1f2937; }
+    th { background: #0f172a; color: #9ca3af; }
     h2 { border-color: #1f2937; }
   }
 </style>
 </head>
 <body>
   <h1>代码图谱 · ${escapedProjectId}</h1>
-  <p class="muted">${escapedRoot} · 快照 <code>${escapeHtml(index.snapshotHash.slice(0, 16))}</code> · ${escapeHtml(index.generatedAt)}</p>
+  <p class="muted">${escapedRoot} · 快照 <code>${escapeHtml(index.snapshotHash.slice(0, 16))}</code> · ${escapeHtml(index.generatedAt)} · ${escapeHtml(index.buildMode ?? "fast")}</p>
   <div class="stats">
     <div class="stat"><b>${index.files.length}</b><span>文件</span></div>
+    <div class="stat"><b>${modules.length}</b><span>功能模块</span></div>
     <div class="stat"><b>${index.symbols.length}</b><span>符号</span></div>
     <div class="stat"><b>${index.edges.length}</b><span>关系边</span></div>
     <div class="stat"><b>${totalImports}</b><span>imports</span></div>
@@ -248,6 +303,32 @@ export async function generateGraphHtml(index: ProjectIndex): Promise<string> {
   <div class="graph-card">
     <pre class="mermaid">${escapeMermaidBlock(moduleMermaid)}</pre>
   </div>
+
+  <h2>语言分布</h2>
+  ${
+    languageRows
+      ? `<table>
+    <thead><tr><th>语言</th><th>文件</th><th>字节</th></tr></thead>
+    <tbody>
+${languageRows}
+    </tbody>
+  </table>`
+      : '<p class="muted">无语言统计。</p>'
+  }
+
+  <h2>功能模块概览</h2>
+  ${
+    moduleRows
+      ? `<table>
+    <thead>
+      <tr><th>模块</th><th>文件</th><th>符号</th><th>入站</th><th>出站</th><th>职责推断</th><th>主要依赖</th></tr>
+    </thead>
+    <tbody>
+${moduleRows}
+    </tbody>
+  </table>`
+      : '<p class="muted">未检出功能模块。</p>'
+  }
 
   <h2>目录调用子图</h2>
 ${subgraphSections || '  <p class="muted">未检出 calls 边。</p>'}

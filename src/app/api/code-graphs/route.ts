@@ -47,7 +47,7 @@ export const POST = withApiLog("POST /api/code-graphs", async (req: NextRequest)
   const index = await ensureCodeGraphCache({
     project,
     snapshotHash,
-    options: { refresh: parsed.data.refresh, provider },
+    options: { refresh: parsed.data.refresh, provider, artifacts: true },
   });
 
   const record = await prisma.codeGraphCache.findFirst({
