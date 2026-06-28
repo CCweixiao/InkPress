@@ -188,9 +188,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": {
-        "teamId": "G7656J795G"
-      }
+      "notarize": true
     },
     "afterPack": "scripts/after-pack.cjs",
     "dmg": {
