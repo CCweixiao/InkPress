@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, Smartphone } from "lucide-react";
 import type { ThemeOption } from "@/components/editor/EditorWorkspace";
 
 /**
  * 公众号实时预览
  * 直接调用与发布相同的服务端转换链路，保证代码高亮、主题 CSS 和最终内联样式一致。
+ *
+ * mermaid 渲染策略：在「脱离 React DOM 树的临时容器」中完成 SVG 替换后，
+ * 再把含 SVG 的完整 HTML 交给 React 状态。这样 React 始终是最终 DOM 的唯一拥有者，
+ * 不会因重新渲染而用原始 HTML 覆盖已渲染的 mermaid 图表。
  */
 export function WeChatPreview({
   markdown,
@@ -19,7 +23,6 @@ export function WeChatPreview({
 }) {
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(false);
-  const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!markdown.trim() || !theme) {
@@ -29,6 +32,7 @@ export function WeChatPreview({
     }
 
     const controller = new AbortController();
+    let cancelled = false;
     const timer = window.setTimeout(async () => {
       setLoading(true);
       try {
@@ -46,7 +50,51 @@ export function WeChatPreview({
           signal: controller.signal,
         });
         const data = await res.json();
-        if (res.ok) setHtml(data.html);
+        if (!res.ok || cancelled) return;
+
+        // 在脱离 React DOM 树的临时容器中完成 mermaid 替换
+        const detached = document.createElement("div");
+        detached.innerHTML = data.html as string;
+
+        const blocks = Array.from(
+          detached.querySelectorAll<HTMLElement>("code.language-mermaid")
+        );
+        if (blocks.length > 0) {
+          const mermaid = (await import("mermaid")).default;
+          mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: "strict",
+            theme: document.documentElement.classList.contains("dark")
+              ? "dark"
+              : "neutral",
+          });
+
+          for (const [index, block] of blocks.entries()) {
+            if (cancelled) return;
+
+            const source = block.textContent?.trim();
+            const target = block.closest(".code-block") ?? block.parentElement;
+            if (!source || !target?.parentElement) continue;
+
+            const preview = document.createElement("section");
+            preview.className = "mermaid-preview";
+            try {
+              const result = await mermaid.render(
+                `wechat-preview-mermaid-${index}-${crypto.randomUUID()}`,
+                source
+              );
+              if (cancelled) return;
+              preview.innerHTML = result.svg;
+            } catch {
+              preview.textContent = "流程图渲染失败";
+            }
+            target.replaceWith(preview);
+          }
+        }
+
+        if (!cancelled) {
+          setHtml(detached.innerHTML);
+        }
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           console.error("[preview] render failed", error);
@@ -57,61 +105,11 @@ export function WeChatPreview({
     }, 280);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(timer);
       controller.abort();
     };
   }, [markdown, theme]);
-
-  useEffect(() => {
-    if (!html) return;
-
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      const container = contentRef.current;
-      if (!container) return;
-
-      const blocks = Array.from(
-        container.querySelectorAll<HTMLElement>("code.language-mermaid")
-      );
-      if (blocks.length === 0) return;
-
-      const mermaid = (await import("mermaid")).default;
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: document.documentElement.classList.contains("dark")
-          ? "dark"
-          : "neutral",
-      });
-
-      for (const [index, block] of blocks.entries()) {
-        if (cancelled) return;
-
-        const source = block.textContent?.trim();
-        const target = block.closest(".code-block") ?? block.parentElement;
-        if (!source || !target?.parentElement) continue;
-
-        const preview = document.createElement("section");
-        preview.className = "mermaid-preview";
-        try {
-          const result = await mermaid.render(
-            `wechat-preview-mermaid-${index}-${crypto.randomUUID()}`,
-            source
-          );
-          if (cancelled) return;
-          preview.innerHTML = result.svg;
-        } catch {
-          preview.textContent = "流程图渲染失败";
-        }
-        target.replaceWith(preview);
-      }
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [html]);
 
   return (
     <div className="px-4 py-5">
@@ -144,7 +142,6 @@ export function WeChatPreview({
 
           {html ? (
             <div
-              ref={contentRef}
               className="wechat-article-content"
               dangerouslySetInnerHTML={{ __html: html }}
             />
