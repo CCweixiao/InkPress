@@ -81,6 +81,11 @@ console.log(
   `  ✓ standalone → ${path.relative(root, bundle)}（已解析符号链接，物化 ${materialized} 处 symlink → 真实文件）`
 );
 
+// 清理 Next.js NFT 误追踪进 standalone 的项目级目录。
+// outputFileTracingRoot 默认指向项目根，导致 dist/（历史打包产物，含 DMG 与嵌套 app，可达数 GB）、
+// storage/（运行时用户数据）、开发数据库等被追踪进 standalone，打包后体积膨胀且每次构建套娃递归。
+pruneProjectArtifacts();
+
 // 注：node_modules 保留原名（不改名 app_modules）。
 // extraResources 不受 build.files 规则的 "!**/node_modules/**" 约束（那仅作用于 app.asar 内部），
 // 因此 node_modules 可原样进 Resources/standalone/，Node 标准 require 解析天然工作，无需 NODE_PATH。
@@ -610,6 +615,76 @@ function findAllFiles(dir: string, name: string): string[] {
   walk(dir);
   return results;
 }
+/**
+ * 清理被 Next.js file tracing 误追踪进 standalone 的项目级目录与开发产物。
+ *
+ * outputFileTracingRoot 默认为项目根目录，NFT 会把项目根下被 server.js 依赖图触及的
+ * 文件按相对路径复制进 standalone。dist/（electron-builder 输出，含历史 DMG + 嵌套 app，
+ * 可达数 GB）、storage/（运行时用户数据）、开发数据库等因此被误带入，导致打包体积膨胀
+ * 数 GB，且每次构建都会套娃递归（dist/ 里嵌套着上一次构建的 dist/）。
+ *
+ * 此处在复制 standalone → bundle 后立即清理，从源头杜绝膨胀。
+ */
+function pruneProjectArtifacts(): void {
+  const targets = [
+    "dist", // 历史打包产物（DMG + 嵌套 .app），可达数 GB
+    "storage", // 运行时用户数据（文章正文 / 素材）
+    ".e2e-data", // e2e 测试数据
+    "dev.db", // 开发 SQLite 数据库
+    "dev.db-journal",
+    "pnpm-lock.yaml", // 锁文件，运行时不需要
+    "tsconfig.tsbuildinfo", // TS 增量编译缓存
+  ];
+  let totalRemoved = 0;
+  let cleaned = 0;
+  for (const rel of targets) {
+    const p = path.join(bundle, rel);
+    if (!fs.existsSync(p)) continue;
+    const size = measureSize(p);
+    fs.rmSync(p, { recursive: true, force: true });
+    totalRemoved += size;
+    cleaned++;
+    console.log(`    ✓ 清理 ${rel}（约 ${(size / 1024 / 1024).toFixed(1)} MB）`);
+  }
+  if (cleaned > 0) {
+    console.log(
+      `  ✓ 清理 ${cleaned} 个误追踪目录/文件（共约 ${(totalRemoved / 1024 / 1024).toFixed(1)} MB）`
+    );
+  }
+}
+
+/** 测量文件或目录的总大小（字节） */
+function measureSize(target: string): number {
+  let total = 0;
+  const walk = (p: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(p, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(p, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.isFile()) {
+        try {
+          total += fs.statSync(full).size;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  };
+  try {
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) walk(target);
+    else total = stat.size;
+  } catch {
+    /* ignore */
+  }
+  return total;
+}
+
 /**
  * 从 bundle 内删除运行时（生产环境）不需要的文件，减小打包体积。
  *

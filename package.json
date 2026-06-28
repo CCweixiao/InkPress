@@ -149,7 +149,14 @@
         "to": "standalone",
         "filter": [
           "**/*",
-          "!node_modules/**"
+          "!node_modules/**",
+          "!dist/**",
+          "!storage/**",
+          "!.e2e-data/**",
+          "!dev.db",
+          "!dev.db-journal",
+          "!pnpm-lock.yaml",
+          "!tsconfig.tsbuildinfo"
         ]
       },
       {
