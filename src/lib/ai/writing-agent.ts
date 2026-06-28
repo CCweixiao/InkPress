@@ -146,6 +146,8 @@ function slimCodeEvidence(pkg: CodeEvidencePackage) {
     projectId: pkg.projectId,
     snapshotHash: pkg.snapshotHash,
     summary: pkg.summary,
+    mode: pkg.mode,
+    indexStats: pkg.indexStats,
     entryPoints: entryPoints.items,
     modules: modules.items.map((module) => ({
       ...module,
@@ -379,7 +381,7 @@ export async function createWritingAgent(input: {
         const index = await ensureCodeGraphCache({
           project: target,
           snapshotHash,
-          options: { provider: provider ?? "native" },
+          options: { provider: provider ?? "native", artifacts: true },
         });
         if (!index) {
           return {

@@ -9,6 +9,7 @@ import { moduleLogger } from "@/lib/logger";
 import type { AgentProjectConfig } from "@/lib/ai/agent-config";
 import type { CodeRelation, ProjectIndex, SymbolEvidence } from "@/lib/ai/code-evidence";
 import { listProjectFiles, resolveProjectRoot } from "@/lib/ai/project-access";
+import { buildFunctionalModules } from "@/lib/ai/code-graph-analysis";
 
 const log = moduleLogger("graphify-cache");
 const execFileAsync = promisify(execFile);
@@ -357,7 +358,7 @@ function graphifyToProjectIndex(input: {
       });
     }
   }
-  return {
+  const index: ProjectIndex = {
     version: 1,
     projectId: input.project.id,
     root: input.root,
@@ -368,8 +369,11 @@ function graphifyToProjectIndex(input: {
     symbols,
     edges,
     parseErrors: [],
+    modules: [],
     truncated: false,
   };
+  index.modules = buildFunctionalModules(index);
+  return index;
 }
 
 export async function readGraphifyProjectIndex(

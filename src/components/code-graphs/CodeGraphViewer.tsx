@@ -154,7 +154,7 @@ export function CodeGraphViewer({ graph }: { graph: CodeGraphDetail }) {
             <LoadingState />
           ) : (
             <div
-              className="technical-markdown prose prose-slate mx-auto max-w-4xl px-6 py-6 text-sm leading-7"
+              className="technical-markdown mx-auto max-w-4xl px-6 py-6 text-sm leading-7"
               dangerouslySetInnerHTML={{ __html: reportHtml }}
             />
           )

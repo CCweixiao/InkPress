@@ -10,8 +10,8 @@ const execFileAsync = promisify(execFile);
 const MAX_READ_BYTES = 256 * 1024;
 const MAX_READ_LINES = 240;
 const MAX_SEARCH_RESULTS = 50;
-const MAX_GLOB_RESULTS = 5_000;
-const MAX_TREE_RESULTS = 800;
+const MAX_GLOB_RESULTS = 50_000;
+const MAX_TREE_RESULTS = 2_000;
 const BLOCKED_SEGMENTS = new Set([
   ".git",
   "node_modules",
@@ -52,13 +52,14 @@ export function isBlockedRelativePath(relative: string) {
 
 export async function listProjectFiles(
   project: AgentProjectConfig,
-  input: { glob?: string; limit?: number } = {}
+  input: { glob?: string; limit?: number; offset?: number } = {}
 ) {
   const root = await resolveProjectRoot(project);
   const limit = Math.min(
     MAX_GLOB_RESULTS,
     Math.max(1, input.limit ?? MAX_GLOB_RESULTS)
   );
+  const offset = Math.max(0, input.offset ?? 0);
   const args = [
     "--files",
     "--hidden",
@@ -105,7 +106,7 @@ export async function listProjectFiles(
   try {
     const { stdout } = await execFileAsync("rg", [...args, "."], {
       cwd: root,
-      maxBuffer: 4 * 1024 * 1024,
+      maxBuffer: 16 * 1024 * 1024,
       timeout: 15_000,
     });
     all = stdout
@@ -134,10 +135,15 @@ export async function listProjectFiles(
       "listProjectFiles 返回空文件列表（后续将得到 0 符号 0 关系）"
     );
   }
+  const page = all.slice(offset, offset + limit);
   return {
     project: project.name,
-    files: all.slice(0, limit),
-    truncated: all.length > limit,
+    total: all.length,
+    offset,
+    limit,
+    nextOffset: offset + page.length < all.length ? offset + page.length : null,
+    files: page,
+    truncated: offset + page.length < all.length,
   };
 }
 
@@ -276,10 +282,17 @@ export async function resolveProjectFile(
 
 export async function searchProject(
   project: AgentProjectConfig,
-  input: { query: string; glob?: string; limit?: number; regex?: boolean }
+  input: {
+    query: string;
+    glob?: string;
+    limit?: number;
+    offset?: number;
+    regex?: boolean;
+  }
 ) {
   const root = await resolveProjectRoot(project);
   const limit = Math.min(MAX_SEARCH_RESULTS, Math.max(1, input.limit ?? 30));
+  const offset = Math.max(0, input.offset ?? 0);
   const args = [
     "--line-number",
     "--no-heading",
@@ -316,15 +329,34 @@ export async function searchProject(
       maxBuffer: 2 * 1024 * 1024,
       timeout: 12_000,
     });
-    const matches = stdout
+    const allMatches = stdout
       .split("\n")
       .filter(Boolean)
-      .filter((line) => !isBlockedRelativePath(line.split(":")[0] ?? ""))
-      .slice(0, limit);
-    return { project: project.name, matches, truncated: matches.length >= limit };
+      .filter((line) => !isBlockedRelativePath(line.split(":")[0] ?? ""));
+    const matches = allMatches.slice(offset, offset + limit);
+    return {
+      project: project.name,
+      total: allMatches.length,
+      offset,
+      limit,
+      nextOffset:
+        offset + matches.length < allMatches.length ? offset + matches.length : null,
+      matches,
+      truncated: offset + matches.length < allMatches.length,
+    };
   } catch (error) {
     const candidate = error as { code?: number; stdout?: string };
-    if (candidate.code === 1) return { project: project.name, matches: [], truncated: false };
+    if (candidate.code === 1) {
+      return {
+        project: project.name,
+        total: 0,
+        offset,
+        limit,
+        nextOffset: null,
+        matches: [],
+        truncated: false,
+      };
+    }
     const listed = await listProjectFiles(project, {
       glob: input.glob,
       limit: MAX_GLOB_RESULTS,
@@ -333,6 +365,7 @@ export async function searchProject(
       ? new RegExp(input.query, "i")
       : null;
     const matches: string[] = [];
+    const scanLimit = offset + limit;
     for (const relative of listed.files) {
       const absolute = path.join(root, relative);
       const stat = await fs.stat(absolute).catch(() => null);
@@ -345,14 +378,25 @@ export async function searchProject(
           ? matcher.test(lines[index])
           : lines[index].toLowerCase().includes(input.query.toLowerCase());
         if (hit) matches.push(`${relative}:${index + 1}:${lines[index].slice(0, 500)}`);
-        if (matches.length >= limit) break;
+        if (matches.length >= scanLimit) break;
       }
-      if (matches.length >= limit) break;
+      if (matches.length >= scanLimit) break;
     }
+    const page = matches.slice(offset, offset + limit);
     return {
       project: project.name,
-      matches,
-      truncated: matches.length >= limit || listed.truncated,
+      total: matches.length,
+      offset,
+      limit,
+      nextOffset:
+        offset + page.length < matches.length || matches.length >= scanLimit
+          ? offset + page.length
+          : null,
+      matches: page,
+      truncated:
+        offset + page.length < matches.length ||
+        matches.length >= scanLimit ||
+        listed.truncated,
     };
   }
 }

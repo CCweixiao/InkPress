@@ -877,8 +877,13 @@ function EvidenceChip({
       return (
         <div className="rounded-md border px-2.5 py-2 text-[11px]">
           代码快照 {String(data.snapshotHash ?? "").slice(0, 10)} ·{" "}
+          {data.files != null ? `${Number(data.files)} 个文件 · ` : ""}
           {Number(data.symbols ?? 0)} 个符号 · {Number(data.edges ?? 0)} 条关系
-          {data.truncated ? " · 部分结果已截断" : ""}
+          {data.mode === "fallback-index" ? " · 静态索引模式" : ""}
+          {data.evidenceTruncated
+            ? ` · 证据包 ${Number(data.evidenceSymbols ?? 0)}/${Number(data.evidenceEdges ?? 0)}`
+            : ""}
+          {data.truncated ? " · 索引已触顶" : ""}
         </div>
       );
     case "source":
