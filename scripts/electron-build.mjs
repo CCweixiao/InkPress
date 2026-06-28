@@ -16,6 +16,26 @@
  */
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * 加载本地 .env.apple（已被 .gitignore 忽略）：Apple 签名 / 公证凭据。
+ * electron-builder 公证时从环境变量读取 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD。
+ * 仅在文件存在时加载，缺失则跳过（开发期未配置签名时仍可打包未签名产物）。
+ */
+const envFile = path.join(process.cwd(), ".env.apple");
+if (fs.existsSync(envFile)) {
+  let loaded = 0;
+  for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
+    const m = line.match(/^\s*export\s+([A-Z_]+)="?([^"\n]*)"?\s*$/);
+    if (m && !process.env[m[1]]) {
+      process.env[m[1]] = m[2];
+      loaded++;
+    }
+  }
+  if (loaded > 0) console.log(`  ✓ 已加载 .env.apple（${loaded} 个 Apple 凭据）`);
+}
 
 const VALID = new Set(["arm64", "x64"]);
 
