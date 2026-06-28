@@ -202,8 +202,15 @@ export function summarizeDataPart(part: Record<string, unknown>): string {
       const detail = String(data.detail ?? "").trim();
       return detail ? `${title}：${detail}` : title;
     }
-    case "data-project-snapshot":
-      return `代码快照 ${String(data.snapshotHash ?? "").slice(0, 10)} · ${Number(data.symbols ?? 0)} 符号 · ${Number(data.edges ?? 0)} 关系`;
+    case "data-project-snapshot": {
+      const files = data.files != null ? `${Number(data.files)} 文件 · ` : "";
+      const capped = data.evidenceTruncated
+        ? ` · 证据包 ${Number(data.evidenceSymbols ?? 0)}/${Number(data.evidenceEdges ?? 0)}`
+        : "";
+      const mode = data.mode === "fallback-index" ? " · 静态索引模式" : "";
+      const indexStatus = data.truncated ? " · 索引触顶" : "";
+      return `代码快照 ${String(data.snapshotHash ?? "").slice(0, 10)} · ${files}${Number(data.symbols ?? 0)} 符号 · ${Number(data.edges ?? 0)} 关系${mode}${capped}${indexStatus}`;
+    }
     case "data-source-evidence":
       return `${String(data.path ?? "")}#L${String(data.startLine ?? "")}`;
     case "data-git-range":

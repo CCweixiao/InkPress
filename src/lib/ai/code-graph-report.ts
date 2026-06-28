@@ -1,4 +1,5 @@
 import type { CodeRelation, ProjectIndex, SymbolEvidence } from "@/lib/ai/code-evidence";
+import { modulesFromIndex } from "@/lib/ai/code-graph-analysis";
 
 const ENTRY_NAME_PATTERN = /^(main|index|app|server|handler|route|controller)$/i;
 const MAX_ENTRY_NODES = 10;
@@ -140,6 +141,7 @@ function detectCycles(edges: CodeRelation[]) {
 export function generateGraphReport(index: ProjectIndex): string {
   const symbolByKind = sortByKind(index.symbols);
   const edgeByKind = sortByKind(index.edges);
+  const modules = modulesFromIndex(index);
   const entries = entryNodes(index.symbols);
   const hot = hotspots(index);
   const deps = dependencyMatrix(index.edges);
@@ -152,6 +154,7 @@ export function generateGraphReport(index: ProjectIndex): string {
   lines.push(`- 根目录：${index.root}`);
   lines.push(`- 快照哈希：\`${index.snapshotHash.slice(0, 16)}\``);
   lines.push(`- 生成时间：${index.generatedAt}`);
+  lines.push(`- 构建模式：${index.buildMode ?? "fast"}`);
   if (index.truncated) {
     lines.push(`- ⚠ 索引已截断（部分符号/边可能缺失）`);
   }
@@ -161,9 +164,50 @@ export function generateGraphReport(index: ProjectIndex): string {
   lines.push(`| 维度 | 数量 |`);
   lines.push(`| --- | ---: |`);
   lines.push(`| 文件 | ${index.files.length} |`);
+  lines.push(`| 功能模块 | ${modules.length} |`);
   lines.push(`| 符号 | ${index.symbols.length} |`);
   lines.push(`| 关系边 | ${index.edges.length} |`);
   lines.push(`| 解析错误 | ${index.parseErrors.length} |`);
+  lines.push("");
+  lines.push(`### 语言分布`);
+  lines.push("");
+  const languageStats = index.languageStats ?? [];
+  if (languageStats.length === 0) {
+    lines.push(`_无语言统计_`);
+  } else {
+    lines.push(`| Language | 文件 | 字节 |`);
+    lines.push(`| --- | ---: | ---: |`);
+    for (const stat of languageStats) {
+      lines.push(`| ${escapeCell(stat.language)} | ${stat.files} | ${stat.bytes} |`);
+    }
+  }
+  lines.push("");
+  lines.push(`## 功能模块分析`);
+  lines.push("");
+  if (modules.length === 0) {
+    lines.push(`_未检出功能模块_`);
+  } else {
+    lines.push(`| 模块 | 文件 | 符号 | 入站 imports | 出站 imports | 职责推断 |`);
+    lines.push(`| --- | ---: | ---: | ---: | ---: | --- |`);
+    for (const graphModule of modules.slice(0, 30)) {
+      lines.push(
+        `| \`${escapeCell(graphModule.pathPrefix)}\` | ${graphModule.fileCount} | ${graphModule.symbolCount} | ${graphModule.inboundImports} | ${graphModule.outboundImports} | ${escapeCell(graphModule.responsibilities.join("；"))} |`
+      );
+    }
+    lines.push("");
+    lines.push(`### 模块依赖 Topology`);
+    lines.push("");
+    for (const graphModule of modules.filter((item) => item.dependencies.length > 0).slice(0, 20)) {
+      const depsText = graphModule.dependencies
+        .slice(0, 6)
+        .map((dep) => `\`${escapeCell(dep.pathPrefix)}\`×${dep.count}`)
+        .join("、");
+      lines.push(`- \`${escapeCell(graphModule.pathPrefix)}\` → ${depsText}`);
+    }
+    if (!modules.some((item) => item.dependencies.length > 0)) {
+      lines.push(`_未检出跨模块 imports 依赖_`);
+    }
+  }
   lines.push("");
   lines.push(`### 符号分布（按 kind）`);
   lines.push("");

@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  listProjectFiles,
   readProjectFile,
   resolveProjectFile,
+  searchProject,
 } from "../../src/lib/ai/project-access";
 
 const roots: string[] = [];
@@ -37,5 +39,34 @@ describe("project access", () => {
     await expect(resolveProjectFile(project, ".env")).rejects.toThrow();
     await expect(resolveProjectFile(project, "link.txt")).rejects.toThrow();
     await expect(resolveProjectFile(project, "../outside.txt")).rejects.toThrow();
+  });
+
+  it("paginates project file listing and search results", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "inkpress-project-"));
+    roots.push(root);
+    await fs.writeFile(path.join(root, "a.ts"), "export const valueA = 'needle';\n", "utf8");
+    await fs.writeFile(path.join(root, "b.ts"), "export const valueB = 'needle';\n", "utf8");
+    await fs.writeFile(path.join(root, "c.ts"), "export const valueC = 'needle';\n", "utf8");
+    const project = { id: "demo", name: "Demo", root };
+
+    const firstFiles = await listProjectFiles(project, { glob: "*.ts", limit: 1 });
+    expect(firstFiles.total).toBe(3);
+    expect(firstFiles.nextOffset).toBe(1);
+    const secondFiles = await listProjectFiles(project, {
+      glob: "*.ts",
+      limit: 1,
+      offset: firstFiles.nextOffset ?? 0,
+    });
+    expect(secondFiles.files[0]).not.toBe(firstFiles.files[0]);
+
+    const firstMatches = await searchProject(project, { query: "needle", limit: 1 });
+    expect(firstMatches.total).toBe(3);
+    expect(firstMatches.nextOffset).toBe(1);
+    const secondMatches = await searchProject(project, {
+      query: "needle",
+      limit: 1,
+      offset: firstMatches.nextOffset ?? 0,
+    });
+    expect(secondMatches.matches[0]).not.toBe(firstMatches.matches[0]);
   });
 });
