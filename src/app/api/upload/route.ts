@@ -3,6 +3,7 @@ import { classifyByContentType } from "@/lib/oss";
 import { prisma } from "@/lib/db";
 import { genAssetName, splitTagInput, tagsToJson } from "@/lib/asset";
 import { syncAssetToWechat } from "@/lib/wechat/asset-sync";
+import { isSvg, convertSvgToPng } from "@/lib/wechat/svg-to-png";
 import { withApiLog, logMutation } from "@/lib/api-log";
 import { moduleLogger } from "@/lib/logger";
 import { originalFilenameMetadata, putBufferObject } from "@/lib/storage";
@@ -30,7 +31,6 @@ export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   }
 
   const contentType = file.type || "application/octet-stream";
-  const { kind, dir } = classifyByContentType(contentType);
 
   // 可选归属（编辑器粘贴图片时携带）
   const articleId =
@@ -43,21 +43,49 @@ export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   const tagsJson = tagsToJson(splitTagInput(tagsRaw));
   // 是否同步到公众号素材库（勾选框）
   const syncToWechat = !!formData.get("syncToWechat");
+  // 第一层：SVG → PNG 开关。默认 ON：未传字段 = true；传 "0"/"false"/"no" = false
+  const rawFlag = formData.get("convertSvgToPng");
+  const shouldConvertSvg =
+    rawFlag === null || !["0", "false", "no"].includes(String(rawFlag).toLowerCase());
 
   try {
+    // 第一层转换：SVG → PNG（公众号素材库不支持 SVG）
+    let uploadBuffer: Buffer = Buffer.from(await file.arrayBuffer());
+    let uploadContentType = contentType;
+    let uploadFilename = file.name;
+    let convertedFromSvg = false;
+    if (shouldConvertSvg && isSvg(uploadContentType, uploadFilename)) {
+      try {
+        uploadBuffer = await convertSvgToPng(uploadBuffer);
+        uploadContentType = "image/png";
+        uploadFilename = uploadFilename.replace(/\.svgz?$/i, ".png");
+        convertedFromSvg = true;
+      } catch (e) {
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : "SVG 转 PNG 失败" },
+          { status: 400 }
+        );
+      }
+    }
+
+    const { kind, dir } = classifyByContentType(uploadContentType);
+
     const storageObject = await putBufferObject({
-      buffer: Buffer.from(await file.arrayBuffer()),
-      filename: file.name,
-      contentType,
+      buffer: uploadBuffer,
+      filename: uploadFilename,
+      contentType: uploadContentType,
       kind: dir,
       articleId,
       spaceId,
-      metadata: originalFilenameMetadata(file.name),
+      metadata: {
+        ...originalFilenameMetadata(file.name),
+        ...(convertedFromSvg ? { convertedFromSvg: true } : {}),
+      },
       preferCloud: true,
     });
     const asset = await prisma.asset.create({
       data: {
-        name: genAssetName(file.name, contentType), // 自动短 UUID 名
+        name: genAssetName(uploadFilename, uploadContentType), // 自动短 UUID 名
         ossKey: storageObject.key,
         url: storageObject.url ?? `/api/storage/${storageObject.id}`,
         kind,
