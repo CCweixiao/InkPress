@@ -92,50 +92,33 @@ function proposalIdFromOutput(value: unknown) {
   return typeof id === "string" ? id : "";
 }
 
-async function svgToPng(svg: string) {
-  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    const scale = 2;
-    canvas.width = Math.max(1, image.naturalWidth * scale);
-    canvas.height = Math.max(1, image.naturalHeight * scale);
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器无法创建图表画布。");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.scale(scale, scale);
-    context.drawImage(image, 0, 0);
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
-        (result) => (result ? resolve(result) : reject(new Error("图表 PNG 转换失败。"))),
-        "image/png"
-      )
-    );
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+/** 自闭合 mermaid SVG 中的 HTML void 元素（<br> 等），避免 XML 严格解析报错 */
+function xmlSafeSvg(svg: string): string {
+  return svg.replace(/<(br|hr|img|input|meta|link)([^>]*?)(?<!\/)>/gi, "<$1$2/>");
 }
 
 async function materializeMermaid(markdown: string, articleId: string) {
   const matches = [...markdown.matchAll(/```mermaid\s*\n([\s\S]*?)```/g)];
   if (!matches.length) return markdown;
   const mermaid = (await import("mermaid")).default;
-  mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "neutral",
+    flowchart: { htmlLabels: false },
+  });
   let result = markdown;
   for (let index = 0; index < matches.length; index++) {
     const full = matches[index][0];
     const source = matches[index][1].trim();
     const rendered = await mermaid.render(`proposal-mermaid-${crypto.randomUUID()}`, source);
-    const png = await svgToPng(rendered.svg);
+    const svg = xmlSafeSvg(rendered.svg);
     const form = new FormData();
-    form.append("file", new File([png], `mermaid-${index + 1}.png`, { type: "image/png" }));
+    form.append("file", new File([svg], `mermaid-${index + 1}.svg`, { type: "image/svg+xml" }));
     form.append("articleId", articleId);
     form.append("description", `文章 Mermaid 图表 ${index + 1}`);
     form.append("tags", "mermaid,diagram");
+    form.append("convertSvgToPng", "1"); // Mermaid 图表显式声明转 PNG（公众号不支持 SVG）
     const response = await fetch("/api/upload", { method: "POST", body: form });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.asset?.url) {

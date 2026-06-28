@@ -1,4 +1,5 @@
 import { wxUpload, wxJson, ensureOk, type WxResponse } from "./client";
+import { ensureWechatCompatibleImage } from "./svg-to-png";
 import { prisma } from "@/lib/db";
 import { createHash } from "node:crypto";
 import { moduleLogger } from "@/lib/logger";
@@ -39,10 +40,16 @@ export async function uploadBodyImage(
 
   // 下载并上传
   const start = Date.now();
-  const buf = await fetcher(sourceUrl);
-  const blob = new Blob([buf]);
+  const rawBuf = await fetcher(sourceUrl);
+  // 第二层兜底：SVG → PNG（公众号不支持 SVG）
+  const { buf: wxBuf, filename } = await ensureWechatCompatibleImage({
+    buf: rawBuf,
+    contentType: undefined, // fetcher 不返回 MIME，靠 URL 后缀判断
+    filename: sourceUrl,
+  });
+  const blob = new Blob([wxBuf]);
   const form = new FormData();
-  form.append("media", blob, "image");
+  form.append("media", blob, filename);
   const data = await wxUpload("/media/uploadimg", form);
   ensureOk(data, "上传正文图片");
   const url = (data as { url?: string }).url;
@@ -54,7 +61,7 @@ export async function uploadBodyImage(
     create: { sourceUrl, sourceHash: hash, wxUrl: url, kind: "body" },
   });
   log.info(
-    { sourceHash: hash, size: buf.byteLength, durationMs: Date.now() - start },
+    { sourceHash: hash, size: wxBuf.byteLength, durationMs: Date.now() - start },
     "正文图上传完成"
   );
   return url;
@@ -125,10 +132,16 @@ export async function uploadCoverImage(
   }
 
   const start = Date.now();
-  const buf = await fetcher(sourceUrl);
-  const blob = new Blob([buf]);
+  const rawBuf = await fetcher(sourceUrl);
+  // 第二层兜底：SVG → PNG（公众号不支持 SVG）；封面统一用 cover.png 最稳
+  const { buf: wxBuf } = await ensureWechatCompatibleImage({
+    buf: rawBuf,
+    contentType: undefined,
+    filename: sourceUrl,
+  });
+  const blob = new Blob([wxBuf]);
   const form = new FormData();
-  form.append("media", blob, "cover.jpg");
+  form.append("media", blob, "cover.png");
   const data = await wxUpload("/material/add_material", form, { type: "image" });
   ensureOk(data, "上传封面图");
   const result = data as { media_id?: string; url?: string };
@@ -146,7 +159,7 @@ export async function uploadCoverImage(
     },
   });
   log.info(
-    { mediaId: result.media_id, size: buf.byteLength, durationMs: Date.now() - start },
+    { mediaId: result.media_id, size: wxBuf.byteLength, durationMs: Date.now() - start },
     "封面图上传完成"
   );
   return { mediaId: result.media_id, url: result.url ?? "" };

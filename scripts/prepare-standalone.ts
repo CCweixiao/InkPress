@@ -59,6 +59,7 @@ const SERVER_EXTERNALS = [
   "@prisma/client",
   "adm-zip",
   "ali-oss",
+  "@resvg/resvg-js",
 ];
 
 if (!fs.existsSync(srcStandalone)) {

@@ -72,6 +72,7 @@ export function UploadDialog({
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [syncToWechat, setSyncToWechat] = useState(false);
+  const [convertSvgToPng, setConvertSvgToPng] = useState(true);
   const [uploading, setUploading] = useState(false);
   /** true=拖拽进入，弹窗打开即上传；false=点击进入，先填表单再传 */
   const liveMode = initialFiles !== null;
@@ -84,6 +85,7 @@ export function UploadDialog({
       setDescription("");
       setTags("");
       setSyncToWechat(false);
+      setConvertSvgToPng(true);
       setUploading(false);
       setFinalizing(false);
       if (initialFiles && initialFiles.length > 0) {
@@ -110,6 +112,8 @@ export function UploadDialog({
         if (tags.trim()) fd.append("tags", tags.trim());
       }
       if (syncToWechat) fd.append("syncToWechat", "1");
+      // 服务端默认 ON，只有显式关闭时才传 "0"，减少数据量
+      if (!convertSvgToPng) fd.append("convertSvgToPng", "0");
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -126,7 +130,7 @@ export function UploadDialog({
             : undefined,
       };
     },
-    [articleId, spaceId, liveMode, description, tags, syncToWechat]
+    [articleId, spaceId, liveMode, description, tags, syncToWechat, convertSvgToPng]
   );
 
   // ---- 分片上传单个文件（含断点续传 + 重试）----
@@ -150,6 +154,7 @@ export function UploadDialog({
             articleId,
             spaceId: spaceId ?? null,
             syncToWechat,
+            convertSvgToPng,
           }),
         }
       );
@@ -194,7 +199,7 @@ export function UploadDialog({
             : undefined,
       };
     },
-    [articleId, spaceId, liveMode, description, tags, syncToWechat]
+    [articleId, spaceId, liveMode, description, tags, syncToWechat, convertSvgToPng]
   );
 
   const uploadOne = useCallback(
@@ -526,6 +531,22 @@ export function UploadDialog({
             <div className="text-xs font-medium">同步到公众号素材库</div>
             <div className="text-[11px] text-muted-foreground leading-relaxed">
               图片走 media/uploadimg（正文图 URL），视频/文件走永久素材。需已在「设置 → 微信公众号」配置 appId 与 secret；未配置或失败时素材仍入库，标记失败后可重试。
+            </div>
+          </div>
+        </label>
+
+        {/* SVG 自动转 PNG（公众号素材库不支持 SVG，默认开启） */}
+        <label className="flex items-start gap-2 rounded-md border border-border p-2.5 cursor-pointer hover:bg-accent/40 transition-colors">
+          <input
+            type="checkbox"
+            checked={convertSvgToPng}
+            onChange={(e) => setConvertSvgToPng(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0"
+          />
+          <div className="space-y-0.5">
+            <div className="text-xs font-medium">SVG 自动转 PNG</div>
+            <div className="text-[11px] text-muted-foreground leading-relaxed">
+              公众号素材库不支持 SVG，开启后上传时会自动转为 PNG 再存储。建议保持开启。Mermaid 图表也会走同样链路。
             </div>
           </div>
         </label>
