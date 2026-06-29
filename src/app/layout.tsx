@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import { Geist, Geist_Mono } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -9,16 +10,6 @@ import {
   themeModeToHtmlClass,
   THEME_STORAGE_KEY,
 } from "@/lib/theme-mode";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "InkPress · 数字文刊工坊",
@@ -38,8 +29,8 @@ export default async function RootLayout({
     <html
       lang="zh-CN"
       className={[
-        geistSans.variable,
-        geistMono.variable,
+        GeistSans.variable,
+        GeistMono.variable,
         "h-full antialiased",
         themeClass,
       ]
