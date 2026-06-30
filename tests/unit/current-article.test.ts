@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   extractArticleOutline,
   referencesCurrentArticle,
-  shouldIncludeArticleBody,
 } from "../../src/lib/ai/current-article";
 
 describe("referencesCurrentArticle", () => {
@@ -25,30 +24,6 @@ describe("referencesCurrentArticle", () => {
     expect(referencesCurrentArticle("   ")).toBe(false);
     // 「文章」单出现但无当前/本/这/上面 等限定，不视为指代当前文章
     expect(referencesCurrentArticle("文章怎么排版比较好")).toBe(false);
-  });
-});
-
-describe("shouldIncludeArticleBody（按需注入）", () => {
-  it("与正文无关的意图：未指代当前文章时省略全文", () => {
-    expect(shouldIncludeArticleBody("research", false)).toBe(false);
-    expect(shouldIncludeArticleBody("project-explore", false)).toBe(false);
-    expect(shouldIncludeArticleBody("project-change-analysis", false)).toBe(false);
-    expect(shouldIncludeArticleBody("write-change-document", false)).toBe(false);
-    expect(shouldIncludeArticleBody("out-of-scope", false)).toBe(false);
-  });
-
-  it("正文相关意图：默认带全文", () => {
-    expect(shouldIncludeArticleBody("summarize", false)).toBe(true);
-    expect(shouldIncludeArticleBody("polish", false)).toBe(true);
-    expect(shouldIncludeArticleBody("review", false)).toBe(true);
-    expect(shouldIncludeArticleBody("create-article", false)).toBe(true);
-    expect(shouldIncludeArticleBody("question", false)).toBe(true);
-  });
-
-  it("用户指代当前文章时：无论何种意图都强制带全文", () => {
-    expect(shouldIncludeArticleBody("research", true)).toBe(true);
-    expect(shouldIncludeArticleBody("project-explore", true)).toBe(true);
-    expect(shouldIncludeArticleBody("out-of-scope", true)).toBe(true);
   });
 });
 

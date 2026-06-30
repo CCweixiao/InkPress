@@ -52,6 +52,10 @@ model AgentChatSession {
   selectedProjectId   String?
   providerId          String?
   modelId             String?
+  // Agent Runtime 标记与 Claude Agent SDK 会话句柄。
+  runtime             String   @default("claude-agent")
+  claudeAgentSessionId String?
+  claudeAgentStoreKey  String?
   lastInputTokens     Int      @default(0)
   lastOutputTokens    Int      @default(0)
   lastReasoningTokens Int      @default(0)
@@ -63,6 +67,7 @@ model AgentChatSession {
   technicalDocument TechnicalDocument? @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
   messages          AgentChatMessage[]
   codeSourceGrants  CodeSourceGrant[]
+  toolActionGrants  ToolActionGrant[]
 
   @@index([articleId])
   @@index([technicalDocumentId])
@@ -93,6 +98,39 @@ model CodeSourceGrant {
   @@unique([sessionId, sourceKey])
   @@index([sessionId, status])
   @@index([sourceKey])
+}
+
+// P3 权限闸门：canUseTool 命中 ASK 时落一行 pending grant，外部 /api/ai/agent-approvals 决议。
+model ToolActionGrant {
+  id                String   @id @default(cuid())
+  sessionId         String
+  runtime           String   @default("claude-agent")
+  toolName          String // 裸名（如 set_article_digest）
+  inputHash         String // sha256(JSON.stringify(input))，审计用
+  status            String   @default("pending") // pending | approved | rejected | expired
+  approvalTokenHash String?
+  decisionJson      String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  session AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, status])
+  @@index([toolName])
+}
+
+// P5 Claude Agent SessionStore：SDK transcript 条目镜像（append 写多条 entry），供跨轮/跨进程 resume。
+model ClaudeAgentSessionEntry {
+  id           String   @id @default(cuid())
+  projectKey   String // SDK 从 cwd 派生；透明存储键
+  sdkSessionId String
+  subpath      String   @default("") // 主 transcript=""，子 agent 非空
+  uuid         String? // 幂等键；SQLite unique 对 NULL 不去重 → 无 uuid 条目可多条
+  entryJson    String // 一行 JSONL（SessionStoreEntry 原样）
+  createdAt    DateTime @default(now())
+
+  @@unique([projectKey, sdkSessionId, subpath, uuid])
+  @@index([projectKey, sdkSessionId, subpath])
 }
 
 model AgentChatMessage {

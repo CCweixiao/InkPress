@@ -45,6 +45,8 @@ import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
 import { ToolGroupBlock } from "@/components/ai/ToolGroupBlock";
 import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
 import { AgentErrorBlock } from "@/components/ai/AgentErrorBlock";
+import { ToolApprovalCard } from "@/components/ai/ToolApprovalCard";
+import { RetryIndicator } from "@/components/ai/RetryIndicator";
 import {
   getToolName,
   getPartGroupType,
@@ -637,6 +639,8 @@ export type RenderCtx = {
   onApprovalStatusChange?: (status: string) => void;
   /** 授权失败且无法恢复时解锁 composer。 */
   onApprovalFailed?: () => void;
+  /** 工具审批（P3 canUseTool 闸门）状态变化（pending 时锁定 composer）。 */
+  onToolApprovalStatusChange?: (status: string) => void;
   /** 当前消息在 messages 中的下标（用户消息重新执行需据此截断）。 */
   messageIndex: number;
   /** 重新执行用户消息：编辑后丢弃其后消息并重跑（codex edit & retry）。 */
@@ -1035,6 +1039,29 @@ export const PART_RENDERERS: PartRenderer[] = [
     ),
   },
   {
+    match: (p) => p.type === "data-tool-approval" && isObj(p.data),
+    render: (p, ctx) => (
+      <ToolApprovalCard
+        data={
+          p.data as {
+            grantId: string;
+            toolName: string;
+            displayName?: string;
+            input: Record<string, unknown>;
+            approvalToken: string;
+          }
+        }
+        onStatusChange={ctx.onToolApprovalStatusChange}
+      />
+    ),
+  },
+  {
+    match: (p) => p.type === "data-agent-retry" && isObj(p.data),
+    render: (p, ctx) => (
+      <RetryIndicator data={p.data as Record<string, unknown>} settled={ctx.settled} />
+    ),
+  },
+  {
     match: (p) => p.type === "data-code-source-ready" && isObj(p.data),
     render: (p) => (
       <CodeSourceReadyNotice data={p.data as Record<string, unknown>} />
@@ -1212,6 +1239,7 @@ type AgentMessageRowProps = {
   onResumeAfterApproval: RenderCtx["resumeAfterApproval"];
   onApprovalStatusChange?: RenderCtx["onApprovalStatusChange"];
   onApprovalFailed?: RenderCtx["onApprovalFailed"];
+  onToolApprovalStatusChange?: RenderCtx["onToolApprovalStatusChange"];
 };
 
 /**
@@ -1234,8 +1262,23 @@ const AgentMessageRow = memo(function AgentMessageRow({
   onResumeAfterApproval,
   onApprovalStatusChange,
   onApprovalFailed,
+  onToolApprovalStatusChange,
 }: AgentMessageRowProps) {
-  const parts = message.parts as unknown as AgentPart[];
+  const allParts = message.parts as unknown as AgentPart[];
+  // data-agent-retry（SDK 轮内重试会连发多条）只保留最后一条，避免堆积。
+  let lastRetryIdx = -1;
+  for (let i = allParts.length - 1; i >= 0; i -= 1) {
+    if (allParts[i].type === "data-agent-retry") {
+      lastRetryIdx = i;
+      break;
+    }
+  }
+  const parts =
+    lastRetryIdx >= 0
+      ? allParts.filter(
+          (p, i) => p.type !== "data-agent-retry" || i === lastRetryIdx
+        )
+      : allParts;
   const items = useMemo(() => aggregateParts(parts), [parts]);
 
   const ctx: RenderCtx = useMemo(
@@ -1248,6 +1291,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
       resumeAfterApproval: onResumeAfterApproval,
       onApprovalStatusChange,
       onApprovalFailed,
+      onToolApprovalStatusChange,
       messageIndex,
       rerun: onRerun,
       busy,
@@ -1262,6 +1306,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
       onResumeAfterApproval,
       onApprovalStatusChange,
       onApprovalFailed,
+      onToolApprovalStatusChange,
       messageIndex,
       onRerun,
       busy,
@@ -1416,7 +1461,11 @@ export function WritingAssistant({
   const [slashNotice, setSlashNotice] = useState("");
   const [compacting, setCompacting] = useState(false);
   // 待代码源授权：锁定 composer，引导用户先完成上方授权卡片操作。
-  const [approvalBlocked, setApprovalBlocked] = useState(false);
+  // composer 锁由两类审批独立贡献（避免互相 reset）：代码源授权 / P3 工具审批。
+  const [codeSourceApprovalBlocked, setCodeSourceApprovalBlocked] =
+    useState(false);
+  const [toolApprovalBlocked, setToolApprovalBlocked] = useState(false);
+  const approvalBlocked = codeSourceApprovalBlocked || toolApprovalBlocked;
   // /compact 成功后即时覆盖 TokenMeter：用压缩后估算临时顶替，直到下一轮对话下发真实 data-context-usage。
   const [compactOverride, setCompactOverride] = useState<ContextUsage>(null);
   // 恢复被中断的回复：页面级导航导致组件重挂载后，服务端可能仍在处理上一轮
@@ -1763,11 +1812,15 @@ export function WritingAssistant({
   }, []);
 
   const handleApprovalStatusChange = useCallback((status: string) => {
-    setApprovalBlocked(status === "pending");
+    setCodeSourceApprovalBlocked(status === "pending");
   }, []);
 
   const handleApprovalFailed = useCallback(() => {
-    setApprovalBlocked(false);
+    setCodeSourceApprovalBlocked(false);
+  }, []);
+
+  const handleToolApprovalStatusChange = useCallback((status: string) => {
+    setToolApprovalBlocked(status === "pending");
   }, []);
 
   /** 斜杠菜单选中：内置命令立即执行，Skill 插入 token + 空格待补参数。 */
@@ -1857,7 +1910,7 @@ export function WritingAssistant({
 
   useEffect(() => {
     if (!pendingApprovalGrantId) {
-      setApprovalBlocked(false);
+      setCodeSourceApprovalBlocked(false);
       return;
     }
     let active = true;
@@ -1865,16 +1918,50 @@ export function WritingAssistant({
       .then((response) => response.json())
       .then((result) => {
         if (active) {
-          setApprovalBlocked(result.source?.status === "pending");
+          setCodeSourceApprovalBlocked(result.source?.status === "pending");
         }
       })
       .catch(() => {
-        if (active) setApprovalBlocked(false);
+        if (active) setCodeSourceApprovalBlocked(false);
       });
     return () => {
       active = false;
     };
   }, [pendingApprovalGrantId]);
+
+  /** P3 工具审批：最新助手消息中的待审批 grant id（轮询 /status 锁定 composer）。 */
+  const pendingToolApprovalGrantId = useMemo(() => {
+    if (!lastAssistantParts) return null;
+    for (const p of lastAssistantParts) {
+      const part = p as unknown as Record<string, unknown>;
+      if (part.type === "data-tool-approval" && isObj(part.data)) {
+        const id = String((part.data as { grantId?: unknown }).grantId ?? "");
+        if (id) return id;
+      }
+    }
+    return null;
+  }, [lastAssistantParts]);
+
+  useEffect(() => {
+    if (!pendingToolApprovalGrantId) {
+      setToolApprovalBlocked(false);
+      return;
+    }
+    let active = true;
+    fetch(`/api/ai/agent-approvals/${pendingToolApprovalGrantId}/status`)
+      .then((response) => response.json())
+      .then((result) => {
+        if (active) {
+          setToolApprovalBlocked(result.status === "pending");
+        }
+      })
+      .catch(() => {
+        if (active) setToolApprovalBlocked(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [pendingToolApprovalGrantId]);
 
   // 扫描最近的 data-context-usage（composer token 计量用）——仅最新助手消息。
   const latestContextUsage = useMemo<ContextUsage>(() => {
@@ -2083,6 +2170,7 @@ export function WritingAssistant({
                 onResumeAfterApproval={stableResumeAfterApproval}
                 onApprovalStatusChange={handleApprovalStatusChange}
                 onApprovalFailed={handleApprovalFailed}
+                onToolApprovalStatusChange={handleToolApprovalStatusChange}
               />
             ))}
             {proposals
