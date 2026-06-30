@@ -26,6 +26,19 @@ import path from "node:path";
 const isPackaged = !!process.env.INKPRESS_HOME && process.env.INKPRESS_HOME.trim().length > 0;
 
 /**
+ * InkPress 用户数据主目录。
+ *
+ * 与 dataHome() 不同：这个函数在开发模式也返回 ~/.inkpress，供必须与项目工作区
+ * 和第三方默认目录完全隔离的运行时使用（例如 Claude Agent SDK）。
+ */
+export function inkpressHomeDir(): string {
+  if (process.env.INKPRESS_HOME && process.env.INKPRESS_HOME.trim()) {
+    return path.resolve(process.env.INKPRESS_HOME.trim());
+  }
+  return path.join(os.homedir(), ".inkpress");
+}
+
+/**
  * 用户数据根目录。
  * - 开发模式：返回 null，调用方据此回落到项目目录（保持 pnpm dev 行为不变）。
  * - 打包/INKPRESS_HOME 设置：返回绝对路径（INKPRESS_HOME 或默认 ~/.inkpress）。
@@ -118,6 +131,11 @@ export function storageDir(): string {
 export function cacheDir(): string {
   const home = dataHome();
   return home ? path.join(home, "cache") : path.join(process.cwd(), "storage", "tmp");
+}
+
+/** Claude Agent SDK 专用目录：不读写用户 ~/.claude，也不落到项目工作区。 */
+export function claudeAgentRuntimeDir(): string {
+  return path.join(inkpressHomeDir(), "cache", "claude-agent");
 }
 
 /** 日志目录：~/.inkpress/logs（打包）或 项目根/logs（开发） */

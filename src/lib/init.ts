@@ -10,6 +10,7 @@ import {
   cacheDir,
   userSkillsDir,
   logsDir,
+  claudeAgentRuntimeDir,
   markerFile,
   migrationsDir,
   usesDataHome,
@@ -72,6 +73,9 @@ export async function ensureDataHome(): Promise<void> {
     backupDir(),
     migrationScriptsDir(),
     userSkillsDir(),
+    claudeAgentRuntimeDir(),
+    path.join(claudeAgentRuntimeDir(), "config"),
+    path.join(claudeAgentRuntimeDir(), "workspace"),
     logsDir(),
   ]) {
     fs.mkdirSync(dir, { recursive: true });

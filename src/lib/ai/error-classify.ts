@@ -3,7 +3,7 @@
  *
  * 把 LLM/请求错误的原始信息归类为 { category, label, suggestion, raw, statusCode }，
  * 前端据此渲染「中文短句 + 修复建议 + 可展开原始错误」（设计文档 §2.7），
- * 后端意图路由 / 流式 onError 复用同一份归类逻辑。
+ * 后端接口 / 流式 onError 复用同一份归类逻辑。
  *
  * 只做纯字符串/字段归类，无副作用，方便单测。
  */
@@ -74,12 +74,25 @@ function extractStatusCode(err: unknown): number | undefined {
 
 const SETTINGS_HINT = "在「设置 → 系统配置 → AI 模型」中";
 
+/** 限流判定正则（rate-limit 规则与 isRateLimitError 共用）。 */
+const RATE_LIMIT_TEST =
+  /rate limit|too many requests|429|访问量过大|访问频率|过于频繁|稍后再试|当前繁忙|频次限制|触发限流/i;
+
 const RULES: Array<{
   category: ErrorCategory;
   test: RegExp;
   label: string;
   suggestion: string;
 }> = [
+  {
+    // GitHub Token 无效/过期：代码源 clone 前的 API 探测（githubRequest）返回 Bad credentials。
+    // 必须排在通用 auth 规则之前——后者只匹配 401/unauthorized/forbidden，漏掉 "Bad credentials"。
+    category: "auth",
+    test: /bad credentials|github[^。]*token.{0,6}(无效|过期|错误|invalid|expired)|令牌无权/i,
+    label: "GitHub Token 无效或已过期",
+    suggestion:
+      "请在设置里更新写作 Agent 的 GitHub Token（或清空后对公开仓库匿名访问），再重试。",
+  },
   {
     category: "quota",
     test: /余额不足|额度|配额|请充值|insufficient|quota|payment required|exceeded your current quota/i,
@@ -107,7 +120,7 @@ const RULES: Array<{
   {
     // 速率限制：含厂商中文文案（智谱「访问量过大」「稍后再试」等），不依赖消息里出现 429 字样
     category: "rate-limit",
-    test: /rate limit|too many requests|429|访问量过大|访问频率|过于频繁|稍后再试|当前繁忙|频次限制|触发限流/i,
+    test: RATE_LIMIT_TEST,
     label: "请求被限流",
     suggestion: "模型当前访问量过大，请稍后重试，或更换模型。",
   },
@@ -159,4 +172,13 @@ export function classifyError(err: unknown): ClassifiedError {
     raw: text.slice(0, 500),
     statusCode,
   };
+}
+
+/**
+ * 是否为限流类错误（供 Claude Agent 外层重试循环判定）。
+ * 状态码 429 优先，其次按消息文本匹配（含智谱「访问量过大」等厂商文案）。
+ */
+export function isRateLimitError(err: unknown): boolean {
+  if (extractStatusCode(err) === 429) return true;
+  return RATE_LIMIT_TEST.test(unwrapMessage(err));
 }
