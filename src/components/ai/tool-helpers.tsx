@@ -53,6 +53,34 @@ const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
     group: "explore",
     summarize: (v) => `已读取 ${v.path ?? "项目文件"}`,
   },
+  project_overview: {
+    label: "项目结构概览",
+    group: "explore",
+    summarize: (v) =>
+      `索引 ${Number(v.files ?? 0)} 文件 · ${Number(v.symbols ?? 0)} 符号 · ${Number(v.edges ?? 0)} 关系`,
+  },
+  project_glob: {
+    label: "列出项目文件",
+    group: "explore",
+    summarize: (v) => {
+      const total = Number(v.total ?? 0);
+      const files = v.files;
+      return `匹配 ${total || (Array.isArray(files) ? files.length : 0)} 个文件`;
+    },
+  },
+  git_log: {
+    label: "查看提交历史",
+    group: "explore",
+    summarize: (v) => `${Number(v.commits ?? 0)} 条提交`,
+  },
+  git_diff_summary: {
+    label: "查看变更摘要",
+    group: "explore",
+    summarize: (v) => {
+      const cf = v.changedFiles;
+      return `${Array.isArray(cf) ? cf.length : 0} 个文件变更`;
+    },
+  },
   explore_project: {
     label: "只读探索代码项目",
     group: "explore",
@@ -71,6 +99,10 @@ const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
     label: "筛选文章素材",
     summarize: (v) =>
       `读取 ${Array.isArray(v.assets) ? v.assets.length : 0} 项素材`,
+  },
+  set_article_digest: {
+    label: "设置文章摘要",
+    summarize: () => "已写入摘要字段",
   },
   propose_article_revision: {
     label: "生成文章修改提案",
