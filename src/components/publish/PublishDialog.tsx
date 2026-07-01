@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Send, Loader2, ImagePlus, ImageIcon, Sparkles } from "lucide-react";
+import { Send, Loader2, ImagePlus, ImageIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -59,7 +59,6 @@ export function PublishDialog({
     { url: string; reason: string }[]
   >([]);
   const [error, setError] = useState<string | null>(null);
-  const [digestGenerating, setDigestGenerating] = useState(false);
 
   // 每次打开弹窗时，把摘要/封面同步为最新值（AI 生成摘要后会更新 digest prop）
   useEffect(() => {
@@ -125,28 +124,6 @@ export function PublishDialog({
       setError(e instanceof Error ? e.message : "封面上传失败");
     } finally {
       setCoverUploading(false);
-    }
-  }
-
-  /** 手动触发 AI 生成摘要（兜底自动生成的静默失败） */
-  async function handleGenerateDigest() {
-    setDigestGenerating(true);
-    try {
-      const res = await fetch("/api/ai/digest", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ articleId }),
-      });
-      const data = await res.json();
-      if (res.ok && typeof data.digest === "string") {
-        setSummary(data.digest);
-      } else {
-        setError(data.error || "摘要生成失败");
-      }
-    } catch {
-      setError("摘要生成失败");
-    } finally {
-      setDigestGenerating(false);
     }
   }
 
@@ -304,31 +281,16 @@ export function PublishDialog({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>摘要（≤120 字）</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-muted-foreground">
-                    {summary.length}/120
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleGenerateDigest}
-                    disabled={digestGenerating}
-                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
-                  >
-                    {digestGenerating ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-3 w-3" />
-                    )}
-                    {summary ? "重新生成" : "AI 生成"}
-                  </button>
-                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {summary.length}/120
+                </span>
               </div>
               <Textarea
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
                 maxLength={120}
                 rows={3}
-                placeholder="AI 自动生成摘要（可点击右上角手动生成），也可在此编辑（留空则由公众号自动截取）"
+                placeholder="可在对话中使用 /article-summary 技能生成，或在此手动编辑（留空则由公众号自动截取）"
                 className="resize-y"
               />
             </div>
