@@ -57,6 +57,14 @@ model AgentChatSession {
   runtime             String   @default("claude-agent")
   claudeAgentSessionId String?
   claudeAgentStoreKey  String?
+  // P2（session PDC §6.1）：Claude SDK 会话健康状态，供前端低存在感提示与中断后「继续」入口。
+  // none|running|ready|interrupted|error|cleared。独立于 usage ledger，/clear 置 cleared（不删 AgentUsageTurn）。
+  // NOT NULL + default 'none'：状态机列恒为合法枚举（PDC §6.1 原文即 @default("none")）。
+  claudeAgentSessionStatus  String   @default("none") // none | running | ready | interrupted | error | cleared
+  claudeAgentLastEventAt    DateTime?
+  claudeAgentLastError      String?
+  claudeAgentInterruptedAt  DateTime?
+  claudeAgentResumeCount    Int       @default(0)
   lastInputTokens     Int      @default(0)
   lastOutputTokens    Int      @default(0)
   lastReasoningTokens Int      @default(0)
@@ -163,10 +171,22 @@ model ClaudeAgentSessionEntry {
   subpath      String   @default("") // 主 transcript=""，子 agent 非空
   uuid         String? // 幂等键；SQLite unique 对 NULL 不去重 → 无 uuid 条目可多条
   entryJson    String // 一行 JSONL（SessionStoreEntry 原样）
-  createdAt    DateTime @default(now())
+  // P1（session PDC §6.2/§7.4）：稳定排序与排障字段。
+  // appendSeq：同 (projectKey,sdkSessionId,subpath) 下单调递增，load 据此保序（createdAt 在 SQLite
+  //   精度不足且 upsert 更新时会乱序）；uuid 重放时仅 create 分支分配，update 不触碰 → 重放不破坏顺序。
+  // entryType / entryTimestamp：从 entry.type / entry.timestamp 冗余，方便排障与按类型清理。
+  appendSeq      Int?
+  entryType      String?
+  entryTimestamp DateTime?
+  createdAt      DateTime @default(now())
+  // updatedAt 可空：SQLite 的 ALTER TABLE ADD COLUMN 不允许非常量默认值（CURRENT_TIMESTAMP），
+  // 故迁移用「add nullable + UPDATE 回填」；@default(now())+@updatedAt 保证新写行恒有值，历史行回填后亦有值。
+  updatedAt      DateTime? @default(now()) @updatedAt
 
   @@unique([projectKey, sdkSessionId, subpath, uuid])
   @@index([projectKey, sdkSessionId, subpath])
+  @@index([projectKey, sdkSessionId, subpath, appendSeq])
+  @@index([entryType])
 }
 
 model AgentChatMessage {

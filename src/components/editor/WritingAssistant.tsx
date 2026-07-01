@@ -1590,6 +1590,9 @@ export function WritingAssistant({
   const [initializing, setInitializing] = useState(true);
   const [fullscreenText, setFullscreenText] = useState<string | null>(null);
   const [lastTurnUsage, setLastTurnUsage] = useState<LastTurnUsage>(null);
+  // P2：Claude SDK 会话健康状态（none/running/ready/interrupted/error/cleared）。
+  // 低存在感提示：ready 静默，interrupted/error 给「可继续」入口，cleared 提示将开新会话。
+  const [claudeSessionStatus, setClaudeSessionStatus] = useState<string | null>(null);
   // 上下文预算（config 固定值）：从 data-context-usage 记住，clear 清空消息后仍保留，
   // 让 TokenMeter 在无用量时也能显示 0/budget 而非消失。
   const [contextBudget, setContextBudget] = useState(0);
@@ -1684,6 +1687,7 @@ export function WritingAssistant({
             lastOutputTokens?: number;
             lastReasoningTokens?: number;
             lastTotalTokens?: number;
+            claudeAgentSessionStatus?: string;
           }
         | undefined;
       if (session) {
@@ -1693,6 +1697,7 @@ export function WritingAssistant({
           reasoningTokens: session.lastReasoningTokens ?? 0,
           totalTokens: session.lastTotalTokens ?? 0,
         });
+        setClaudeSessionStatus(session.claudeAgentSessionStatus ?? null);
       }
     }
     return data;
@@ -1868,7 +1873,13 @@ export function WritingAssistant({
 
   async function clearConversation() {
     if (compacting) return; // 压缩进行中禁止清空，避免与压缩写入竞态
-    if (!window.confirm("清空当前目标的 Agent 对话与未处理提案？")) return;
+    // PDC §8.3：/clear 文案需明确三件事——清聊天、开新 Claude 会话、不清 Token 消耗大盘。
+    if (
+      !window.confirm(
+        "清空当前对话与未处理提案，并开启新的 Claude 会话？\n（不影响 Token 消耗大盘的历史统计）"
+      )
+    )
+      return;
     await stop();
     const response = await fetch(
       `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`,
@@ -1887,6 +1898,7 @@ export function WritingAssistant({
       // 避免残留的 compactOverride / lastTurnUsage 让计量卡在旧值。
       setCompactOverride(null);
       setLastTurnUsage(null);
+      setClaudeSessionStatus("cleared");
     }
   }
 
@@ -2545,6 +2557,43 @@ export function WritingAssistant({
                   ?.models.find((m) => m.id === modelId)?.name ?? modelId
               }
             />
+            {(() => {
+              // PDC §8：低存在感会话状态。ready/running 静默；interrupted/error 给「继续上次任务」入口；
+              // cleared 提示将开新会话。流式进行中(busy)不展示，避免遮挡主输出。
+              if (busy) return null;
+              if (
+                claudeSessionStatus === "interrupted" ||
+                claudeSessionStatus === "error"
+              ) {
+                const interrupted = claudeSessionStatus === "interrupted";
+                return (
+                  <button
+                    type="button"
+                    onClick={() => sendText("继续")}
+                    disabled={compacting || approvalBlocked}
+                    title="恢复上一次的 Claude 会话继续（resume）"
+                    className={cn(
+                      "shrink-0 rounded-md border px-2 py-1 text-[10px] font-medium disabled:opacity-50",
+                      interrupted
+                        ? "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950/50"
+                        : "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50"
+                    )}
+                  >
+                    {interrupted
+                      ? "上次中断 · 继续上次任务"
+                      : "上次出错 · 继续上次任务"}
+                  </button>
+                );
+              }
+              if (claudeSessionStatus === "cleared") {
+                return (
+                  <span className="shrink-0 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground">
+                    将开启新会话
+                  </span>
+                );
+              }
+              return null;
+            })()}
             <div className="ml-auto" aria-hidden />
             {busy ? (
               <Button

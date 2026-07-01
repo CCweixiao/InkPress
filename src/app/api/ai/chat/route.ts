@@ -14,6 +14,7 @@ import { getAgentConfig } from "@/lib/ai/agent-config";
 import {
   runClaudeAgentRuntime,
   readUsageFromError,
+  readSessionFromError,
 } from "@/lib/ai/claude-agent-runtime";
 import { upsertUsageTurn } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
@@ -595,6 +596,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             selectedProjectId: session.selectedProjectId,
             providerId: parsed.data.providerId ?? null,
             modelId: parsed.data.modelId ?? null,
+            // P2 状态机：本轮开跑 → running。若上一轮已落 claudeAgentSessionId，本轮即 resume（PDC §5）。
+            claudeAgentSessionStatus: "running",
+            claudeAgentLastError: null,
+            ...(session.claudeAgentSessionId
+              ? { claudeAgentResumeCount: { increment: 1 } }
+              : {}),
           },
         });
 
@@ -702,6 +709,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             },
             ew
           );
+          const completedSessionId =
+            outcome.sessionId ?? session.claudeAgentSessionId ?? null;
           if (outcome.usage) {
             turnUsage = {
               ...outcome.usage,
@@ -712,19 +721,36 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               status: outcome.usageSummary?.status,
               source: outcome.usageSummary?.source,
             };
-            // last*Tokens 仅作 composer 计量快捷显示，不是历史统计事实源（PDC §12.3）。
-            await prisma.agentChatSession.update({
-              where: { id: session.id },
-              data: {
-                lastInputTokens: outcome.usage.inputTokens,
-                lastOutputTokens: outcome.usage.outputTokens,
-                lastReasoningTokens: outcome.usage.reasoningTokens,
-                lastTotalTokens: outcome.usage.totalTokens,
-                runtime: "claude-agent",
-                claudeAgentSessionId: outcome.sessionId,
-              },
-            });
+            ew.write({
+              type: "data-turn-usage",
+              id: "turn-usage",
+              data: turnUsage,
+            } as never);
           }
+          // 成功结束时无论 SDK 是否返回 usage，都要保存 sessionId/status（PDC §5.1/§7.3）。
+          // last*Tokens 仅作 composer 计量快捷显示，不是历史统计事实源（PDC §12.3）。
+          await prisma.agentChatSession.update({
+            where: { id: session.id },
+            data: {
+              ...(outcome.usage
+                ? {
+                    lastInputTokens: outcome.usage.inputTokens,
+                    lastOutputTokens: outcome.usage.outputTokens,
+                    lastReasoningTokens: outcome.usage.reasoningTokens,
+                    lastTotalTokens: outcome.usage.totalTokens,
+                  }
+                : {}),
+              runtime: "claude-agent",
+              ...(completedSessionId
+                ? { claudeAgentSessionId: completedSessionId }
+                : {}),
+              // P2 状态机：成功 → ready，可继续；清掉中断/错误痕迹。
+              claudeAgentSessionStatus: "ready",
+              claudeAgentLastEventAt: new Date(),
+              claudeAgentLastError: null,
+              claudeAgentInterruptedAt: null,
+            },
+          });
           // 独立 usage ledger：正常完成也写入（status=completed）。
           if (outcome.usageSummary) {
             await upsertUsageTurn(
@@ -735,7 +761,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 targetId: target.id,
                 providerId: parsed.data.providerId ?? null,
                 modelId: parsed.data.modelId ?? null,
-                sdkSessionId: outcome.sessionId ?? session.claudeAgentSessionId ?? null,
+                sdkSessionId: completedSessionId,
                 startedAt: turnStartedAt,
               },
               outcome.usageSummary
@@ -744,10 +770,38 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             );
           }
         } catch (error) {
-          // 失败/中断轮次：runtime 已把 usage summary 挂到 error 上（step-fallback/error）。
-          // 仍记入 ledger（PDC §12.4：成功、错误 result 都要记录 usage；中断用 step fallback 兜底）。
+          // 失败/中断轮次：runtime 已把 usage summary + sessionId 挂到 error 上（PDC §7.2/§7.3）。
+          // 即便 result 前 abort（仅收到 system/init），只要有 SDK session id 就落库，保证下一轮可 resume。
           const summary = readUsageFromError(error);
+          const sdkSessionId =
+            readSessionFromError(error) ?? session.claudeAgentSessionId ?? null;
+          // 状态必须在错误/中断三路都落库；即便 sessionId 与旧值相同，也要从 running 收口到
+          // interrupted/error（PDC §7.3），否则 UI 会误判为仍在运行。
+          await prisma.agentChatSession
+            .update({
+              where: { id: session.id },
+              data: {
+                ...(sdkSessionId ? { claudeAgentSessionId: sdkSessionId } : {}),
+                // P2 状态机：中断 → interrupted（可继续）；错误 → error（可能可继续）。
+                claudeAgentSessionStatus: isAbortError(error)
+                  ? "interrupted"
+                  : "error",
+                claudeAgentLastEventAt: new Date(),
+                ...(isAbortError(error)
+                  ? { claudeAgentInterruptedAt: new Date() }
+                  : { claudeAgentLastError: errorMessage(error) }),
+              },
+            })
+            .catch((writeError) =>
+              log.warn(
+                { err: writeError, sessionId: session.id },
+                sdkSessionId
+                  ? "claudeAgentSessionId 写入失败（不阻断对话）"
+                  : "会话状态写入失败（不阻断对话）"
+              )
+            );
           if (summary) {
+            // 仍记入 ledger（PDC §12.4：成功、错误 result 都要记录 usage；中断用 step fallback 兜底）。
             turnUsage = {
               inputTokens: summary.inputTokens,
               outputTokens: summary.outputTokens,
@@ -759,6 +813,11 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               status: summary.status,
               source: summary.source,
             };
+            ew.write({
+              type: "data-turn-usage",
+              id: "turn-usage",
+              data: turnUsage,
+            } as never);
             await upsertUsageTurn(
               {
                 sessionId: session.id,
@@ -767,7 +826,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 targetId: target.id,
                 providerId: parsed.data.providerId ?? null,
                 modelId: parsed.data.modelId ?? null,
-                sdkSessionId: session.claudeAgentSessionId ?? null,
+                sdkSessionId,
                 startedAt: turnStartedAt,
               },
               summary
@@ -829,6 +888,12 @@ export async function DELETE(req: NextRequest) {
           modelId: null,
           claudeAgentSessionId: null,
           claudeAgentStoreKey: null,
+          // P2：清空当前 Claude resume 入口 → 下一轮开新 SDK session（PDC §5.4/§9）。
+          // 状态置 cleared 让前端提示「将开启新会话」；绝不清 AgentUsageTurn（重点目标 #8）。
+          claudeAgentSessionStatus: "cleared",
+          claudeAgentLastEventAt: null,
+          claudeAgentLastError: null,
+          claudeAgentInterruptedAt: null,
           lastInputTokens: 0,
           lastOutputTokens: 0,
           lastReasoningTokens: 0,
