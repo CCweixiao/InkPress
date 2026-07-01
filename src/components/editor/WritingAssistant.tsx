@@ -58,11 +58,9 @@ import {
 import {
   ModelSelector,
   TokenMeter,
-  TurnUsageChip,
   useModelSelection,
   type ContextUsage,
   type LastTurnUsage,
-  type TurnUsageMeta,
 } from "./agent-composer-parts";
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -76,6 +74,7 @@ import {
 import type { SkillCatalogItem } from "@/lib/ai/skills";
 import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
+import { shouldPollRecoveringTurn } from "@/lib/ai/recovery-state";
 
 type ProposalSummary = {
   id: string;
@@ -730,21 +729,15 @@ function CodeSourceReadyNotice({ data }: { data: Record<string, unknown> }) {
 
 /** 上下文用量提示（meta 阶段）。 */
 function ContextUsageLine({ data }: { data: Record<string, unknown> }) {
-  if (data.compressed) {
-    const pre = Number(data.compactPreTokens ?? 0);
-    const post = Number(data.compactPostTokens ?? data.estimatedTokens ?? 0);
-    return (
-      <div className="text-[10px] text-sky-700 dark:text-sky-300">
-        Claude Agent 已自动压缩上下文
-        {pre > 0 && post > 0
-          ? `：${pre.toLocaleString()} → ${post.toLocaleString()} tokens`
-          : ""}
-      </div>
-    );
-  }
+  if (!data.compressed) return null;
+  const pre = Number(data.compactPreTokens ?? 0);
+  const post = Number(data.compactPostTokens ?? data.estimatedTokens ?? 0);
   return (
-    <div className="text-[10px] text-muted-foreground">
-      当前上下文估算约 {Number(data.estimatedTokens ?? 0).toLocaleString()} tokens
+    <div className="text-[10px] text-sky-700 dark:text-sky-300">
+      Claude Agent 已自动压缩上下文
+      {pre > 0 && post > 0
+        ? `：${pre.toLocaleString()} → ${post.toLocaleString()} tokens`
+        : ""}
     </div>
   );
 }
@@ -1438,9 +1431,6 @@ const AgentMessageRow = memo(function AgentMessageRow({
   profileId,
 }: AgentMessageRowProps) {
   const allParts = message.parts as unknown as AgentPart[];
-  // P1.5：assistant 回复底部的 token chip（读 message.metadata.usage，由 route onFinish 落盘）。
-  const turnUsageMeta =
-    (message as { metadata?: { usage?: TurnUsageMeta } }).metadata?.usage ?? null;
   // data-agent-retry（SDK 轮内重试会连发多条）只保留最后一条，避免堆积。
   let lastRetryIdx = -1;
   for (let i = allParts.length - 1; i >= 0; i -= 1) {
@@ -1534,14 +1524,6 @@ const AgentMessageRow = memo(function AgentMessageRow({
           </Fragment>
         );
       })}
-      {message.role === "assistant" && (
-        <div className="flex justify-end">
-          <TurnUsageChip
-            usage={turnUsageMeta}
-            streaming={isLastAssistant && !settled}
-          />
-        </div>
-      )}
     </div>
   );
 }, (prev, next) => {
@@ -1555,6 +1537,37 @@ const AgentMessageRow = memo(function AgentMessageRow({
   // 已定格的历史行不受 busy 影响；活动行需随 busy 更新 rerun 禁用态等。
   if (!next.settled && prev.busy !== next.busy) return false;
   return true;
+});
+
+/**
+ * 隔离的 textarea：memo 化避免流式 chunk 引起的父级重渲染传递到输入框。
+ * 父级用 ref 桥接 onKeyDown，使 handler 引用在渲染间稳定。
+ */
+const ChatTextarea = memo(function ChatTextarea({
+  value,
+  disabled,
+  placeholder,
+  className,
+  onChange,
+  onKeyDown,
+}: {
+  value: string;
+  disabled: boolean;
+  placeholder: string;
+  className: string;
+  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+}) {
+  return (
+    <textarea
+      value={value}
+      disabled={disabled}
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
 });
 
 export function WritingAssistant({
@@ -1600,9 +1613,6 @@ export function WritingAssistant({
   const [initializing, setInitializing] = useState(true);
   const [fullscreenText, setFullscreenText] = useState<string | null>(null);
   const [lastTurnUsage, setLastTurnUsage] = useState<LastTurnUsage>(null);
-  // P2：Claude SDK 会话健康状态（none/running/ready/interrupted/error/cleared）。
-  // 低存在感提示：ready 静默，interrupted/error 给「可继续」入口，cleared 提示将开新会话。
-  const [claudeSessionStatus, setClaudeSessionStatus] = useState<string | null>(null);
   // 用户历史输入缓存：打开会话时从后端全量加载（仅文本，轻量），新发送的输入追加。
   // 上下键在此列表前后历。与消息分页解耦。
   const [inputHistory, setInputHistory] = useState<string[]>([]);
@@ -1670,6 +1680,9 @@ export function WritingAssistant({
   // 恢复被中断的回复：页面级导航导致组件重挂载后，服务端可能仍在处理上一轮
   // （客户端断连不中断服务端 onFinish 持久化）。轮询 DB 直到出现 assistant 回复。
   const [recovering, setRecovering] = useState(false);
+  const [serverSessionStatus, setServerSessionStatus] = useState<string | null>(
+    null
+  );
 
 
   const refresh = useCallback(async () => {
@@ -1694,6 +1707,7 @@ export function WritingAssistant({
             claudeAgentSessionStatus?: string;
           }
         | undefined;
+      setServerSessionStatus(session?.claudeAgentSessionStatus ?? null);
       if (session) {
         setLastTurnUsage({
           inputTokens: session.lastInputTokens ?? 0,
@@ -1701,7 +1715,6 @@ export function WritingAssistant({
           reasoningTokens: session.lastReasoningTokens ?? 0,
           totalTokens: session.lastTotalTokens ?? 0,
         });
-        setClaudeSessionStatus(session.claudeAgentSessionStatus ?? null);
       }
     }
     return data;
@@ -1750,9 +1763,16 @@ export function WritingAssistant({
   // 恢复轮询：最后一条是 user 消息时，服务端可能仍在处理上一轮（客户端断连导致），
   // 周期性拉取直到出现 assistant 回复或超时。
   useEffect(() => {
-    if (status !== "ready") return; // 客户端正在流式输出时不轮询
-    if (messages.length === 0) return;
-    if (messages[messages.length - 1].role !== "user") return;
+    if (
+      !shouldPollRecoveringTurn({
+        clientStatus: status,
+        sessionStatus: serverSessionStatus,
+        messages,
+      })
+    ) {
+      setRecovering(false);
+      return;
+    }
 
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -1763,6 +1783,9 @@ export function WritingAssistant({
       const data = await refresh();
       if (!active) return;
       const msgs = (data.messages ?? []) as UIMessage[];
+      const nextSessionStatus =
+        (data.session as { claudeAgentSessionStatus?: string } | undefined)
+          ?.claudeAgentSessionStatus ?? null;
       if (msgs.length > 0 && msgs[msgs.length - 1].role !== "user") {
         setMessages(msgs);
         setHasMore(Boolean(data.hasMore));
@@ -1771,6 +1794,15 @@ export function WritingAssistant({
         );
         setRecovering(false);
         return; // assistant 回复到达，停止轮询
+      }
+      if (nextSessionStatus !== "running") {
+        setMessages(msgs);
+        setHasMore(Boolean(data.hasMore));
+        setOldestPosition(
+          data.oldestPosition == null ? null : Number(data.oldestPosition)
+        );
+        setRecovering(false);
+        return;
       }
       timer = setTimeout(poll, 5000); // 5s 间隔
     };
@@ -1786,7 +1818,7 @@ export function WritingAssistant({
       clearTimeout(timer);
       clearTimeout(stopTimer);
     };
-  }, [messages, status, refresh, setMessages]);
+  }, [messages, status, serverSessionStatus, refresh, setMessages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -1875,6 +1907,23 @@ export function WritingAssistant({
 
   const busy = status === "streaming" || status === "submitted";
 
+  // --- 稳定 callback：避免流式重渲染把新函数引用传给 ChatTextarea ---
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      setInput(e.target.value);
+      setSlashForcedClosed(false);
+    },
+    [] // setInput / setSlashForcedClosed 均为稳定 setState
+  );
+  // keydown 逻辑复杂、依赖多，用 ref 桥接保持引用稳定
+  const chatKeydownRef = useRef<(e: React.KeyboardEvent<HTMLTextAreaElement>) => void>(
+    () => {}
+  );
+  const stableChatKeydown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => chatKeydownRef.current(e),
+    []
+  );
+
   async function clearConversation() {
     // PDC §8.3：/clear 文案需明确三件事——清聊天、开新 Claude 会话、不清 Token 消耗大盘。
     if (
@@ -1899,7 +1948,6 @@ export function WritingAssistant({
       setOldestPosition(null);
       // 清空后无任何用量数据：重置上一轮用量，TokenMeter 回到初始状态。
       setLastTurnUsage(null);
-      setClaudeSessionStatus("cleared");
     }
   }
 
@@ -2016,6 +2064,66 @@ export function WritingAssistant({
     await sendText(text);
   }
 
+  // keydown ref：每次渲染更新为最新闭包，stableChatKeydown 通过 ref 调用。
+  chatKeydownRef.current = (event) => {
+    if (slashOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashIndex((i) => Math.min(slashFiltered.length - 1, i + 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        const cmd = slashFiltered[slashIndex] ?? slashFiltered[0];
+        if (cmd) slashSelect(cmd);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashForcedClosed(true);
+        return;
+      }
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submit();
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      const el = event.currentTarget;
+      const atFirstLine =
+        el.value.slice(0, el.selectionStart).indexOf("\n") === -1;
+      const atLastLine =
+        el.value.slice(el.selectionStart).indexOf("\n") === -1;
+      if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
+        event.preventDefault();
+        const next =
+          historyIndex.current === null
+            ? inputHistory.length - 1
+            : Math.max(0, historyIndex.current - 1);
+        historyIndex.current = next;
+        setInput(inputHistory[next]);
+      } else if (
+        event.key === "ArrowDown" &&
+        atLastLine &&
+        historyIndex.current !== null
+      ) {
+        event.preventDefault();
+        if (historyIndex.current < inputHistory.length - 1) {
+          historyIndex.current += 1;
+          setInput(inputHistory[historyIndex.current]);
+        } else {
+          historyIndex.current = null;
+          setInput("");
+        }
+      }
+    }
+  };
 
   // 最新一条助手消息的索引：过程步骤（意图/代码源/Skill/素材 + 上下文计量）
   // 仅在此轮展示，历史轮次折叠掉这些过程块，避免多轮时「步骤重复、中间夹着上下文 tokens」。
@@ -2377,7 +2485,7 @@ export function WritingAssistant({
         {(busy || recovering) && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {recovering ? "正在恢复上一轮对话…" : "Agent 正在规划并执行…"}
+            {recovering ? "正在同步上一轮输出…" : "Agent 正在规划并执行…"}
           </div>
         )}
         {error && (
@@ -2412,76 +2520,11 @@ export function WritingAssistant({
               请先完成上方代码源授权，授权后将自动继续分析
             </div>
           )}
-          <textarea
+          <ChatTextarea
             value={input}
             disabled={approvalBlocked}
-            onChange={(event) => {
-              setInput(event.target.value);
-              setSlashForcedClosed(false);
-            }}
-            onKeyDown={(event) => {
-              // 斜杠菜单打开时：↑↓ 选择、Enter/Tab 确认、Esc 关闭，优先于发送与历史导航。
-              if (slashOpen) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setSlashIndex((i) =>
-                    Math.min(slashFiltered.length - 1, i + 1)
-                  );
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setSlashIndex((i) => Math.max(0, i - 1));
-                  return;
-                }
-                if (event.key === "Enter" || event.key === "Tab") {
-                  event.preventDefault();
-                  const cmd = slashFiltered[slashIndex] ?? slashFiltered[0];
-                  if (cmd) slashSelect(cmd);
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setSlashForcedClosed(true);
-                  return;
-                }
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submit();
-                return;
-              }
-              // 上下键历史导航：仅在首行按 ↑ / 末行按 ↓ 触发（多行编辑时让位给光标移动）。
-              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-                const el = event.currentTarget;
-                const atFirstLine =
-                  el.value.slice(0, el.selectionStart).indexOf("\n") === -1;
-                const atLastLine =
-                  el.value.slice(el.selectionStart).indexOf("\n") === -1;
-                if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
-                  event.preventDefault();
-                  const next =
-                    historyIndex.current === null
-                      ? inputHistory.length - 1
-                      : Math.max(0, historyIndex.current - 1);
-                  historyIndex.current = next;
-                  setInput(inputHistory[next]);
-                } else if (
-                  event.key === "ArrowDown" &&
-                  atLastLine &&
-                  historyIndex.current !== null
-                ) {
-                  event.preventDefault();
-                  if (historyIndex.current < inputHistory.length - 1) {
-                    historyIndex.current += 1;
-                    setInput(inputHistory[historyIndex.current]);
-                  } else {
-                    historyIndex.current = null;
-                    setInput("");
-                  }
-                }
-              }
-            }}
+            onChange={handleInputChange}
+            onKeyDown={stableChatKeydown}
             placeholder={
               approvalBlocked
                 ? "等待代码源授权…请在上方卡片选择「仅本会话允许」或「允许并长期信任」"
@@ -2492,85 +2535,50 @@ export function WritingAssistant({
               approvalBlocked && "cursor-not-allowed opacity-60"
             )}
           />
-          <div className="flex items-center gap-1.5">
-            <ModelSelector
-              providers={providers}
-              providerId={providerId}
-              modelId={modelId}
-              onSelect={selectModel}
-            />
-            <TokenMeter
-              contextUsage={latestContextUsage}
-              lastTurn={lastTurnUsage}
-              modelName={
-                providers
-                  .find((p) => p.id === providerId)
-                  ?.models.find((m) => m.id === modelId)?.name ?? modelId
-              }
-            />
-            {(() => {
-              // PDC §8：低存在感会话状态。ready/running 静默；interrupted/error 给「继续上次任务」入口；
-              // cleared 提示将开新会话。流式进行中(busy)不展示，避免遮挡主输出。
-              if (busy) return null;
-              if (
-                claudeSessionStatus === "interrupted" ||
-                claudeSessionStatus === "error"
-              ) {
-                const interrupted = claudeSessionStatus === "interrupted";
-                return (
-                  <button
-                    type="button"
-                    onClick={() => sendText("继续")}
-                    disabled={approvalBlocked}
-                    title="恢复上一次的 Claude 会话继续（resume）"
-                    className={cn(
-                      "shrink-0 rounded-md border px-2 py-1 text-[10px] font-medium disabled:opacity-50",
-                      interrupted
-                        ? "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950/50"
-                        : "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50"
-                    )}
-                  >
-                    {interrupted
-                      ? "上次中断 · 继续上次任务"
-                      : "上次出错 · 继续上次任务"}
-                  </button>
-                );
-              }
-              if (claudeSessionStatus === "cleared") {
-                return (
-                  <span className="shrink-0 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground">
-                    将开启新会话
-                  </span>
-                );
-              }
-              return null;
-            })()}
-            <div className="ml-auto" aria-hidden />
-            {busy ? (
-              <Button
-                size="icon"
-                variant="outline"
-                title="停止生成"
-                className="h-8 w-8 shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50"
-                onClick={() => stop()}
-              >
-                <Square className="h-3.5 w-3.5 fill-current" />
-              </Button>
-            ) : (
-              <Button
-                size="icon"
-                className="h-8 w-8"
-                disabled={!input.trim() || approvalBlocked}
-                title={
-                  approvalBlocked
-                    ? "请先完成代码源授权"
-                    : undefined
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex min-h-8 flex-1 items-center gap-1.5" aria-hidden />
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ModelSelector
+                providers={providers}
+                providerId={providerId}
+                modelId={modelId}
+                onSelect={selectModel}
+              />
+              <TokenMeter
+                contextUsage={latestContextUsage}
+                lastTurn={lastTurnUsage}
+                modelName={
+                  providers
+                    .find((p) => p.id === providerId)
+                    ?.models.find((m) => m.id === modelId)?.name ?? modelId
                 }
-                onClick={() => void submit()}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            )}
+              />
+              {busy ? (
+                <Button
+                  size="icon"
+                  variant="outline"
+                  title="停止生成"
+                  className="h-8 w-8 shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50"
+                  onClick={() => stop()}
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={!input.trim() || approvalBlocked}
+                  title={
+                    approvalBlocked
+                      ? "请先完成代码源授权"
+                      : undefined
+                  }
+                  onClick={() => void submit()}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
