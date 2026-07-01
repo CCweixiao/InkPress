@@ -5,7 +5,7 @@ import type {
   Options,
   PostCompactHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
-import { getClaudeAgentConfig } from "@/lib/ai/claude-agent-config";
+import { chooseLlmConfig } from "@/lib/ai/llm-config";
 import { buildInkPressSystemPrompt } from "@/lib/ai/system-prompt";
 import { buildSubagents } from "@/lib/ai/subagents";
 import { createInkPressMcpServer } from "@/lib/ai/inkpress-mcp-server";
@@ -50,6 +50,10 @@ export type BuildClaudeAgentOptionsInput = {
   claudeAgentSessionId?: string;
   /** 斜杠命令建议 Claude 优先加载的 Skill；外层不再做 LLM 意图路由。 */
   preferredSkillIds?: string[];
+  /** 聊天框选择的供应商 id（动态注入到 SDK env）。 */
+  providerId?: string | null;
+  /** 聊天框选择的模型 id。 */
+  modelId?: string | null;
   /** 向 UI 流写 UIMessage chunk（MCP handler 用它发工具卡片）。 */
   emit: (part: never) => void;
 };
@@ -246,10 +250,10 @@ function buildCompactHooks(ctx: { sessionId: string }): Options["hooks"] {
 export async function buildClaudeAgentOptions(
   input: BuildClaudeAgentOptionsInput
 ): Promise<Options> {
-  const cfg = await getClaudeAgentConfig();
-  if (!cfg.apiKey) {
+  const selected = await chooseLlmConfig(input.providerId, input.modelId);
+  if (!selected || !selected.apiKey) {
     throw new Error(
-      "Claude Agent 后端未配置 API Key：请在「设置 → 写作 Agent → Claude Agent 后端」填写后保存，再重试。"
+      "未配置 AI 模型：请在「设置 → 系统配置 → AI 模型」中添加至少一个 Anthropic 兼容供应商并填入 API Key。"
     );
   }
 
@@ -274,8 +278,8 @@ export async function buildClaudeAgentOptions(
 
   const env: Record<string, string | undefined> = {
     ...process.env,
-    ANTHROPIC_BASE_URL: cfg.baseUrl,
-    ANTHROPIC_AUTH_TOKEN: cfg.apiKey || undefined,
+    ANTHROPIC_BASE_URL: selected.baseUrl,
+    ANTHROPIC_AUTH_TOKEN: selected.apiKey || undefined,
     ANTHROPIC_API_KEY: undefined,
     CLAUDE_AGENT_SDK_CLIENT_APP: "inkpress/0.3.0",
     // SDK 本地配置/transcript 写到 InkPress 主目录下的隔离目录，不污染用户 ~/.claude。
@@ -291,7 +295,7 @@ export async function buildClaudeAgentOptions(
       codeSource: input.codeSource,
       tavilyApiKey: webResearch.tavilyApiKey,
     }),
-    model: cfg.model,
+    model: selected.model.id,
     // 固定 cwd，避免 SDK 默认绑定到 InkPress 开发仓库或用户本地 Claude Code 工作目录。
     cwd: claudeWorkspaceDir,
     includePartialMessages: true,

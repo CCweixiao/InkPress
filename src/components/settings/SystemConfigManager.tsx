@@ -49,7 +49,6 @@ export const LLM_CONFIG_KEY = "inkpress.llm";
 export const OSS_CONFIG_KEY = "inkpress.oss";
 export const STORAGE_CONFIG_KEY = "inkpress.storage";
 export const AGENT_CONFIG_KEY = "inkpress.agent";
-export const CLAUDE_AGENT_CONFIG_KEY = "inkpress.claude-agent";
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
 export const WEB_RESEARCH_CONFIG_KEY = "inkpress.web-research";
 
@@ -118,12 +117,6 @@ type WebResearchForm = {
   autoApprove: boolean;
 };
 
-type ClaudeAgentForm = {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-};
-
 type WechatForm = {
   appId: string;
   secret: string;
@@ -133,7 +126,7 @@ type WechatForm = {
 const EMPTY_LLM_PROVIDER: LlmForm = {
   id: "",
   name: "",
-  apiProvider: "openai-compatible",
+  apiProvider: "anthropic",
   baseUrl: "",
   apiKey: "",
   models: [],
@@ -249,7 +242,7 @@ function parseLlmValue(value?: string): LlmForm[] {
           name: String(
             c.name ?? c.provider ?? c.apiProvider ?? `LLM ${index + 1}`
           ),
-          apiProvider: String(c.apiProvider ?? c.provider ?? "openai-compatible"),
+          apiProvider: "anthropic",
           baseUrl: String(c.baseUrl ?? c.apiUrl ?? c.api ?? ""),
           apiKey: typeof c.apiKey === "string" ? c.apiKey : String(c.key ?? ""),
           models,
@@ -389,32 +382,6 @@ function parseWebResearchValue(value?: string): WebResearchForm {
   }
 }
 
-const DEFAULT_CLAUDE_AGENT: ClaudeAgentForm = {
-  baseUrl: "https://open.bigmodel.cn/api/anthropic",
-  apiKey: "",
-  model: "glm-4.6",
-};
-
-function parseClaudeAgentValue(value?: string): ClaudeAgentForm {
-  if (!value) return { ...DEFAULT_CLAUDE_AGENT };
-  try {
-    const parsed = JSON.parse(value) as Partial<ClaudeAgentForm>;
-    return {
-      baseUrl:
-        typeof parsed.baseUrl === "string" && parsed.baseUrl.trim()
-          ? parsed.baseUrl.trim()
-          : DEFAULT_CLAUDE_AGENT.baseUrl,
-      apiKey: typeof parsed.apiKey === "string" ? parsed.apiKey : "",
-      model:
-        typeof parsed.model === "string" && parsed.model.trim()
-          ? parsed.model.trim()
-          : DEFAULT_CLAUDE_AGENT.model,
-    };
-  } catch {
-    return { ...DEFAULT_CLAUDE_AGENT };
-  }
-}
-
 export function SystemConfigManager({
   activeTab,
   configs,
@@ -445,9 +412,6 @@ export function SystemConfigManager({
   const storageConfig = configsState.find((c) => c.key === STORAGE_CONFIG_KEY);
   const ossConfig = configsState.find((c) => c.key === OSS_CONFIG_KEY);
   const agentConfig = configsState.find((c) => c.key === AGENT_CONFIG_KEY);
-  const claudeAgentConfig = configsState.find(
-    (c) => c.key === CLAUDE_AGENT_CONFIG_KEY
-  );
   const wechatConfig = configsState.find((c) => c.key === WECHAT_CONFIG_KEY);
   const webResearchConfig = configsState.find(
     (c) => c.key === WEB_RESEARCH_CONFIG_KEY
@@ -467,9 +431,6 @@ export function SystemConfigManager({
   );
   const [wechatForm, setWechatForm] = useState<WechatForm>(() =>
     parseWechatValue(wechatConfig?.value)
-  );
-  const [claudeAgentForm, setClaudeAgentForm] = useState<ClaudeAgentForm>(() =>
-    parseClaudeAgentValue(claudeAgentConfig?.value)
   );
 
   // 配置异步加载完成后回填表单
@@ -493,10 +454,6 @@ export function SystemConfigManager({
     setWechatForm(parseWechatValue(wechatConfig?.value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
-  useEffect(() => {
-    setClaudeAgentForm(parseClaudeAgentValue(claudeAgentConfig?.value));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configsState]);
 
   const llmValue = useMemo(() => JSON.stringify(llmForms, null, 2), [llmForms]);
   const storageValue = useMemo(
@@ -514,10 +471,6 @@ export function SystemConfigManager({
   const wechatValue = useMemo(
     () => JSON.stringify(wechatForm, null, 2),
     [wechatForm]
-  );
-  const claudeAgentValue = useMemo(
-    () => JSON.stringify(claudeAgentForm, null, 2),
-    [claudeAgentForm]
   );
 
   function clearMsg() {
@@ -630,24 +583,6 @@ export function SystemConfigManager({
     });
   }
 
-  function saveClaudeAgent() {
-    clearMsg();
-    startTransition(async () => {
-      const res = await fetch("/api/system-config", {
-        method: claudeAgentConfig ? "PUT" : "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: CLAUDE_AGENT_CONFIG_KEY, value: claudeAgentValue }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "保存失败。");
-        return;
-      }
-      await refreshConfigs();
-      setMessage("Claude Agent 后端配置已保存。");
-    });
-  }
-
   function testStorage() {
     clearMsg();
     startTransition(async () => {
@@ -684,12 +619,6 @@ export function SystemConfigManager({
             value={agentForm}
             onChange={setAgentForm}
             onSave={saveAgent}
-            pending={pending}
-          />
-          <ClaudeAgentEditor
-            value={claudeAgentForm}
-            onChange={setClaudeAgentForm}
-            onSave={saveClaudeAgent}
             pending={pending}
           />
         </div>
@@ -732,67 +661,6 @@ export function SystemConfigManager({
           {error}
         </div>
       )}
-    </div>
-  );
-}
-
-function ClaudeAgentEditor({
-  value,
-  onChange,
-  onSave,
-  pending,
-}: {
-  value: ClaudeAgentForm;
-  onChange: (value: ClaudeAgentForm) => void;
-  onSave: () => void;
-  pending: boolean;
-}) {
-  return (
-    <div className="space-y-4 rounded-lg border border-dashed p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium">Claude Agent 后端</div>
-          <p className="text-xs text-muted-foreground mt-0.5 max-w-2xl">
-            Claude Agent Runtime 的后端配置。默认指向智谱 BigModel 的 Anthropic
-            兼容端点，也可改为官方 Anthropic / Bedrock / Vertex。
-          </p>
-        </div>
-        <Button onClick={onSave} disabled={pending} size="sm">
-          {pending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          保存配置
-        </Button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Base URL（Anthropic 兼容端点）">
-          <Input
-            value={value.baseUrl}
-            placeholder="https://open.bigmodel.cn/api/anthropic"
-            onChange={(event) => onChange({ ...value, baseUrl: event.target.value })}
-          />
-        </Field>
-        <Field label="API Key">
-          <Input
-            type="password"
-            value={value.apiKey === "********" ? "" : value.apiKey}
-            placeholder={
-              value.apiKey === "********" ? "已配置（留空保持不变）" : "sk-..."
-            }
-            onChange={(event) => onChange({ ...value, apiKey: event.target.value })}
-          />
-        </Field>
-        <Field label="模型 id">
-          <Input
-            value={value.model}
-            placeholder="glm-4.6"
-            onChange={(event) => onChange({ ...value, model: event.target.value })}
-          />
-        </Field>
-      </div>
     </div>
   );
 }
@@ -1755,14 +1623,14 @@ function ProviderFormFields({
           />
         </Field>
         <Field label="API 协议">
-          <Input
-            value={node.apiProvider}
-            placeholder="openai-compatible"
-            onChange={(e) =>
-              mutations.patchProvider(node, { apiProvider: e.target.value })
-            }
-            className="h-9"
-          />
+          <div className="flex h-9 items-center gap-2">
+            <Badge variant="secondary">Anthropic</Badge>
+            {node.apiProvider.toLowerCase() !== "anthropic" && (
+              <span className="text-xs text-amber-600">
+                当前 {node.apiProvider}，请更新 baseUrl 为 Anthropic 端点
+              </span>
+            )}
+          </div>
         </Field>
         <Field label="显示名称">
           <Input

@@ -3,8 +3,18 @@ import {
   parseJsonObjectOrArrayConfig,
   type JsonObject,
 } from "@/lib/system-config";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("ai.llm-config");
 
 export const LLM_CONFIG_KEY = "inkpress.llm";
+
+/** 旧 claude-agent 配置 key（迁移期读时回落 + 启动迁移用，不再对外暴露编辑入口）。 */
+const CLAUDE_AGENT_CONFIG_KEY = "inkpress.claude-agent";
+
+const DEFAULT_CLAUDE_AGENT_BASE_URL = "https://open.bigmodel.cn/api/anthropic";
+const DEFAULT_CLAUDE_AGENT_MODEL = "glm-4.6";
+const MIGRATED_PROVIDER_ID = "claude-agent-migrated";
 
 /**
  * 单个模型：enabled 控制是否在聊天下拉/选择器中可见；
@@ -21,7 +31,7 @@ export type LlmModel = {
 export type LlmConfig = {
   id: string;
   name: string;
-  apiProvider: string; // openai-compatible
+  apiProvider: string; // anthropic
   baseUrl: string;
   apiKey: string;
   models: LlmModel[];
@@ -61,7 +71,7 @@ function readNumber(config: JsonObject, field: string, fallback: number) {
  * 归一化单个模型。
  * - 字符串模型：视为旧格式，enabled 继承 legacyProviderEnabled。
  * - 对象模型：enabled 读字段，缺省回退 legacyProviderEnabled（迁移用）。
- * 供应商内 default 由 readModels 统一裁定（首个胜出），此处仅传透 index。
+ * - default 只认显式字段；若没有任何显式 default，parseLlmConfigs 再统一挑全局默认。
  */
 function normalizeModel(
   raw: unknown,
@@ -74,7 +84,7 @@ function normalizeModel(
       id,
       name: id,
       enabled: legacyProviderEnabled,
-      isDefault: index === 0,
+      isDefault: false,
     };
   }
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -86,14 +96,14 @@ function normalizeModel(
       name: readString(model, ["name", "label"]) || id,
       enabled: readBoolean(model, "enabled", legacyProviderEnabled),
       isDefault:
-        readBoolean(model, "default", index === 0) ||
+        readBoolean(model, "default", false) ||
         readBoolean(model, "isDefault", false),
     };
   }
   throw new Error(`LLM 模型 ${index + 1} 必须是字符串或 JSON 对象。`);
 }
 
-/** 读取 models 数组，透传 legacyProviderEnabled；供应商内至多一个 default（首个胜出）。 */
+/** 读取 models 数组，透传 legacyProviderEnabled；供应商内显式 default 至多一个（首个胜出）。 */
 function readModels(
   config: JsonObject,
   legacyProviderEnabled: boolean
@@ -109,9 +119,6 @@ function readModels(
       : [];
 
   if (!models.length) return [];
-  if (!models.some((model) => model.isDefault)) {
-    return [{ ...models[0], isDefault: true }, ...models.slice(1)];
-  }
   // 多个 default 时只认第一个
   return models.map((model, index) => ({
     ...model,
@@ -200,8 +207,16 @@ export async function getLlmConfigs(): Promise<LlmConfig[]> {
   const item = await prisma.systemConfig.findUnique({
     where: { key: LLM_CONFIG_KEY },
   });
-  if (!item) return [];
-  return parseLlmConfigs(item.value);
+  if (item) {
+    try {
+      return parseLlmConfigs(item.value);
+    } catch (e) {
+      log.warn({ err: e }, "inkpress.llm 解析失败，尝试 claude-agent 回落");
+    }
+  }
+  // 读时回落：inkpress.llm 为空/不存在/解析失败时，尝试旧 claude-agent 配置
+  const fallback = await tryClaudeAgentFallback();
+  return fallback ? [fallback] : [];
 }
 
 export async function getPublicLlmProviders(): Promise<PublicLlmProvider[]> {
@@ -230,7 +245,7 @@ export async function chooseLlmConfig(
   if (!flat.length) return null;
 
   const matchesProvider = (item: { config: LlmConfig }) =>
-    item.config.id === providerId || item.config.apiProvider === providerId;
+    item.config.id === providerId;
 
   if (providerId && modelId) {
     const exact = flat.find(
@@ -253,4 +268,133 @@ export async function chooseLlmConfig(
 
   const def = flat.find((item) => item.model.isDefault) ?? flat[0];
   return { ...def.config, model: def.model };
+}
+
+/* ------------------- claude-agent 迁移与读时回落 ------------------- */
+
+/** 解析旧 inkpress.claude-agent 配置（私有，仅供迁移/回落用）。 */
+function parseClaudeAgentConfig(value?: string | null): {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+} | null {
+  if (!value) return null;
+  try {
+    const raw = JSON.parse(value) as unknown;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const cfg = raw as Record<string, unknown>;
+    const apiKey = typeof cfg.apiKey === "string" ? cfg.apiKey.trim() : "";
+    if (!apiKey) return null;
+    return {
+      baseUrl:
+        typeof cfg.baseUrl === "string" && cfg.baseUrl.trim()
+          ? cfg.baseUrl.trim()
+          : DEFAULT_CLAUDE_AGENT_BASE_URL,
+      apiKey,
+      model:
+        typeof cfg.model === "string" && cfg.model.trim()
+          ? cfg.model.trim()
+          : DEFAULT_CLAUDE_AGENT_MODEL,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 读旧 claude-agent 配置行（私有）。 */
+async function readClaudeAgentConfig(): Promise<{
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+} | null> {
+  const row = await prisma.systemConfig.findUnique({
+    where: { key: CLAUDE_AGENT_CONFIG_KEY },
+  });
+  return parseClaudeAgentConfig(row?.value);
+}
+
+/**
+ * 读时回落：当 inkpress.llm 为空时，用旧 claude-agent 配置构造一个临时 LlmConfig。
+ * 保证迁移函数未执行（首升级）时系统也能工作。
+ */
+async function tryClaudeAgentFallback(): Promise<LlmConfig | null> {
+  const cfg = await readClaudeAgentConfig();
+  if (!cfg) return null;
+  log.info("inkpress.llm 为空，回落使用 claude-agent 配置");
+  return {
+    id: MIGRATED_PROVIDER_ID,
+    name: "Claude Agent（已迁移）",
+    apiProvider: "anthropic",
+    baseUrl: cfg.baseUrl,
+    apiKey: cfg.apiKey,
+    models: [
+      { id: cfg.model, name: cfg.model, enabled: true, isDefault: true },
+    ],
+    temperature: 0.7,
+  };
+}
+
+/**
+ * 启动时自动迁移：把旧 inkpress.claude-agent 配置转为 inkpress.llm 中的一个 provider。
+ * 幂等——已有 claude-agent-migrated provider 时不重复写入。
+ * 不删 inkpress.claude-agent key（留作备份，代码不再读它）。
+ */
+export async function migrateClaudeAgentConfig(): Promise<void> {
+  const cfg = await readClaudeAgentConfig();
+  if (!cfg) return;
+
+  const existing = await prisma.systemConfig.findUnique({
+    where: { key: LLM_CONFIG_KEY },
+  });
+
+  // 解析已有 llm configs，检查是否已迁移
+  let configs: LlmConfig[] = [];
+  let llmWasEmpty = true;
+  if (existing) {
+    try {
+      configs = parseLlmConfigs(existing.value);
+      llmWasEmpty = configs.length === 0;
+    } catch {
+      // 解析失败也尝试迁移（覆盖坏数据风险由幂等标记规避）
+    }
+  }
+
+  if (configs.some((c) => c.id === MIGRATED_PROVIDER_ID)) {
+    return; // 已迁移
+  }
+
+  const migratedProvider: LlmConfig = {
+    id: MIGRATED_PROVIDER_ID,
+    name: "Claude Agent（已迁移）",
+    apiProvider: "anthropic",
+    baseUrl: cfg.baseUrl,
+    apiKey: cfg.apiKey,
+    models: [
+      {
+        id: cfg.model,
+        name: cfg.model,
+        enabled: true,
+        isDefault: llmWasEmpty,
+      },
+    ],
+    temperature: 0.7,
+  };
+
+  const newConfigs = [...configs, migratedProvider];
+  // 若 llm 原本为空，把迁移 provider 的模型设为唯一 default
+  if (llmWasEmpty) {
+    for (const c of newConfigs) {
+      for (const m of c.models) {
+        m.isDefault = m === migratedProvider.models[0];
+      }
+    }
+  }
+
+  const value = JSON.stringify(newConfigs, null, 2);
+  await prisma.systemConfig.upsert({
+    where: { key: LLM_CONFIG_KEY },
+    update: { value },
+    create: { key: LLM_CONFIG_KEY, value },
+  });
+  log.info("claude-agent 配置已迁移到 inkpress.llm");
 }
