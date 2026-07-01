@@ -267,6 +267,7 @@ export type TimeSeriesGroup = "model" | "target" | "status";
 export type TimeSeriesPoint = {
   bucket: string;
   groupKey: string;
+  groupLabel?: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheReadInputTokens: number;
@@ -303,6 +304,8 @@ export async function timeseriesUsage(
       costUsd: true,
     },
   });
+  const targetTitles =
+    groupBy === "target" ? await loadTargetTitleMap(rows) : new Map<string, string>();
   // 应用层聚合（SQLite strftime 在 Prisma 层不便直接 groupBy，且行数有限）。
   const map = new Map<string, TimeSeriesPoint>();
   for (const row of rows) {
@@ -319,6 +322,10 @@ export async function timeseriesUsage(
       point = {
         bucket: b,
         groupKey: g,
+        groupLabel:
+          groupBy === "target"
+            ? targetTitles.get(g) ?? null
+            : null,
         inputTokens: 0,
         outputTokens: 0,
         cacheReadInputTokens: 0,
@@ -369,7 +376,7 @@ export async function heatmapUsage(range: UsageRange): Promise<HeatmapCell[]> {
 
 export type UsageInsights = {
   topModel: { modelId: string; totalTokens: number; turnCount: number } | null;
-  topTargets: Array<{ targetKind: string; targetId: string; totalTokens: number; turnCount: number }>;
+  topTargets: Array<{ targetKind: string; targetId: string; targetTitle: string | null; totalTokens: number; turnCount: number }>;
   costliestRecentTurns: Array<{
     id: string;
     startedAt: Date;
@@ -379,8 +386,52 @@ export type UsageInsights = {
     status: string;
     targetKind: string;
     targetId: string;
+    targetTitle: string | null;
   }>;
 };
+
+async function loadTargetTitleMap(
+  targets: Array<{ targetKind: string; targetId: string }>
+): Promise<Map<string, string>> {
+  const articleIds = Array.from(
+    new Set(
+      targets
+        .filter((t) => t.targetKind === "article")
+        .map((t) => t.targetId)
+        .filter(Boolean)
+    )
+  );
+  const documentIds = Array.from(
+    new Set(
+      targets
+        .filter((t) => t.targetKind === "technical-document")
+        .map((t) => t.targetId)
+        .filter(Boolean)
+    )
+  );
+  const [articles, documents] = await Promise.all([
+    articleIds.length
+      ? prisma.article.findMany({
+          where: { id: { in: articleIds } },
+          select: { id: true, title: true },
+        })
+      : [],
+    documentIds.length
+      ? prisma.technicalDocument.findMany({
+          where: { id: { in: documentIds } },
+          select: { id: true, title: true },
+        })
+      : [],
+  ]);
+  const titles = new Map<string, string>();
+  for (const article of articles) {
+    titles.set(`article:${article.id}`, article.title || "未命名文章");
+  }
+  for (const doc of documents) {
+    titles.set(`technical-document:${doc.id}`, doc.title || "未命名文档");
+  }
+  return titles;
+}
 
 /** 洞察区（§12.8 洞察）。 */
 export async function usageInsights(range: UsageRange): Promise<UsageInsights> {
@@ -424,12 +475,23 @@ export async function usageInsights(range: UsageRange): Promise<UsageInsights> {
   const topModelEntry = Array.from(modelMap.entries())
     .map(([modelId, v]) => ({ modelId, ...v }))
     .sort((a, b) => b.totalTokens - a.totalTokens)[0];
+  const targetTitles = await loadTargetTitleMap(rows);
   const topTargets = Array.from(targetMap.values())
+    .map((target) => ({
+      ...target,
+      targetTitle:
+        targetTitles.get(`${target.targetKind}:${target.targetId}`) ?? null,
+    }))
     .sort((a, b) => b.totalTokens - a.totalTokens)
     .slice(0, 5);
   const costliestRecentTurns = [...rows]
     .sort((a, b) => b.costUsd - a.costUsd)
-    .slice(0, 10);
+    .slice(0, 10)
+    .map((turn) => ({
+      ...turn,
+      targetTitle:
+        targetTitles.get(`${turn.targetKind}:${turn.targetId}`) ?? null,
+    }));
 
   return {
     topModel: topModelEntry ? topModelEntry : null,
@@ -444,6 +506,7 @@ export type UsageTurnRow = {
   turnId: string;
   targetKind: string;
   targetId: string;
+  targetTitle: string | null;
   modelId: string | null;
   inputTokens: number;
   outputTokens: number;
@@ -504,8 +567,13 @@ export async function listUsageTurns(opts: {
   });
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
+  const targetTitles = await loadTargetTitleMap(page);
   return {
-    turns: page as UsageTurnRow[],
+    turns: page.map((row) => ({
+      ...row,
+      targetTitle:
+        targetTitles.get(`${row.targetKind}:${row.targetId}`) ?? null,
+    })) as UsageTurnRow[],
     nextCursor: hasMore ? page[page.length - 1].id : null,
   };
 }
