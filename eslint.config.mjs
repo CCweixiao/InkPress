@@ -17,6 +17,9 @@ const eslintConfig = defineConfig([
     "electron/**", // 独立 tsconfig
     "graphify-out/**",
     "dev.database/**",
+    "storage/**",
+    "logs/**",
+    ".inkpress/**",
     "scripts/**",
     "tests/**",
     "prisma/**",

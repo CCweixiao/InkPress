@@ -8,6 +8,7 @@ import {
 } from "@/lib/content-store";
 import { withApiLog, logMutation } from "@/lib/api-log";
 import { TITLE_REGEX } from "@/lib/validation";
+import { ARTICLE_TYPE_PROFILES } from "@/lib/ai/article-type-profile";
 
 const updateSchema = z.object({
   title: z
@@ -22,6 +23,7 @@ const updateSchema = z.object({
   coverUrl: z.string().nullable().optional(),
   themeId: z.string().nullable().optional(),
   spaceId: z.string().nullable().optional(),
+  profileId: z.string().nullable().optional(),
   status: z.enum(["draft", "ready", "pushed"]).optional(),
   wxMediaId: z.string().nullable().optional(),
 });
@@ -50,6 +52,15 @@ async function updateArticle(id: string, req: NextRequest) {
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+  if (
+    parsed.data.profileId &&
+    !Object.prototype.hasOwnProperty.call(
+      ARTICLE_TYPE_PROFILES,
+      parsed.data.profileId
+    )
+  ) {
+    return NextResponse.json({ error: "文章类型无效。" }, { status: 400 });
   }
   // 正文写文件，不落库（contentMd 列仅作兼容）
   const { contentMd, ...rest } = parsed.data;

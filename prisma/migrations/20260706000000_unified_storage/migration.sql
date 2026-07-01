@@ -71,6 +71,3 @@ ON "CodeGraphCache"("snapshotHash");
 
 CREATE INDEX "CodeGraphCache_status_idx"
 ON "CodeGraphCache"("status");
-
-CREATE INDEX "CodeGraphCache_provider_sourceKey_snapshotHash_spaceId_articleId_idx"
-ON "CodeGraphCache"("provider", "sourceKey", "snapshotHash", "spaceId", "articleId");
