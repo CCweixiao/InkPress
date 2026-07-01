@@ -20,6 +20,7 @@ import {
   Copy,
   Eye,
   FileSearch,
+  Globe2,
   Loader2,
   Maximize2,
   RotateCcw,
@@ -29,6 +30,8 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ArticleProfileBadge } from "@/components/ai/ArticleProfileBadge";
+import { getArticleProfile } from "@/lib/ai/article-type-profile";
 import { cn } from "@/lib/utils";
 import {
   ArticleDiffDialog,
@@ -44,6 +47,7 @@ import { ReasoningBlock } from "@/components/ai/ReasoningBlock";
 import { ToolCallBlock } from "@/components/ai/ToolCallBlock";
 import { ToolGroupBlock } from "@/components/ai/ToolGroupBlock";
 import { AgentStepBlock } from "@/components/ai/AgentStepBlock";
+import { SubAgentTaskBlock } from "@/components/ai/SubAgentTaskBlock";
 import { AgentErrorBlock } from "@/components/ai/AgentErrorBlock";
 import { ToolApprovalCard } from "@/components/ai/ToolApprovalCard";
 import { RetryIndicator } from "@/components/ai/RetryIndicator";
@@ -193,10 +197,12 @@ function DiffPreview({
 function ProposalCard({
   proposalId,
   fallback,
+  profileId,
   onApplied,
 }: {
   proposalId: string;
   fallback?: ProposalSummary;
+  profileId?: string | null;
   onApplied: (result: Record<string, unknown>) => void;
 }) {
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
@@ -206,6 +212,7 @@ function ProposalCard({
   const [copied, setCopied] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const profile = getArticleProfile(profileId);
 
   const refresh = useCallback(async () => {
     const response = await fetch(`/api/ai/proposals/${proposalId}`);
@@ -357,6 +364,16 @@ function ProposalCard({
             </button>
             {previewOpen && (
               <DiffPreview detail={detail} onOpenFull={() => setDiffOpen(true)} />
+            )}
+            {detail.proposalKind !== "technical-document" && (
+              <div className="rounded-md border bg-background px-2.5 py-2 text-[11px]">
+                <div className="font-medium">审稿清单 · {profile.name}</div>
+                <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                  {profile.checklist.map((item) => (
+                    <li key={item}>· {item}</li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         )}
@@ -641,6 +658,8 @@ export type RenderCtx = {
   onApprovalFailed?: () => void;
   /** 工具审批（P3 canUseTool 闸门）状态变化（pending 时锁定 composer）。 */
   onToolApprovalStatusChange?: (status: string) => void;
+  /** 当前文章类型 profile，用于提案卡审稿 checklist。 */
+  profileId?: string | null;
   /** 当前消息在 messages 中的下标（用户消息重新执行需据此截断）。 */
   messageIndex: number;
   /** 重新执行用户消息：编辑后丢弃其后消息并重跑（codex edit & retry）。 */
@@ -819,7 +838,8 @@ type EvidenceKind =
   | "change-summary"
   | "explore"
   | "snapshot"
-  | "source";
+  | "source"
+  | "web-source";
 
 /** 证据 chip（⑥ 证据阶段）：6 类证据 part 合并为一个组件，按 kind 切换样式。 */
 function EvidenceChip({
@@ -899,6 +919,27 @@ function EvidenceChip({
             : ""}
         </div>
       );
+    case "web-source":
+      return (
+        <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-[11px] dark:border-blue-900 dark:bg-blue-950/40">
+          <Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-700 dark:text-blue-400" />
+          <div className="min-w-0 flex-1">
+            <a
+              href={String(data.url ?? "#")}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate font-medium text-blue-950 hover:underline dark:text-blue-100"
+            >
+              {String(data.title ?? data.url ?? "网络来源")}
+            </a>
+            {data.snippet ? (
+              <div className="mt-0.5 line-clamp-2 text-blue-700 dark:text-blue-300">
+                {String(data.snippet)}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      );
   }
 }
 
@@ -918,6 +959,7 @@ function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
     return (
       <ProposalCard
         proposalId={proposalId}
+        profileId={ctx.profileId}
         onApplied={(result) => {
           if (ctx.targetKind === "article") {
             ctx.onApplyArticle?.(
@@ -1048,6 +1090,25 @@ export const PART_RENDERERS: PartRenderer[] = [
             toolName: string;
             displayName?: string;
             input: Record<string, unknown>;
+            url?: string;
+            domain?: string;
+            riskAssessment?: {
+              url: string;
+              domain: string;
+              isHttps: boolean;
+              isKnownAuthority: boolean;
+              isLikelyOfficial: boolean;
+              isDeveloperSource: boolean;
+              isRepositorySource: boolean;
+              riskLevel: "low" | "medium" | "high";
+              signals: string[];
+              warnings: string[];
+            } | null;
+            batch?: {
+              enabled?: boolean;
+              pendingCount?: number;
+              scope?: string;
+            };
             approvalToken: string;
           }
         }
@@ -1107,6 +1168,12 @@ export const PART_RENDERERS: PartRenderer[] = [
     ),
   },
   {
+    match: (p) => p.type === "data-web-source" && isObj(p.data),
+    render: (p) => (
+      <EvidenceChip kind="web-source" data={p.data as Record<string, unknown>} />
+    ),
+  },
+  {
     match: (p) => p.type === "source-url" && typeof p.url === "string",
     render: (p) => (
       <a
@@ -1161,10 +1228,19 @@ export type RenderItem =
       parts: AgentPart[];
       key: string;
     }
+  | {
+      kind: "sub-agent-task";
+      parts: AgentPart[];
+      key: string;
+    }
   | { kind: "single"; part: AgentPart; key: string };
 
 export function aggregateParts(parts: AgentPart[]): RenderItem[] {
   const items: RenderItem[] = [];
+  const subTaskParts = new Map<string, AgentPart[]>();
+  const emittedSubTasks = new Set<string>();
+  const toolCallToSubTask = new Map<string, string>();
+  let activeSubTaskId: string | null = null;
   let bucket: {
     groupType: "explore" | "web";
     parts: AgentPart[];
@@ -1194,9 +1270,61 @@ export function aggregateParts(parts: AgentPart[]): RenderItem[] {
     bucket = null;
   };
 
+  const shouldFoldIntoActiveSubTask = (part: AgentPart, groupType: unknown) => {
+    if (!activeSubTaskId) return false;
+    const type = String(part.type ?? "");
+    if (type === "data-tool-approval" || type === "data-code-source-approval") {
+      return false;
+    }
+    if (type === "text" || type === "reasoning") return false;
+    if (getToolName(part)) return true;
+    if (groupType) return true;
+    return type === "source-url";
+  };
+
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
+    if (part.type === "data-agent-step" && isObj(part.data)) {
+      const data = part.data as Record<string, unknown>;
+      const subTaskId = data.subTaskId;
+      if (typeof subTaskId === "string" && subTaskId) {
+        flush();
+        const taskParts = subTaskParts.get(subTaskId) ?? [];
+        taskParts.push(part);
+        subTaskParts.set(subTaskId, taskParts);
+        if (!emittedSubTasks.has(subTaskId)) {
+          emittedSubTasks.add(subTaskId);
+          items.push({
+            kind: "sub-agent-task",
+            parts: taskParts,
+            key: `sub-agent-task-${subTaskId}`,
+          });
+        }
+        const status = String(data.status ?? "completed");
+        activeSubTaskId = status === "running" ? subTaskId : null;
+        continue;
+      }
+    }
+    const toolCallId =
+      typeof part.toolCallId === "string" ? part.toolCallId : "";
+    const mappedSubTaskId = toolCallId
+      ? toolCallToSubTask.get(toolCallId) ?? null
+      : null;
     const groupType = getPartGroupType(part);
+    const belongsToActiveSubTask =
+      shouldFoldIntoActiveSubTask(part, groupType) ||
+      Boolean(mappedSubTaskId);
+    if (belongsToActiveSubTask) {
+      flush();
+      const subTaskId = mappedSubTaskId ?? activeSubTaskId;
+      if (subTaskId) {
+        const taskParts = subTaskParts.get(subTaskId) ?? [];
+        taskParts.push(part);
+        subTaskParts.set(subTaskId, taskParts);
+        if (toolCallId) toolCallToSubTask.set(toolCallId, subTaskId);
+      }
+      continue;
+    }
     if (!groupType) {
       flush();
       items.push({ kind: "single", part, key: `single-${i}` });
@@ -1240,6 +1368,7 @@ type AgentMessageRowProps = {
   onApprovalStatusChange?: RenderCtx["onApprovalStatusChange"];
   onApprovalFailed?: RenderCtx["onApprovalFailed"];
   onToolApprovalStatusChange?: RenderCtx["onToolApprovalStatusChange"];
+  profileId?: string | null;
 };
 
 /**
@@ -1263,6 +1392,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
   onApprovalStatusChange,
   onApprovalFailed,
   onToolApprovalStatusChange,
+  profileId,
 }: AgentMessageRowProps) {
   const allParts = message.parts as unknown as AgentPart[];
   // data-agent-retry（SDK 轮内重试会连发多条）只保留最后一条，避免堆积。
@@ -1292,6 +1422,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
       onApprovalStatusChange,
       onApprovalFailed,
       onToolApprovalStatusChange,
+      profileId,
       messageIndex,
       rerun: onRerun,
       busy,
@@ -1307,6 +1438,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
       onApprovalStatusChange,
       onApprovalFailed,
       onToolApprovalStatusChange,
+      profileId,
       messageIndex,
       onRerun,
       busy,
@@ -1330,6 +1462,16 @@ const AgentMessageRow = memo(function AgentMessageRow({
               key={item.key}
               parts={item.parts}
               groupType={item.groupType}
+              settled={settled}
+            />
+          );
+        }
+        if (item.kind === "sub-agent-task") {
+          if (!isLastAssistant) return null;
+          return (
+            <SubAgentTaskBlock
+              key={item.key}
+              parts={item.parts}
               settled={settled}
             />
           );
@@ -1365,6 +1507,8 @@ export function WritingAssistant({
   targetKind = "article",
   targetId,
   currentMarkdown,
+  profileId,
+  onProfileChange,
   onApplyArticle,
   onApplyTechnicalDocument,
   onFlushArticle,
@@ -1375,6 +1519,9 @@ export function WritingAssistant({
   targetKind?: "article" | "technical-document";
   targetId?: string;
   currentMarkdown: string;
+  /** P3 文章类型 profile id（显示 ArticleProfileBadge）。 */
+  profileId?: string | null;
+  onProfileChange?: (profileId: string) => void;
   onApplyArticle?: (article: {
     title: string;
     contentMd: string;
@@ -1794,13 +1941,16 @@ export function WritingAssistant({
   }
 
   const requestBodyRef = useRef(requestBody);
-  requestBodyRef.current = requestBody;
   const flushTargetRef = useRef(onFlushTarget ?? onFlushArticle);
-  flushTargetRef.current = onFlushTarget ?? onFlushArticle;
   const regenerateRef = useRef(regenerate);
-  regenerateRef.current = regenerate;
   const rerunRef = useRef(rerun);
-  rerunRef.current = rerun;
+
+  useEffect(() => {
+    requestBodyRef.current = requestBody;
+    flushTargetRef.current = onFlushTarget ?? onFlushArticle;
+    regenerateRef.current = regenerate;
+    rerunRef.current = rerun;
+  }, [onFlushArticle, onFlushTarget, regenerate, requestBody]);
 
   const stableResumeAfterApproval = useCallback(async () => {
     await flushTargetRef.current?.();
@@ -2068,32 +2218,14 @@ export function WritingAssistant({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestDigest, busy]);
 
-  // 流式期间仅最新助手消息的 parts 会变；前缀 proposalId 按 parts 引用缓存，避免每 chunk 全量重扫。
-  const prefixProposalCacheRef = useRef<{
-    partRefs: readonly unknown[];
-    ids: Set<string>;
-  } | null>(null);
-
   const prefixProposalIds = useMemo(() => {
     if (!busy || lastAssistantIndex <= 0) return null;
-    const partRefs = messages
-      .slice(0, lastAssistantIndex)
-      .map((message) => message.parts);
-    const cached = prefixProposalCacheRef.current;
-    if (
-      cached &&
-      cached.partRefs.length === partRefs.length &&
-      cached.partRefs.every((parts, index) => parts === partRefs[index])
-    ) {
-      return cached.ids;
-    }
     const ids = new Set<string>();
     for (let i = 0; i < lastAssistantIndex; i++) {
       for (const id of collectProposalIds(messages[i].parts)) {
         ids.add(id);
       }
     }
-    prefixProposalCacheRef.current = { partRefs, ids };
     return ids;
   }, [busy, lastAssistantIndex, messages]);
 
@@ -2125,6 +2257,10 @@ export function WritingAssistant({
               自动识别意图、加载 Skill、研究并扫描素材 · 输入 / 查看命令
             </div>
           </div>
+          <ArticleProfileBadge
+            profileId={profileId}
+            onChange={onProfileChange}
+          />
         </div>
       </div>
 
@@ -2171,6 +2307,7 @@ export function WritingAssistant({
                 onApprovalStatusChange={handleApprovalStatusChange}
                 onApprovalFailed={handleApprovalFailed}
                 onToolApprovalStatusChange={handleToolApprovalStatusChange}
+                profileId={profileId}
               />
             ))}
             {proposals
@@ -2189,6 +2326,7 @@ export function WritingAssistant({
                   key={proposal.id}
                   proposalId={proposal.id}
                   fallback={proposal}
+                  profileId={profileId}
                   onApplied={(result) => {
                     if (targetKind === "article") {
                       onApplyArticle?.(

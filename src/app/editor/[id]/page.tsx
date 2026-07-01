@@ -43,6 +43,7 @@ export default async function EditorPage({ params }: Params) {
         themeId: article.themeId,
         spaceId: article.spaceId,
         status: article.status,
+        profileId: article.profileId,
       }}
       themes={themes}
     />
