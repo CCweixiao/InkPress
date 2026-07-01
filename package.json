@@ -130,6 +130,9 @@
   "build": {
     "appId": "com.inkpress.app",
     "productName": "InkPress",
+    "electronFuses": {
+      "runAsNode": true
+    },
     "directories": {
       "output": "dist"
     },
@@ -190,7 +193,6 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true
     },
-    "afterPack": "scripts/after-pack.cjs",
     "dmg": {
       "contents": [
         {

@@ -10,7 +10,7 @@
 InkPress.app（Electron 壳）
   ├─ MacOS/InkPress              ← Electron 主进程（main.ts 编译产物）
   ├─ Frameworks/                 ← Electron 运行时（Chromium + Node.js）
-  ├─ PlugIns/InkPressServer.app  ← LSUIElement helper（避免 Dock 双图标）
+  │  └─ InkPress Helper.app      ← LSUIElement helper（启动 server，避免 Dock 双图标）
   └─ Resources/
        ├─ app.asar               ← 仅含 main.js（16KB）
        └─ standalone/            ← Next.js standalone 服务（1.2GB）
@@ -25,7 +25,7 @@ InkPress.app（Electron 壳）
 main.ts bootstrap()
   → ensureDirs()                          创建 ~/.inkpress 目录结构
   → pickPort(17391)                       选择可用端口
-  → startServer(port)                     spawn InkPressServer.app 子进程
+  → startServer(port)                     spawn InkPress Helper.app 子进程
       → ELECTRON_RUN_AS_NODE=1            以纯 Node 模式运行 Electron 二进制
       → node standalone/server.js         启动 Next.js standalone 服务
   → waitForServer(port, 30s)              TCP 轮询等待服务就绪
@@ -58,13 +58,12 @@ pnpm electron:build
 | 6 | `ensureNativeBindingForElectron` | electron-rebuild 重编译 better-sqlite3 为 Electron ABI，刷新全 bundle 副本 |
 | 7 | `slimBundle` | 删除 .d.ts/.ts/.map/.md/LICENSE 等开发产物（减 ~200MB） |
 
-### electron-builder 的 3 个步骤
+### electron-builder 的 2 个步骤
 
 | 步骤 | 配置 | 作用 |
 |---|---|---|
 | 1 | `@electron/rebuild` | 按目标架构重编译 better-sqlite3 |
-| 2 | `afterPack` 钩子 | 创建 `PlugIns/InkPressServer.app` helper bundle（LSUIElement） |
-| 3 | DMG 打包 | 生成 .dmg 安装镜像 |
+| 2 | DMG 打包 | 签名 Electron 标准 helper 并生成 .dmg 安装镜像 |
 
 ## 三、本次检测发现并修复的缺陷
 
