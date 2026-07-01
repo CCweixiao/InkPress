@@ -2171,7 +2171,11 @@ export function WritingAssistant({
   }, [pendingToolApprovalGrantId]);
 
   // 扫描最近的 data-context-usage（composer token 计量用）——仅最新助手消息。
-  const latestContextUsage = useMemo<ContextUsage>(() => {
+  // 扫描最近的 data-context-usage（composer token 计量用）——仅最新助手消息。
+  // 流式期间 lastAssistantParts 每个 chunk 都是新引用（文本在累积），但 data-context-usage 一旦下发
+  // 其值不变。先按 parts 扫出 raw，再按叶子原语 memoize → 值不变时 latestContextUsage 引用稳定，
+  // 避免下游 TokenMeter / contextBudget effect 每 chunk 被新对象引用触发重渲染/重跑。
+  const contextUsageRaw = useMemo<ContextUsage>(() => {
     if (!lastAssistantParts) return null;
     for (let j = lastAssistantParts.length - 1; j >= 0; j--) {
       const p = lastAssistantParts[j] as unknown as Record<string, unknown>;
@@ -2196,6 +2200,15 @@ export function WritingAssistant({
     }
     return null;
   }, [lastAssistantParts]);
+  const latestContextUsage = useMemo<ContextUsage>(
+    () => contextUsageRaw,
+    [
+      contextUsageRaw?.estimatedTokens,
+      contextUsageRaw?.budgetTokens,
+      contextUsageRaw?.compressed,
+      contextUsageRaw?.articleTokens,
+    ]
+  );
 
   // 下一轮对话开始即清除 compact 覆盖，让随后下发的真实 data-context-usage 重新生效。
   useEffect(() => {
@@ -2244,6 +2257,10 @@ export function WritingAssistant({
     }
     return null;
   }, [lastAssistantParts]);
+  const latestDirectArticle = useMemo(
+    () => directArticleRaw,
+    [directArticleRaw?.markdown]
+  );
 
   // 扫描 set_article_digest 推送的摘要事件 —— 仅最新助手消息。
   const latestDigest = useMemo(() => {
