@@ -1,7 +1,7 @@
 # Code Review Handoff — Claude Agent Runtime 迁移（P0–P5）
 
 > 分支：`codex/claude-agent-runtime`（base：`feat/space-theme-search-batch` @ f9a2fc89）
-> 全部**未提交**。本文件给 review 方的概览；细节看 diff + `docs/agent-engines.md`（设计文档）。
+> 本文件给 review 方的概览；细节看 diff + `docs/agent-engines.md`（设计文档）+ `docs/agent-runtime-pdc.md`（后续增强 PDC）+ `docs/agent-code-reading-guide.md`（当前实现阅读指引）。
 
 ## 这条分支做了什么
 
