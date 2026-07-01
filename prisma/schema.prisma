@@ -21,6 +21,7 @@ model Article {
   coverUrl     String? // 封面可访问 URL（直接读，列表展示用，与 coverAssetId 并存冗余）
   themeId      String? // 关联 Theme
   spaceId      String? // 关联 Space（可为空=未分类）
+  profileId    String? // P3 文章类型 profile（wechat_essay / technical_deep_dive / ...）
   status       String    @default("draft") // draft | ready | pushed
   wxMediaId    String? // draft/add 返回的 media_id（= 草稿箱 id）
   // 软删除 / 回收站
@@ -412,4 +413,17 @@ model Asset {
   @@index([articleId])
   @@index([trashed])
   @@index([wxSyncStatus])
+}
+
+// P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。
+// 全局用户级（不分 session/space）——是用户偏好，非会话级授权。
+model WebFetchDomainAllowlist {
+  id        String   @id @default(cuid())
+  domain    String   @unique // 小写、去 www.，精确匹配
+  note      String   @default("")
+  riskJson  String   @default("{}") // URL 风险评估缓存（HTTPS/官方来源/权威域名等信号）
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([domain])
 }
