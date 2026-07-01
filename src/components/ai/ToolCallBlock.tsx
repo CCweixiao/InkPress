@@ -14,6 +14,7 @@ import {
   summarizeTool,
   formatJson,
   getToolName,
+  getToolDisplay,
 } from "@/components/ai/tool-helpers";
 
 /**
@@ -34,6 +35,9 @@ export function ToolCallBlock({
 
   if (!toolName) return null;
 
+  // P1：优先用后端 toolMetadata.display.title/summary；回退 TOOL_LABELS（历史消息/未迁移工具）。
+  const display = getToolDisplay(part);
+
   const state = String(part.state ?? "");
   const live =
     state.includes("streaming") || state.includes("input") || state === "call";
@@ -43,7 +47,7 @@ export function ToolCallBlock({
   const errorText = typeof part.errorText === "string" ? part.errorText : "";
   const input = formatJson(part.input);
   const output = formatJson(part.output);
-  const label = TOOL_LABELS[toolName] ?? toolName;
+  const label = display?.title ?? TOOL_LABELS[toolName] ?? toolName;
   const hasDetail = Boolean(input || output || errorText);
 
   return (
@@ -76,7 +80,7 @@ export function ToolCallBlock({
         )}
         {!running && !interrupted && !failed && hasDetail && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
-            {summarizeTool(toolName, part.output, part.errorText)}
+            {summarizeTool(toolName, part.output, part.errorText, display)}
           </span>
         )}
       </CollapsibleTrigger>

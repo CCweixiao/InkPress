@@ -1,0 +1,77 @@
+{
+  "meta": {
+    "title": "P3/P4 Agent SDK 未提交改动 Review",
+    "reviewScope": "working tree uncommitted changes; review-scope.mjs fallback because origin/master is unavailable",
+    "branch": "unknown",
+    "generatedAt": "2026-07-01T11:48:23+08:00",
+    "reviewer": "Codex",
+    "reviewedFiles": [
+      "docs/p3-p4-implementation-review.md",
+      "prisma/schema.prisma",
+      "prisma/migrations/20260708010000_article_profile/migration.sql",
+      "src/app/api/ai/chat/route.ts",
+      "src/app/api/articles/route.ts",
+      "src/components/articles/NewArticleButton.tsx",
+      "src/lib/ai/article-type-profile.ts",
+      "src/lib/ai/subagents.ts",
+      "src/lib/ai/claude-agent-options.ts",
+      "src/lib/ai/agent-sdk-stream-adapter.ts",
+      "src/lib/ai/system-prompt.ts",
+      "tests/unit/article-type-profile.test.ts",
+      "tests/unit/subagents.test.ts",
+      "tests/unit/system-prompt.test.ts",
+      "tests/unit/agent-sdk-stream-adapter.test.ts"
+    ],
+    "businessChecks": [
+      {
+        "feature": "P3 ArticleTypeProfile 持久化",
+        "passed": true,
+        "detail": "Article.profileId 已有 schema 字段并补充生产 migration，避免 migrate deploy 环境缺列。",
+        "requirementRef": "docs/p3-p4-implementation-review.md: 中风险 3"
+      },
+      {
+        "feature": "P3 profile 注入 system prompt 与默认 Skill",
+        "passed": true,
+        "detail": "chat route 读取 loaded.profileId，合并 forceSkillIds 与 profile.defaultSkills；system prompt 按 article profile / technical document type 注入写作引导。",
+        "requirementRef": "docs/p3-p4-implementation-review.md: P3 ArticleTypeProfile"
+      },
+      {
+        "feature": "P4 SDK 原生子 agent 可被调起",
+        "passed": true,
+        "detail": "根据 Claude Agent SDK 官方文档，已只开放内置 Agent 工具并加入 allowedTools；Read/Edit/Bash/WebFetch 等内置工具仍未暴露。",
+        "requirementRef": "docs/p3-p4-implementation-review.md: 高风险 1；Claude Agent SDK Subagents 文档"
+      },
+      {
+        "feature": "P4 task_* 事件前端渲染",
+        "passed": true,
+        "detail": "SDK 类型确认 task_started/task_progress 字段为 snake_case；task_notification 不带 subagent_type，已用 task_id 缓存补齐完成态展示，并增加单测。",
+        "requirementRef": "docs/p3-p4-implementation-review.md: 高风险 2"
+      },
+      {
+        "feature": "子 agent 工具边界",
+        "passed": true,
+        "detail": "research/review/fact_check 子 agent 仍限制为 InkPress MCP allow 工具；web_fetch 继续走主 agent 审批/白名单链路，不在子 agent 中直接开放。",
+        "requirementRef": "docs/p3-p4-implementation-review.md: 中风险 5"
+      }
+    ],
+    "inputContext": {
+      "inputType": "code-plan",
+      "sourceLabel": "docs/p3-p4-implementation-review.md",
+      "sourceUrl": "",
+      "requirementSummary": "审查 P3 ArticleTypeProfile 与 P4 Claude Agent SDK 原生子 agent 的未提交实现，按高风险项直接修复不合理之处。",
+      "taskDescription": "核对 SDK agents/工具/事件字段、profileId migration、profile prompt/skill 注入、子 agent 工具边界和前端事件渲染。",
+      "acceptanceHints": [
+        "生产迁移不会缺失 Article.profileId",
+        "子 agent 能通过 SDK 内置 Agent 工具被调起",
+        "task_* 事件能正确渲染到前端 agent-step",
+        "测试与类型检查通过"
+      ]
+    }
+  },
+  "findings": [],
+  "questions": [],
+  "summary": {
+    "ready": "Yes",
+    "reasoning": "P3/P4 review 中发现的阻断点已直接修复，当前没有剩余 must-fix finding。验证通过 typecheck、全量单测、diff whitespace check 和本地 Prisma migration status。"
+  }
+}

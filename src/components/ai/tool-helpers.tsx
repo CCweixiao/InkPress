@@ -4,6 +4,7 @@ import {
   Sparkles,
   Wrench,
 } from "lucide-react";
+import type { ToolDisplay } from "@/lib/ai/agent-runtime-events";
 
 // ────────────────────────────────────────────────────────────────────────────
 // 工具描述符注册表（单一事实源）
@@ -41,7 +42,7 @@ const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
     summarize: (v) =>
       `获得 ${Array.isArray(v.results) ? v.results.length : 0} 条搜索结果`,
   },
-  web_extract: { label: "读取网页正文", group: "web" },
+  web_fetch: { label: "读取网页正文", group: "web" },
   project_search: {
     label: "搜索本地代码项目",
     group: "explore",
@@ -52,6 +53,34 @@ const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
     label: "读取项目文件",
     group: "explore",
     summarize: (v) => `已读取 ${v.path ?? "项目文件"}`,
+  },
+  project_overview: {
+    label: "项目结构概览",
+    group: "explore",
+    summarize: (v) =>
+      `索引 ${Number(v.files ?? 0)} 文件 · ${Number(v.symbols ?? 0)} 符号 · ${Number(v.edges ?? 0)} 关系`,
+  },
+  project_glob: {
+    label: "列出项目文件",
+    group: "explore",
+    summarize: (v) => {
+      const total = Number(v.total ?? 0);
+      const files = v.files;
+      return `匹配 ${total || (Array.isArray(files) ? files.length : 0)} 个文件`;
+    },
+  },
+  git_log: {
+    label: "查看提交历史",
+    group: "explore",
+    summarize: (v) => `${Number(v.commits ?? 0)} 条提交`,
+  },
+  git_diff_summary: {
+    label: "查看变更摘要",
+    group: "explore",
+    summarize: (v) => {
+      const cf = v.changedFiles;
+      return `${Array.isArray(cf) ? cf.length : 0} 个文件变更`;
+    },
   },
   explore_project: {
     label: "只读探索代码项目",
@@ -71,6 +100,10 @@ const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
     label: "筛选文章素材",
     summarize: (v) =>
       `读取 ${Array.isArray(v.assets) ? v.assets.length : 0} 项素材`,
+  },
+  set_article_digest: {
+    label: "设置文章摘要",
+    summarize: () => "已写入摘要字段",
   },
   propose_article_revision: {
     label: "生成文章修改提案",
@@ -99,12 +132,47 @@ export function ToolIcon({ name }: { name: string }) {
 export function summarizeTool(
   toolName: string,
   output: unknown,
-  errorText?: unknown
+  errorText?: unknown,
+  display?: ToolDisplay | null
 ): string {
   if (typeof errorText === "string") return errorText;
+  // P1：优先用后端 display.summary；否则回退 TOOL_REGISTRY.summarize（历史消息/未迁移工具）。
+  if (display?.summary) return display.summary;
   if (!output || typeof output !== "object") return "执行完成";
   const value = output as Record<string, unknown>;
   return TOOL_REGISTRY[toolName]?.summarize?.(value) ?? "执行完成";
+}
+
+/**
+ * 从 tool part 的 toolMetadata.display 读取后端生成的展示语义（P1）。
+ * 未带 display（历史消息/未迁移工具）返回 null，调用方回退 TOOL_REGISTRY。
+ */
+export function getToolDisplay(part: Record<string, unknown>): ToolDisplay | null {
+  const tm = part.toolMetadata;
+  if (!tm || typeof tm !== "object") return null;
+  const raw = (tm as { display?: unknown }).display;
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  if (typeof d.title !== "string") return null;
+  const display: ToolDisplay = {
+    title: d.title,
+    activityKind:
+      typeof d.activityKind === "string"
+        ? (d.activityKind as ToolDisplay["activityKind"])
+        : "general",
+  };
+  if (typeof d.summary === "string") display.summary = d.summary;
+  if (typeof d.icon === "string") display.icon = d.icon;
+  if (d.metadata && typeof d.metadata === "object")
+    display.metadata = d.metadata as Record<string, unknown>;
+  return display;
+}
+
+/** 从 tool part 读取 activityKind（P1 仅声明，图标映射留后续）。 */
+export function getToolActivityKind(
+  part: Record<string, unknown>
+): ToolDisplay["activityKind"] | null {
+  return getToolDisplay(part)?.activityKind ?? null;
 }
 
 /** 安全 JSON 格式化（与 ToolCallBlock 一致）。 */
@@ -119,13 +187,14 @@ export function formatJson(value: unknown): string {
 
 /** 从 part 中解析工具名（支持 dynamic-tool / tool-* 前缀 / 直接 toolName 字段）。 */
 export function getToolName(part: Record<string, unknown>): string {
+  if (typeof part.toolName === "string") return part.toolName;
   if (part.type === "dynamic-tool" && typeof part.toolName === "string") {
     return part.toolName;
   }
   if (typeof part.type === "string" && part.type.startsWith("tool-")) {
     return part.type.slice(5);
   }
-  return typeof part.toolName === "string" ? part.toolName : "";
+  return "";
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -182,13 +251,14 @@ export function getPartGroupType(
   const type = String(part.type ?? "");
   // tool-call parts
   if (type.startsWith("tool-")) {
-    return getToolGroupType(type.slice(5));
+    return getToolGroupType(getToolName(part));
   }
   if (type === "dynamic-tool") {
     return getToolGroupType(String(part.toolName ?? ""));
   }
   // data parts
   if (EXPLORE_DATA_TYPES.has(type)) return "explore";
+  if (type === "data-web-source") return "web";
   return null;
 }
 
@@ -213,6 +283,8 @@ export function summarizeDataPart(part: Record<string, unknown>): string {
     }
     case "data-source-evidence":
       return `${String(data.path ?? "")}#L${String(data.startLine ?? "")}`;
+    case "data-web-source":
+      return String(data.title ?? data.url ?? "");
     case "data-git-range":
       return `Git 范围：${String(data.requestedRange ?? "")}`;
     case "data-commit-evidence":

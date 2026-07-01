@@ -43,6 +43,8 @@ export type ArticleData = {
   themeId: string | null;
   spaceId: string | null;
   status: string;
+  /** P3 文章类型 profile id（前端 badge 展示用）。 */
+  profileId?: string | null;
 };
 
 export function EditorWorkspace({
@@ -55,6 +57,9 @@ export function EditorWorkspace({
   const [title, setTitle] = useState(article.title);
   const [markdown, setMarkdown] = useState(article.contentMd);
   const [digest, setDigest] = useState(article.digest);
+  const [profileId, setProfileId] = useState<string | null>(
+    article.profileId ?? null
+  );
   // 默认主题优先：未指定时取 isDefault 主题，再回落 themes[0]
   const defaultThemeId =
     themes.find((t) => t.isDefault)?.id ?? themes[0]?.id ?? null;
@@ -109,6 +114,7 @@ export function EditorWorkspace({
       contentMd: markdown,
       digest,
       themeId,
+      profileId,
       ...patch,
     };
     pendingSave.current = {};
@@ -140,6 +146,13 @@ export function EditorWorkspace({
     save({ themeId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeId]);
+
+  useEffect(() => {
+    if (profileId !== (article.profileId ?? null)) {
+      save({ profileId });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
 
   useEffect(() => {
     const editorScroller = editorScrollRef.current;
@@ -188,6 +201,7 @@ export function EditorWorkspace({
         contentMd: markdown,
         digest,
         themeId,
+        profileId,
       };
       // 优先用 sendBeacon（页面卸载时仍可送达），fetch 会被浏览器取消
       if (navigator.sendBeacon) {
@@ -214,7 +228,7 @@ export function EditorWorkspace({
       window.removeEventListener("beforeunload", flushPending);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, markdown, digest, themeId]);
+  }, [title, markdown, digest, themeId, profileId]);
 
   // 摘要自动保存（AI 生成或手动编辑都会触发）
   useEffect(() => {
@@ -292,6 +306,8 @@ export function EditorWorkspace({
           currentMarkdown={markdown}
           articleId={article.id}
           spaceId={article.spaceId}
+          profileId={profileId}
+          onProfileChange={setProfileId}
           onModeChange={setAiMode}
           onFlushArticle={flushArticle}
         />

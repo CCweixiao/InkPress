@@ -11,6 +11,8 @@ const nextConfig: NextConfig = {
     "adm-zip",
     "ali-oss",
     "@resvg/resvg-js",
+    // Claude Agent SDK 会 spawn 原生 Claude Code 子进程，依赖 node: 内建，不能被打包
+    "@anthropic-ai/claude-agent-sdk",
   ],
 };
 

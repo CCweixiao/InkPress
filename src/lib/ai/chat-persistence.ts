@@ -168,17 +168,32 @@ export async function getOrCreateAgentSession(target: AgentTarget | string) {
   if (normalized.kind === "article") {
     return prisma.agentChatSession.upsert({
       where: { articleId: normalized.id },
-      update: { targetKind: "article" },
-      create: { articleId: normalized.id, targetKind: "article" },
+      update: { targetKind: "article", runtime: "claude-agent" },
+      create: {
+        articleId: normalized.id,
+        targetKind: "article",
+        runtime: "claude-agent",
+      },
     });
   }
   return prisma.agentChatSession.upsert({
     where: { technicalDocumentId: normalized.id },
-    update: { targetKind: "technical-document" },
+    update: { targetKind: "technical-document", runtime: "claude-agent" },
     create: {
       technicalDocumentId: normalized.id,
       targetKind: "technical-document",
+      runtime: "claude-agent",
     },
+  });
+}
+
+/** 仅读取目标对应的 Agent 会话；打开页面/刷新历史时不制造空会话记录。 */
+export async function findAgentSession(target: AgentTarget) {
+  return prisma.agentChatSession.findFirst({
+    where:
+      target.kind === "article"
+        ? { articleId: target.id }
+        : { technicalDocumentId: target.id },
   });
 }
 
@@ -304,7 +319,7 @@ export function computeMerged(
  * 串行化「读-改-写」，避免两个并发写者（如多个 onFinish、onFinish 与下轮 POST 的用户消息落盘）
  * 基于各自旧快照整表重写而后写覆盖先写（lost update）。
  *
- * 返回合并后的完整消息列表，供后续 originalMessages / prepareAgentContext 使用。
+ * 返回合并后的完整消息列表，供后续 originalMessages / Claude Agent prompt 使用。
  */
 export async function mergeAndPersistMessages(
   sessionId: string,
