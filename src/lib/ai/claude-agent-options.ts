@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  CanUseTool,
+  Options,
+  PostCompactHookInput,
+} from "@anthropic-ai/claude-agent-sdk";
 import { getClaudeAgentConfig } from "@/lib/ai/claude-agent-config";
 import { buildInkPressSystemPrompt } from "@/lib/ai/system-prompt";
 import { buildSubagents } from "@/lib/ai/subagents";
@@ -198,6 +202,37 @@ function buildCanUseTool(ctx: {
   };
 }
 
+function buildCompactHooks(ctx: { sessionId: string }): Options["hooks"] {
+  return {
+    PostCompact: [
+      {
+        hooks: [
+          async (input) => {
+            if (input.hook_event_name !== "PostCompact") {
+              return {};
+            }
+            const compact = input as PostCompactHookInput;
+            const summary = compact.compact_summary.trim();
+            if (summary) {
+              await prisma.agentChatSession
+                .update({
+                  where: { id: ctx.sessionId },
+                  data: {
+                    summary,
+                    summaryUpToPosition: -1,
+                    claudeAgentLastEventAt: new Date(),
+                  },
+                })
+                .catch(() => undefined);
+            }
+            return {};
+          },
+        ],
+      },
+    ],
+  };
+}
+
 /**
  * 构造 Claude Agent SDK 的 Options。
  *
@@ -274,6 +309,7 @@ export async function buildClaudeAgentOptions(
       emit: input.emit,
       autoApprove: webResearch.autoApprove,
     }),
+    hooks: buildCompactHooks({ sessionId: input.sessionId }),
     // 只启用 SDK 内置 Agent 工具来调起子 agent；Read/Edit/Bash/WebFetch 等内置工具仍不暴露。
     tools: ["Agent"],
     settingSources: [],

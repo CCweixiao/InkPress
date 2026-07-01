@@ -438,6 +438,10 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
           const cm = (m.compact_metadata ?? {}) as Record<string, unknown>;
           const fmt = (n: unknown) =>
             typeof n === "number" ? `${(n / 1000).toFixed(1)}k` : "?";
+          const preTokens =
+            typeof cm.pre_tokens === "number" ? cm.pre_tokens : undefined;
+          const postTokens =
+            typeof cm.post_tokens === "number" ? cm.post_tokens : undefined;
           writer.write({
             type: "data-agent-step",
             id: crypto.randomUUID(),
@@ -448,6 +452,19 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
                 cm.trigger === "auto" ? "（自动）" : ""
               }`,
               status: "completed",
+            },
+          } as never);
+          writer.write({
+            type: "data-context-usage",
+            id: "context-compact",
+            data: {
+              estimatedTokens: postTokens ?? preTokens ?? 0,
+              compressed: true,
+              compactTrigger: cm.trigger === "manual" ? "manual" : "auto",
+              compactPreTokens: preTokens,
+              compactPostTokens: postTokens,
+              compactDurationMs:
+                typeof cm.duration_ms === "number" ? cm.duration_ms : undefined,
             },
           } as never);
         } else if (m.subtype === "status" && m.status === "compacting") {

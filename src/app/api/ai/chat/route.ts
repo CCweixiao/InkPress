@@ -674,7 +674,6 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           id: "context",
           data: {
             estimatedTokens: context.estimatedTokens,
-            budgetTokens: config.contextBudgetTokens,
             articleTokens: context.articleTokens,
             compressed: context.compressed,
             retainedMessages: context.retainedMessages,

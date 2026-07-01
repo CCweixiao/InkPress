@@ -238,9 +238,13 @@ export const ModelSelector = memo(function ModelSelector({
 
 export type ContextUsage = {
   estimatedTokens: number;
-  budgetTokens: number;
   compressed?: boolean;
-  // 正文占用（data-context-usage 已下发；前端不直接渲染，仅供 /compact 后的即时覆盖计算）
+  budgetTokens?: number;
+  compactPreTokens?: number;
+  compactPostTokens?: number;
+  compactTrigger?: "auto" | "manual";
+  compactDurationMs?: number;
+  // 正文占用（data-context-usage 已下发；前端不直接渲染，仅供内部估算）
   articleTokens?: number;
 } | null;
 
@@ -251,15 +255,16 @@ export type LastTurnUsage = {
   totalTokens: number;
 } | null;
 
-function occupancyTone(pct: number) {
-  if (pct > 85) return { dot: "bg-red-500", bar: "bg-red-500", text: "text-red-600" };
-  if (pct > 60) return { dot: "bg-amber-500", bar: "bg-amber-500", text: "text-amber-600" };
-  return { dot: "bg-muted-foreground/50", bar: "bg-primary", text: "text-muted-foreground" };
+function contextTone(contextUsage: ContextUsage) {
+  if (contextUsage?.compressed) {
+    return { dot: "bg-sky-500", icon: "text-sky-600 dark:text-sky-400" };
+  }
+  return { dot: "bg-muted-foreground/50", icon: "text-muted-foreground" };
 }
 
 /**
- * Token 计量：composer 底栏的 chip，显示上下文窗口占用（来自 data-context-usage）。
- * 点击弹出消耗面板：占用进度条 + 上一轮 input/output/reasoning + 模型 + 压缩状态。
+ * Token 计量：composer 底栏的 chip，显示 SDK 报告的上下文规模与上一轮消耗。
+ * 点击弹出消耗面板：最近一次自动压缩前后 + 上一轮 input/output/reasoning + 模型。
  */
 // memo + 稳定引用 props：流式期间 contextUsage/lastTurn/modelName 引用稳定（见 WritingAssistant 的
 // latestContextUsage 叶子 memoize）→ TokenMeter 跳过重渲染，避免底栏数字宽度变化触发 composer 回流。
@@ -267,22 +272,16 @@ export const TokenMeter = memo(function TokenMeter({
   contextUsage,
   lastTurn,
   modelName,
-  budget: budgetProp,
 }: {
   contextUsage: ContextUsage;
   lastTurn: LastTurnUsage;
   modelName?: string;
-  /** 稳定的上下文预算（config 固定值），在 contextUsage 被 clear 清空时兜底，让 chip 仍显示 0/budget。 */
-  budget?: number;
 }) {
   const [open, setOpen] = useState(false);
   const estimated = contextUsage?.estimatedTokens ?? 0;
-  const budget = contextUsage?.budgetTokens ?? budgetProp ?? 0;
-  const pct = budget > 0 ? Math.min(100, Math.round((estimated / budget) * 100)) : 0;
-  const tone = occupancyTone(pct);
-
-  // 始终显示 chip：即使没有用量数据（clear 后 / 首次进入）也展示图标，
-  // estimated 为 0 时显示 0/budget（预算来自历史或暂为 0），展开面板计数为 0。
+  const compactPre = contextUsage?.compactPreTokens;
+  const compactPost = contextUsage?.compactPostTokens;
+  const tone = contextTone(contextUsage);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -293,29 +292,34 @@ export const TokenMeter = memo(function TokenMeter({
           className="inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] hover:bg-accent tabular-nums"
         >
           <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
-          <Gauge className={cn("h-3 w-3", tone.text)} />
-          {budget > 0 ? (
-            <span className={tone.text}>
-              {formatTokens(estimated)}/{formatTokens(budget)}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{formatTokens(estimated)}</span>
-          )}
+          <Gauge className={cn("h-3 w-3", tone.icon)} />
+          <span className={cn(contextUsage?.compressed ? tone.icon : "text-muted-foreground")}>
+            {formatTokens(estimated)}
+          </span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64">
         <div className="text-xs font-semibold">上下文与消耗</div>
-        {budget > 0 && (
+        {estimated > 0 && (
           <div className="mt-2">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-muted-foreground">窗口占用</span>
-              <span className={tone.text}>{pct}%</span>
-            </div>
-            <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className={tone.bar} style={{ width: `${pct}%` }} />
+              <span className="text-muted-foreground">
+                {contextUsage?.compressed ? "压缩后上下文" : "当前上下文估算"}
+              </span>
+              <span className="font-medium">{estimated.toLocaleString()}</span>
             </div>
             <div className="mt-1 text-[10px] text-muted-foreground">
-              {estimated.toLocaleString()} / {budget.toLocaleString()} tokens
+              该数值来自当前消息流或 Claude Agent SDK 自动压缩事件，不代表模型最大窗口。
+            </div>
+          </div>
+        )}
+        {contextUsage?.compressed && (
+          <div className="mt-2 rounded-md border bg-sky-50 px-2 py-1.5 text-[11px] text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+            <div className="font-medium">Claude Agent 已自动压缩上下文</div>
+            <div className="mt-1 text-sky-700 dark:text-sky-300">
+              {typeof compactPre === "number" && typeof compactPost === "number"
+                ? `${compactPre.toLocaleString()} → ${compactPost.toLocaleString()} tokens`
+                : "SDK 已整理早期历史，后续会话将基于压缩后的摘要继续"}
             </div>
           </div>
         )}
@@ -337,9 +341,6 @@ export const TokenMeter = memo(function TokenMeter({
         )}
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10px] text-muted-foreground">
           {modelName && <span>模型 {modelName}</span>}
-          {contextUsage?.compressed && (
-            <span className="text-amber-600">· 历史已压缩</span>
-          )}
         </div>
       </PopoverContent>
     </Popover>
