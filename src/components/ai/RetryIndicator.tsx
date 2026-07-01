@@ -24,7 +24,11 @@ export function RetryIndicator({
   const maxRetries = Number(data.maxRetries ?? 0);
   const delayMs = Number(data.delayMs ?? 0);
   const waitMs = Number(data.waitMs ?? 0);
+  const errorText = typeof data.error === "string" ? data.error : "";
   const isTurn = level === "turn";
+
+  // 根据 error 文本推断原因标签（SDK api_retry 不只限流，也可能是 auth/overloaded 等）
+  const label = inferLabel(errorText);
 
   // turn 级：从 waitMs 倒计时到 0。
   const [remaining, setRemaining] = useState(
@@ -59,7 +63,7 @@ export function RetryIndicator({
           settled && "animate-none"
         )}
       />
-      <span className="shrink-0 font-medium">模型限流</span>
+      <span className="shrink-0 font-medium">{label}</span>
       <span className="min-w-0 flex-1 truncate">{progress}</span>
       {isTurn && !settled && (
         <span className="shrink-0 text-amber-700/80 dark:text-amber-300/80">
@@ -68,4 +72,20 @@ export function RetryIndicator({
       )}
     </div>
   );
+}
+
+/** 根据 SDK api_retry 的 error 文本推断原因标签。 */
+function inferLabel(error: string): string {
+  if (!error) return "模型限流";
+  if (/401|unauthorized|过期|验证不正确|invalid.*key|bad credentials|鉴权/i.test(error))
+    return "Key 无效";
+  if (/429|rate limit|too many|限流|频繁|繁忙|overloaded/i.test(error))
+    return "模型限流";
+  if (/5\d{2}|server error|服务异常|unavailable/i.test(error))
+    return "服务异常";
+  if (/timeout|timed? ?out|超时|ETIMEDOUT|ECONNRESET/i.test(error))
+    return "请求超时";
+  if (/network|fetch failed|ECONNREFUSED|ENOTFOUND|网络/i.test(error))
+    return "网络异常";
+  return "模型限流";
 }

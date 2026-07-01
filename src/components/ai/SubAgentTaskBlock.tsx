@@ -159,10 +159,11 @@ export function SubAgentTaskBlock({
   const taskSteps = useMemo(() => parts.filter(isTaskStep).map(stepFromPart), [parts]);
   const childEvents = useMemo(() => {
     const toolNameByCallId = new Map<string, string>();
-    return parts
+    const events = parts
       .filter((part) => !isTaskStep(part))
       .map((part) => childSummary(part, toolNameByCallId))
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    return events;
   }, [parts]);
   const latest = taskSteps[taskSteps.length - 1] ?? steps[steps.length - 1];
   const running = latest?.status === "running" && !settled;
@@ -270,7 +271,12 @@ export function SubAgentTaskBlock({
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium">{event.title}</span>
                         <span className="text-[10px] text-muted-foreground">
-                          {statusLabel(event.status)}
+                          {statusLabel(
+                            event.status === "running" && !running
+                              ? "completed"
+                              : event.status,
+                            settled
+                          )}
                         </span>
                       </div>
                       <div className="mt-0.5 truncate leading-5 text-muted-foreground">
