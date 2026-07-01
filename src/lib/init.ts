@@ -62,6 +62,9 @@ export async function ensureDataHome(): Promise<void> {
     await ensureDefaultSpace().catch((e) => {
       log.error({ err: e }, "seed 默认空间失败（开发模式）");
     });
+    await runClaudeAgentMigration().catch((e) => {
+      log.error({ err: e }, "迁移 claude-agent 配置失败（开发模式）");
+    });
     return;
   }
 
@@ -114,6 +117,17 @@ export async function ensureDataHome(): Promise<void> {
   await ensureDefaultSpace().catch((e) => {
     log.error({ err: e }, "seed 默认空间失败");
   });
+
+  // 5. 迁移旧 claude-agent 配置到 inkpress.llm（幂等）
+  await runClaudeAgentMigration().catch((e) => {
+    log.error({ err: e }, "迁移 claude-agent 配置失败");
+  });
+}
+
+/** 动态加载并执行 claude-agent → inkpress.llm 迁移（幂等）。 */
+async function runClaudeAgentMigration() {
+  const { migrateClaudeAgentConfig } = await import("@/lib/ai/llm-config");
+  await migrateClaudeAgentConfig();
 }
 
 /**

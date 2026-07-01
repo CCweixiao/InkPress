@@ -37,6 +37,10 @@ export type RunClaudeAgentInput = {
   claudeAgentSessionId?: string;
   /** 本轮路由/斜杠命令建议 Claude 优先加载的 Skill。 */
   preferredSkillIds?: string[];
+  /** 聊天框选择的供应商 id（穿透到 buildClaudeAgentOptions 动态注入模型配置）。 */
+  providerId?: string | null;
+  /** 聊天框选择的模型 id。 */
+  modelId?: string | null;
   messages: UIMessage[];
   abortSignal?: AbortSignal;
 };
@@ -222,6 +226,8 @@ async function runOnce(
     codeSource: input.codeSource,
     claudeAgentSessionId: input.claudeAgentSessionId,
     preferredSkillIds: input.preferredSkillIds,
+    providerId: input.providerId,
+    modelId: input.modelId,
     emit: (part) => writer.write(part),
   });
 

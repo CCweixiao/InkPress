@@ -14,10 +14,6 @@ import {
   WEB_RESEARCH_CONFIG_KEY,
   parseWebResearchConfig,
 } from "@/lib/ai/web-research-config";
-import {
-  CLAUDE_AGENT_CONFIG_KEY,
-  parseClaudeAgentConfig,
-} from "@/lib/ai/claude-agent-config";
 import { WECHAT_CONFIG_KEY, parseWechatConfig } from "@/lib/wechat/config";
 import { APPEARANCE_CONFIG_KEY, parseAppearanceConfig } from "@/lib/appearance-config";
 import { UI_PREFERENCES_KEY, parseUiPreferences } from "@/lib/ui-preferences";
@@ -43,7 +39,6 @@ function validateConfigValue(key: string, value: string) {
   else if (key === LLM_CONFIG_KEY) parseLlmConfigs(value);
   else if (key === AGENT_CONFIG_KEY) parseAgentConfig(value);
   else if (key === WEB_RESEARCH_CONFIG_KEY) parseWebResearchConfig(value);
-  else if (key === CLAUDE_AGENT_CONFIG_KEY) parseClaudeAgentConfig(value);
   else if (key === WECHAT_CONFIG_KEY) parseWechatConfig(value);
   else if (key === APPEARANCE_CONFIG_KEY) parseAppearanceConfig(value);
   else if (key === UI_PREFERENCES_KEY) parseUiPreferences(value);
@@ -142,27 +137,6 @@ function maskConfigs(
         return item;
       }
     }
-    if (item.key === CLAUDE_AGENT_CONFIG_KEY) {
-      try {
-        const parsed = JSON.parse(item.value) as Record<string, unknown>;
-        return {
-          ...item,
-          value: JSON.stringify(
-            {
-              ...parsed,
-              apiKey:
-                typeof parsed.apiKey === "string" && parsed.apiKey
-                  ? "********"
-                  : "",
-            },
-            null,
-            2
-          ),
-        };
-      } catch {
-        return item;
-      }
-    }
     if (item.key === WECHAT_CONFIG_KEY) {
       try {
         const parsed = JSON.parse(item.value) as Record<string, unknown>;
@@ -230,7 +204,6 @@ export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => 
     parsed.data.key === STORAGE_CONFIG_KEY ||
     parsed.data.key === OSS_CONFIG_KEY ||
     parsed.data.key === AGENT_CONFIG_KEY ||
-    parsed.data.key === CLAUDE_AGENT_CONFIG_KEY ||
     parsed.data.key === WECHAT_CONFIG_KEY
   ) {
     const existing = await prisma.systemConfig.findUnique({
@@ -306,12 +279,6 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
     if (key === WECHAT_CONFIG_KEY) {
       if (newVal.secret === "********" || newVal.secret === "") {
         newVal.secret = oldVal.secret ?? "";
-      }
-      return JSON.stringify(newVal, null, 2);
-    }
-    if (key === CLAUDE_AGENT_CONFIG_KEY) {
-      if (newVal.apiKey === "********" || newVal.apiKey === "") {
-        newVal.apiKey = oldVal.apiKey ?? "";
       }
       return JSON.stringify(newVal, null, 2);
     }

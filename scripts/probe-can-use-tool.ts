@@ -5,13 +5,13 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInkPressMcpServer } from "../src/lib/ai/inkpress-mcp-server";
 import { listSkills } from "../src/lib/ai/skills";
-import { getClaudeAgentConfig } from "../src/lib/ai/claude-agent-config";
+import { chooseLlmConfig } from "../src/lib/ai/llm-config";
 import { buildInkPressSystemPrompt } from "../src/lib/ai/system-prompt";
 
 async function main() {
-  const cfg = await getClaudeAgentConfig();
-  if (!cfg.apiKey) {
-    console.error("[probe] 缺 API Key");
+  const cfg = await chooseLlmConfig();
+  if (!cfg || !cfg.apiKey) {
+    console.error("[probe] 缺 AI 模型配置");
     process.exit(1);
   }
   const skillCatalog = await listSkills();
@@ -40,7 +40,7 @@ async function main() {
         ANTHROPIC_AUTH_TOKEN: cfg.apiKey,
         ANTHROPIC_API_KEY: undefined,
       },
-      model: cfg.model,
+      model: cfg.model.id,
       systemPrompt: buildInkPressSystemPrompt({ target: ctx.target, skillCatalog }),
       mcpServers: { inkpress: mcp },
       // 关键：set_article_digest 不在 allowedTools → 应回调 canUseTool
