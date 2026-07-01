@@ -58,9 +58,11 @@ import {
 import {
   ModelSelector,
   TokenMeter,
+  TurnUsageChip,
   useModelSelection,
   type ContextUsage,
   type LastTurnUsage,
+  type TurnUsageMeta,
 } from "./agent-composer-parts";
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -1395,6 +1397,9 @@ const AgentMessageRow = memo(function AgentMessageRow({
   profileId,
 }: AgentMessageRowProps) {
   const allParts = message.parts as unknown as AgentPart[];
+  // P1.5：assistant 回复底部的 token chip（读 message.metadata.usage，由 route onFinish 落盘）。
+  const turnUsageMeta =
+    (message as { metadata?: { usage?: TurnUsageMeta } }).metadata?.usage ?? null;
   // data-agent-retry（SDK 轮内重试会连发多条）只保留最后一条，避免堆积。
   let lastRetryIdx = -1;
   for (let i = allParts.length - 1; i >= 0; i -= 1) {
@@ -1487,6 +1492,14 @@ const AgentMessageRow = memo(function AgentMessageRow({
           </Fragment>
         );
       })}
+      {message.role === "assistant" && (
+        <div className="flex justify-end">
+          <TurnUsageChip
+            usage={turnUsageMeta}
+            streaming={isLastAssistant && !settled}
+          />
+        </div>
+      )}
     </div>
   );
 }, (prev, next) => {

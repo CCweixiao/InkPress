@@ -11,7 +11,11 @@ import {
   readTechnicalDocumentContent,
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
-import { runClaudeAgentRuntime } from "@/lib/ai/claude-agent-runtime";
+import {
+  runClaudeAgentRuntime,
+  readUsageFromError,
+} from "@/lib/ai/claude-agent-runtime";
+import { upsertUsageTurn } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
 import { createAgentEventWriter } from "@/lib/ai/agent-event-writer";
 import {
@@ -471,6 +475,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         outputTokens: number;
         reasoningTokens: number;
         totalTokens: number;
+        cacheReadInputTokens?: number;
+        cacheCreationInputTokens?: number;
+        // P1.5：附加估算成本与状态，供聊天窗口 token chip 渲染（partial/error 可识别）。
+        costUsd?: number;
+        status?: "completed" | "partial" | "error";
+        source?: "sdk-result" | "step-fallback";
       }
     | undefined;
   try {
@@ -511,8 +521,11 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       execute: async ({ writer }) => {
         // P0：包一层 seq 注入器，为本 turn 的 data/tool part 打上单调 seq + turnId + source。
         // 下游 runtime/adapter/MCP/canUseTool/工具 execute 都汇流到 ew，保证无断号。
+        // P1.5：turnId 同时作为 AgentUsageTurn 的应用级轮次键（按 (sessionId, turnId) upsert）。
+        const turnId = crypto.randomUUID();
+        const turnStartedAt = new Date();
         const ew = createAgentEventWriter(writer, {
-          turnId: crypto.randomUUID(),
+          turnId,
           source: "claude-agent-sdk",
         });
         const messageText = lastUserText(mergedMessages);
@@ -667,40 +680,102 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           return;
         }
 
-        const outcome = await runClaudeAgentRuntime(
-          {
-            target: {
-              kind: target.kind,
-              id: target.id,
-              title: loaded.title,
-              markdown: articleMarkdown,
-              digest: loaded.digest,
-              documentType: loaded.documentType,
-              snapshotHash: loaded.snapshotHash,
-              profileId: loaded.profileId ?? undefined,
+        try {
+          const outcome = await runClaudeAgentRuntime(
+            {
+              target: {
+                kind: target.kind,
+                id: target.id,
+                title: loaded.title,
+                markdown: articleMarkdown,
+                digest: loaded.digest,
+                documentType: loaded.documentType,
+                snapshotHash: loaded.snapshotHash,
+                profileId: loaded.profileId ?? undefined,
+              },
+              sessionId: session.id,
+              codeSource,
+              claudeAgentSessionId: session.claudeAgentSessionId ?? undefined,
+              preferredSkillIds,
+              messages: mergedMessages,
+              abortSignal: req.signal,
             },
-            sessionId: session.id,
-            codeSource,
-            claudeAgentSessionId: session.claudeAgentSessionId ?? undefined,
-            preferredSkillIds,
-            messages: mergedMessages,
-            abortSignal: req.signal,
-          },
-          ew
-        );
-        if (outcome.usage) {
-          turnUsage = outcome.usage;
-          await prisma.agentChatSession.update({
-            where: { id: session.id },
-            data: {
-              lastInputTokens: outcome.usage.inputTokens,
-              lastOutputTokens: outcome.usage.outputTokens,
-              lastReasoningTokens: outcome.usage.reasoningTokens,
-              lastTotalTokens: outcome.usage.totalTokens,
-              runtime: "claude-agent",
-              claudeAgentSessionId: outcome.sessionId,
-            },
-          });
+            ew
+          );
+          if (outcome.usage) {
+            turnUsage = {
+              ...outcome.usage,
+              totalTokens: outcome.usageSummary?.totalTokens ?? outcome.usage.totalTokens,
+              cacheReadInputTokens: outcome.usageSummary?.cacheReadInputTokens,
+              cacheCreationInputTokens: outcome.usageSummary?.cacheCreationInputTokens,
+              costUsd: outcome.usageSummary?.costUsd,
+              status: outcome.usageSummary?.status,
+              source: outcome.usageSummary?.source,
+            };
+            // last*Tokens 仅作 composer 计量快捷显示，不是历史统计事实源（PDC §12.3）。
+            await prisma.agentChatSession.update({
+              where: { id: session.id },
+              data: {
+                lastInputTokens: outcome.usage.inputTokens,
+                lastOutputTokens: outcome.usage.outputTokens,
+                lastReasoningTokens: outcome.usage.reasoningTokens,
+                lastTotalTokens: outcome.usage.totalTokens,
+                runtime: "claude-agent",
+                claudeAgentSessionId: outcome.sessionId,
+              },
+            });
+          }
+          // 独立 usage ledger：正常完成也写入（status=completed）。
+          if (outcome.usageSummary) {
+            await upsertUsageTurn(
+              {
+                sessionId: session.id,
+                turnId,
+                targetKind: target.kind,
+                targetId: target.id,
+                providerId: parsed.data.providerId ?? null,
+                modelId: parsed.data.modelId ?? null,
+                sdkSessionId: outcome.sessionId ?? session.claudeAgentSessionId ?? null,
+                startedAt: turnStartedAt,
+              },
+              outcome.usageSummary
+            ).catch((error) =>
+              log.warn({ err: error, sessionId: session.id }, "AgentUsageTurn 写入失败（不阻断对话）")
+            );
+          }
+        } catch (error) {
+          // 失败/中断轮次：runtime 已把 usage summary 挂到 error 上（step-fallback/error）。
+          // 仍记入 ledger（PDC §12.4：成功、错误 result 都要记录 usage；中断用 step fallback 兜底）。
+          const summary = readUsageFromError(error);
+          if (summary) {
+            turnUsage = {
+              inputTokens: summary.inputTokens,
+              outputTokens: summary.outputTokens,
+              reasoningTokens: 0,
+              totalTokens: summary.totalTokens,
+              cacheReadInputTokens: summary.cacheReadInputTokens,
+              cacheCreationInputTokens: summary.cacheCreationInputTokens,
+              costUsd: summary.costUsd,
+              status: summary.status,
+              source: summary.source,
+            };
+            await upsertUsageTurn(
+              {
+                sessionId: session.id,
+                turnId,
+                targetKind: target.kind,
+                targetId: target.id,
+                providerId: parsed.data.providerId ?? null,
+                modelId: parsed.data.modelId ?? null,
+                sdkSessionId: session.claudeAgentSessionId ?? null,
+                startedAt: turnStartedAt,
+              },
+              summary
+            ).catch((writeError) =>
+              log.warn({ err: writeError, sessionId: session.id }, "AgentUsageTurn 写入失败（不阻断对话）")
+            );
+          }
+          throw error;
         }
         return;
       },

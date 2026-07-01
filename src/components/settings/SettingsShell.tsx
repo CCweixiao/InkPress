@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SystemConfigManager, type ConfigTab } from "./SystemConfigManager";
 import { LogsViewer } from "./LogsViewer";
+import { UsageDashboard } from "./UsageDashboard";
 import {
   SETTINGS_NAV,
   findNavNode,
@@ -143,7 +144,10 @@ export function SettingsShell() {
         <div className={activeKey === "logs" ? "block" : "hidden"}>
           <LogsViewer />
         </div>
-        <div className={activeKey === "logs" ? "hidden" : "block"}>
+        <div className={activeKey === "usage" ? "block" : "hidden"}>
+          <UsageDashboard />
+        </div>
+        <div className={isConfigTab(activeKey) ? "block" : "hidden"}>
           <SystemConfigManager activeTab={isConfigTab(activeKey) ? activeKey : "agent"} />
         </div>
       </div>

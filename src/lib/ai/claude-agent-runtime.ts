@@ -11,6 +11,7 @@ import {
 import type { CodeSourceReference } from "@/lib/ai/code-source";
 import {
   createSdkToUiAdapter,
+  type AgentTurnUsageSummary,
   type ClaudeAgentTurnUsage,
   type UIStreamWriterLike,
 } from "@/lib/ai/agent-sdk-stream-adapter";
@@ -42,8 +43,99 @@ export type RunClaudeAgentInput = {
 
 export type RunClaudeAgentOutcome = {
   usage?: ClaudeAgentTurnUsage;
+  /** P1.5：完整轮次 usage 汇总（含 cache/cost/modelUsage/status/source）。 */
+  usageSummary?: AgentTurnUsageSummary;
   sessionId?: string;
 };
+
+type RunOnceErrorKind = "result-error" | "abort" | "throw";
+
+type RunOnceResult = {
+  outcome: RunClaudeAgentOutcome;
+  error?: Error;
+  errorKind?: RunOnceErrorKind;
+};
+
+/** 合并两次 attempt 的 usage 汇总（限流重试累加，PDC §12.5）。status/source 由调用方按最终结果重写。 */
+function mergeUsageSummaries(
+  acc: AgentTurnUsageSummary | undefined,
+  next: AgentTurnUsageSummary
+): AgentTurnUsageSummary {
+  if (!acc) return { ...next };
+  return {
+    inputTokens: acc.inputTokens + next.inputTokens,
+    outputTokens: acc.outputTokens + next.outputTokens,
+    cacheReadInputTokens: acc.cacheReadInputTokens + next.cacheReadInputTokens,
+    cacheCreationInputTokens:
+      acc.cacheCreationInputTokens + next.cacheCreationInputTokens,
+    totalTokens: acc.totalTokens + next.totalTokens,
+    costUsd: acc.costUsd + next.costUsd,
+    // 同模型多次 attempt：保留每次的 modelUsage 数组拼接；跨模型时由调用方不关心明细。
+    modelUsage: mergeModelUsageObjects(acc.modelUsage, next.modelUsage),
+    status: next.status,
+    source: next.source,
+  };
+}
+
+function mergeModelUsageObjects(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): Record<string, unknown> {
+  // 同一 turn 内模型一般一致；跨 attempt 取最近一次非空的 modelUsage（数组或对象均可）。
+  const has = (v: Record<string, unknown>) =>
+    Array.isArray(v) ? v.length > 0 : !!v && Object.keys(v).length > 0;
+  return has(b) ? b : has(a) ? a : b;
+}
+
+/** 用最终 status/source 收口合并后的 summary（last*Tokens 快显用 input/output 派生）。 */
+function finalizeOutcome(
+  base: RunClaudeAgentOutcome,
+  merged: AgentTurnUsageSummary | undefined,
+  status: AgentTurnUsageSummary["status"],
+  hadSdkResult: boolean
+): RunClaudeAgentOutcome {
+  if (!merged) return base;
+  const summary: AgentTurnUsageSummary = {
+    ...merged,
+    status,
+    source: hadSdkResult ? "sdk-result" : "step-fallback",
+  };
+  return {
+    ...base,
+    usageSummary: summary,
+    usage: {
+      inputTokens: summary.inputTokens,
+      outputTokens: summary.outputTokens,
+      reasoningTokens: 0,
+      // 上下文计量口径：input+output（cache 不计入上下文窗口占用，与既有 TokenMeter 一致）。
+      totalTokens: summary.inputTokens + summary.outputTokens,
+    },
+  };
+}
+
+/** 把 usage summary 挂到错误对象上（不改变错误身份，AbortError 仍可被 isAbortError 识别）。 */
+function attachUsageToError(
+  err: Error,
+  summary: AgentTurnUsageSummary | undefined
+): Error {
+  if (summary) {
+    (err as Error & { usageSummary?: AgentTurnUsageSummary }).usageSummary = summary;
+  }
+  return err;
+}
+
+/** 从错误对象上读回挂载的 usage summary（route 在 catch 分支持久化失败轮次用量）。 */
+export function readUsageFromError(
+  err: unknown
+): AgentTurnUsageSummary | undefined {
+  if (err && typeof err === "object" && "usageSummary" in err) {
+    const summary = (err as { usageSummary?: unknown }).usageSummary;
+    if (summary && typeof summary === "object") {
+      return summary as AgentTurnUsageSummary;
+    }
+  }
+  return undefined;
+}
 
 /** 取最近一条用户消息的纯文本作为 query 的 prompt（P0 单轮）。 */
 function lastUserText(messages: UIMessage[]): string {
@@ -89,13 +181,17 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 /**
  * 单轮运行：构造 options + 跑 SDK query 流 + 适配进 UIMessage。
- * result.isError（含限流用尽）时抛出，交由上层重试循环或 route onError 处理。
+ *
+ * 不再「result.isError 时直接 throw 丢弃 usage」：把 outcome（含 usageSummary）连同 error 一起返回，
+ * 由上层 runClaudeAgentRuntime 决定重试/收口，并在最终错误上挂载 usageSummary（route catch 时持久化）。
+ * - result.isError → errorKind="result-error"，仍带 summary（status=error, sdk-result）。
+ * - for-await 抛错（abort/网络/限流穿透）→ 尽量用 step fallback 兜底 summary（status=partial）。
  */
 async function runOnce(
   input: RunClaudeAgentInput,
   writer: UIStreamWriterLike,
   prompt: string
-): Promise<RunClaudeAgentOutcome> {
+): Promise<RunOnceResult> {
   const baseOptions = await buildClaudeAgentOptions({
     target: input.target,
     sessionId: input.sessionId,
@@ -125,17 +221,45 @@ async function runOnce(
   };
 
   const adapter = createSdkToUiAdapter(writer);
-  const stream = query({ prompt, options });
-  for await (const message of stream) {
-    adapter.consume(message as SDKMessage);
+  try {
+    const stream = query({ prompt, options });
+    for await (const message of stream) {
+      adapter.consume(message as SDKMessage);
+    }
+    adapter.flush();
+  } catch (err) {
+    // for-await 抛错（abort / 网络 / 限流穿透）：尽量用 step fallback 兜底 usage。
+    const error = err instanceof Error ? err : new Error(String(err));
+    return {
+      outcome: {
+        usageSummary: adapter.getSummary(),
+        sessionId: adapter.result.sessionId,
+      },
+      error,
+      errorKind: isAbortError(error) ? "abort" : "throw",
+    };
   }
-  adapter.flush();
 
   const { result } = adapter;
+  const usageSummary = adapter.getSummary();
   if (result.isError) {
-    throw new Error(result.errorMessage || "Claude Agent 运行出错。");
+    return {
+      outcome: {
+        usage: result.usage,
+        usageSummary,
+        sessionId: result.sessionId,
+      },
+      error: new Error(result.errorMessage || "Claude Agent 运行出错。"),
+      errorKind: "result-error",
+    };
   }
-  return { usage: result.usage, sessionId: result.sessionId };
+  return {
+    outcome: {
+      usage: result.usage,
+      usageSummary,
+      sessionId: result.sessionId,
+    },
+  };
 }
 
 /**
@@ -177,14 +301,17 @@ export async function retryOnRateLimit<R>(
 }
 
 /**
- * 运行 Claude Agent Runtime（带限流重试）。
+ * 运行 Claude Agent Runtime（带限流重试 + 跨 attempt usage 合并）。
  *
- * - 用最近一条 user 消息作为单轮 prompt（多轮记忆留待 P5 resume）。
+ * - 用最近一条 user 消息作为单轮 prompt（多轮记忆由 Claude Agent SDK session/resume 承载）。
  * - 单轮失败若为**限流**（429/访问量过大）→ sleep（最多 RATE_LIMIT_RETRY_WAIT_MS，可中止）
  *   后**整轮重试**，最多 RATE_LIMIT_MAX_RETRIES 次；每次重试前下发 `data-agent-retry`
  *   `{level:"turn"}` 让前端展示「第 N/M 轮重试 + 倒计时」。
+ * - 跨 attempt 的 usage 按用户轮次累加（PDC §12.5）：失败 attempt 已产生的 cost/usage
+ *   合并进最终 AgentUsageTurn，最终 status 由收口结果决定（completed/error/partial）。
  * - SDK 自身的轮内重试（api_retry）由 adapter 透传为 `data-agent-retry {level:"sdk"}`。
- * - 非限流错误 / 重试用尽 / 用户取消 → 上抛，交由 route onError 归类展示。
+ * - 成功 → 返回 outcome（usage + usageSummary）；失败/中止 → throw error（携带 usageSummary，
+ *   route catch 时持久化失败轮次用量，避免「失败不消耗」的误解）。
  */
 export async function runClaudeAgentRuntime(
   input: RunClaudeAgentInput,
@@ -195,19 +322,58 @@ export async function runClaudeAgentRuntime(
     throw new Error("没有可发送的用户消息。");
   }
 
-  return retryOnRateLimit(() => runOnce(input, writer, prompt), {
-    signal: input.abortSignal,
-    onRetry: (attempt) => {
-      writer.write({
-        type: "data-agent-retry",
-        id: crypto.randomUUID(),
-        data: {
-          level: "turn",
-          attempt,
-          maxRetries: RATE_LIMIT_MAX_RETRIES,
-          waitMs: RATE_LIMIT_RETRY_WAIT_MS,
-        },
-      } as never);
-    },
-  });
+  let merged: AgentTurnUsageSummary | undefined;
+  let hadSdkResult = false;
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    const { outcome, error, errorKind } = await runOnce(input, writer, prompt);
+    if (outcome.usageSummary) {
+      if (outcome.usageSummary.source === "sdk-result") hadSdkResult = true;
+      merged = mergeUsageSummaries(merged, outcome.usageSummary);
+    }
+
+    if (!error) {
+      return finalizeOutcome(outcome, merged, "completed", hadSdkResult);
+    }
+
+    // 用户取消 / 断连中止：不再重试，挂 partial usage 后上抛（route 归类为「对话已取消」）。
+    if (errorKind === "abort" || isAbortError(error)) {
+      throw attachUsageToError(
+        error,
+        finalizeOutcome(outcome, merged, "partial", hadSdkResult).usageSummary
+      );
+    }
+
+    // 非限流错误 / 重试用尽：挂 error usage 后上抛（route onError 归类展示）。
+    // result-error 也可能是 SDK result 承载的 429/访问量过大，仍需进入整轮重试。
+    if (!isRateLimitError(error) || attempt > RATE_LIMIT_MAX_RETRIES) {
+      throw attachUsageToError(
+        error,
+        finalizeOutcome(outcome, merged, "error", hadSdkResult).usageSummary
+      );
+    }
+
+    // 限流：下发「整轮重试」提示后可中止 sleep，再重试。
+    writer.write({
+      type: "data-agent-retry",
+      id: crypto.randomUUID(),
+      data: {
+        level: "turn",
+        attempt,
+        maxRetries: RATE_LIMIT_MAX_RETRIES,
+        waitMs: RATE_LIMIT_RETRY_WAIT_MS,
+      },
+    } as never);
+    log.warn({ attempt, maxRetries: RATE_LIMIT_MAX_RETRIES }, "claude agent 限流，sleep 后整轮重试");
+    try {
+      await abortableSleep(RATE_LIMIT_RETRY_WAIT_MS, input.abortSignal);
+    } catch {
+      // sleep 期间用户取消 → 当作 abort 上抛（route 归类为「对话已取消」）。
+      throw attachUsageToError(
+        new DOMException("aborted", "AbortError"),
+        finalizeOutcome(outcome, merged, "partial", hadSdkResult).usageSummary
+      );
+    }
+  }
 }

@@ -20,8 +20,37 @@ export type ClaudeAgentTurnUsage = {
   totalTokens: number;
 };
 
+/** 单条 assistant step 的运行时 token 采集（不持久化 step 明细，仅作中断 fallback 输入）。 */
+export type RuntimeStepUsage = {
+  messageId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+};
+
+/**
+ * 单个对话轮次的完整 usage 汇总（PDC §12.4）。
+ * - source=sdk-result：来自 result.usage / total_cost_usd / modelUsage（权威）。
+ * - source=step-fallback：来自内存中按 messageId 去重的 step 累加（中断/abort/无 result 兜底）。
+ * - status：completed（正常 result）/ error（错误 result）/ partial（step-fallback）。
+ */
+export type AgentTurnUsageSummary = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  modelUsage: Record<string, unknown>;
+  status: "completed" | "partial" | "error";
+  source: "sdk-result" | "step-fallback";
+};
+
 export type ClaudeAgentTurnResult = {
   usage?: ClaudeAgentTurnUsage;
+  /** 完整轮次汇总（含 cache/cost/modelUsage/status/source）；正常与错误 result 都会填充。 */
+  summary?: AgentTurnUsageSummary;
   costUsd?: number;
   sessionId?: string;
   isError: boolean;
@@ -52,8 +81,15 @@ type ResultLike = {
   session_id?: string;
   total_cost_usd?: number;
   usage?: Record<string, number>;
+  modelUsage?: unknown;
   result?: string;
   errors?: string[];
+};
+
+type AssistantMessageLike = {
+  id?: string;
+  content?: AssistantContentBlock[];
+  usage?: Record<string, number>;
 };
 
 export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
@@ -65,8 +101,67 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   const taskTypeById = new Map<string, string>();
   const openTaskIds = new Set<string>();
   const hiddenTaskIds = new Set<string>();
+  // P1.5：assistant step usage 内存表，按 messageId 去重（同 id 取各 token 字段最大值）。
+  // 仅作为中断/abort/无 result 时的 fallback 输入，绝不持久化 step 明细。
+  const stepUsageByMessageId = new Map<string, RuntimeStepUsage>();
 
   const result: ClaudeAgentTurnResult = { isError: false };
+
+  /** 读取 usage 对象中的 cache token（SDK 各端点字段差异，统一兜底为 0）。 */
+  function readCacheTokens(u: Record<string, number> | undefined) {
+    const cacheRead = u?.cache_read_input_tokens ?? 0;
+    const cacheCreation = u?.cache_creation_input_tokens ?? 0;
+    return { cacheRead, cacheCreation };
+  }
+
+  /** 记录一条 assistant step usage：同 messageId 取各字段最大值去重（PDC §12.4）。 */
+  function recordStepUsage(messageId: string, u: Record<string, number> | undefined) {
+    if (!messageId) return;
+    const inputTokens = u?.input_tokens ?? 0;
+    const outputTokens = u?.output_tokens ?? 0;
+    const { cacheRead, cacheCreation } = readCacheTokens(u);
+    const prev = stepUsageByMessageId.get(messageId);
+    if (!prev) {
+      stepUsageByMessageId.set(messageId, {
+        messageId,
+        inputTokens,
+        outputTokens,
+        cacheReadInputTokens: cacheRead,
+        cacheCreationInputTokens: cacheCreation,
+      });
+      return;
+    }
+    prev.inputTokens = Math.max(prev.inputTokens, inputTokens);
+    prev.outputTokens = Math.max(prev.outputTokens, outputTokens);
+    prev.cacheReadInputTokens = Math.max(prev.cacheReadInputTokens, cacheRead);
+    prev.cacheCreationInputTokens = Math.max(prev.cacheCreationInputTokens, cacheCreation);
+  }
+
+  /** 汇总 step fallback（中断/无 result 时调用）：累加去重后的 step usage。 */
+  function buildStepFallbackSummary(status: AgentTurnUsageSummary["status"]): AgentTurnUsageSummary | undefined {
+    if (stepUsageByMessageId.size === 0) return undefined;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadInputTokens = 0;
+    let cacheCreationInputTokens = 0;
+    for (const step of stepUsageByMessageId.values()) {
+      inputTokens += step.inputTokens;
+      outputTokens += step.outputTokens;
+      cacheReadInputTokens += step.cacheReadInputTokens;
+      cacheCreationInputTokens += step.cacheCreationInputTokens;
+    }
+    return {
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      totalTokens: inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens,
+      costUsd: 0,
+      modelUsage: {},
+      status,
+      source: "step-fallback",
+    };
+  }
 
   function closeTaskById(
     taskId: string,
@@ -198,14 +293,18 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
       }
       case "assistant": {
         // 兜底：若本次没有任何增量（GLM 等可能只给整段），先记下文本，留给 flush 落出。
-        const content = (m.message as { content?: AssistantContentBlock[] } | undefined)
-          ?.content;
+        const msg = (m.message as AssistantMessageLike | undefined) ?? {};
+        const content = msg.content;
         if (Array.isArray(content)) {
           const text = content
             .filter((b) => b.type === "text" && typeof b.text === "string")
             .map((b) => b.text ?? "")
             .join("");
           if (text) lastText = text;
+        }
+        // P1.5：采集 step usage（按 messageId 去重），仅作中断 fallback。
+        if (typeof msg.id === "string" && msg.id) {
+          recordStepUsage(msg.id, msg.usage);
         }
         break;
       }
@@ -216,13 +315,31 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         const u = r.usage ?? {};
         const inputTokens = u.input_tokens ?? 0;
         const outputTokens = u.output_tokens ?? 0;
+        const { cacheRead, cacheCreation } = readCacheTokens(u);
+        const isError = r.subtype !== "success" || r.is_error;
         result.usage = {
           inputTokens,
           outputTokens,
           reasoningTokens: 0,
           totalTokens: inputTokens + outputTokens,
         };
-        if (r.subtype !== "success" || r.is_error) {
+        // 完整轮次汇总：正常与错误 result 都计入（PDC §12.4）。source=sdk-result（权威）。
+        result.summary = {
+          inputTokens,
+          outputTokens,
+          cacheReadInputTokens: cacheRead,
+          cacheCreationInputTokens: cacheCreation,
+          totalTokens:
+            inputTokens + outputTokens + cacheRead + cacheCreation,
+          costUsd: typeof r.total_cost_usd === "number" ? r.total_cost_usd : 0,
+          modelUsage:
+            r.modelUsage && typeof r.modelUsage === "object"
+              ? (r.modelUsage as Record<string, unknown>)
+              : {},
+          status: isError ? "error" : "completed",
+          source: "sdk-result",
+        };
+        if (isError) {
           result.isError = true;
           result.errorMessage =
             (Array.isArray(r.errors) && r.errors[0]) ||
@@ -543,5 +660,16 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     }
   }
 
-  return { result, consume, flush };
+  /**
+   * 取本轮 usage 汇总：
+   * - 有 result → result.summary（sdk-result，completed/error，权威）。
+   * - 无 result（中断/abort/抛错）→ 按 messageId 去重后的 step 累加（partial，step-fallback）。
+   * - 若全程无任何 usage（无 result 且无 assistant step）→ undefined（不写统计）。
+   */
+  function getSummary(): AgentTurnUsageSummary | undefined {
+    if (result.summary) return result.summary;
+    return buildStepFallbackSummary("partial");
+  }
+
+  return { result, consume, flush, getSummary };
 }

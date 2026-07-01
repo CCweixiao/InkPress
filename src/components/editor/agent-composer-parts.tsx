@@ -70,6 +70,103 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+/** 估算成本格式：< 0.01 用 4 位小数，否则 2 位（PDC §12.7 chip 示例 `· $0.03`）。 */
+export function formatCost(usd: number): string {
+  if (usd <= 0) return "";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+/** 单条 assistant 回复底部的低存在感 token chip（PDC §12.7）。 */
+export type TurnUsageMeta = {
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  costUsd?: number;
+  status?: "completed" | "partial" | "error";
+  source?: "sdk-result" | "step-fallback";
+};
+
+export function TurnUsageChip({
+  usage,
+  streaming,
+}: {
+  usage: TurnUsageMeta | null | undefined;
+  /** 当前消息仍在流式输出（无 usage 时显示「统计中…」）。 */
+  streaming?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const total = usage?.totalTokens ?? 0;
+
+  // 流式中且尚无 usage：显示「统计中…」，不占主输出高度。
+  if (streaming && !total) {
+    return (
+      <span className="text-[10px] text-muted-foreground/50">统计中…</span>
+    );
+  }
+  if (!usage || total <= 0) return null;
+
+  const partial = usage.status === "partial" || usage.source === "step-fallback";
+  const error = usage.status === "error";
+  const cost = formatCost(usage.costUsd ?? 0);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground hover:bg-accent/40 transition-colors"
+        >
+          <Gauge className="h-3 w-3" />
+          <span>{formatTokens(total)} tokens</span>
+          {cost && <span>· {cost}</span>}
+          {partial && <span className="text-amber-600/80">· 估算</span>}
+          {error && <span className="text-red-500/80">· 已计入错误消耗</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-60">
+        <div className="text-xs font-semibold">本轮用量</div>
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+          <span className="text-muted-foreground">输入</span>
+          <span className="text-right">{(usage.inputTokens ?? 0).toLocaleString()}</span>
+          <span className="text-muted-foreground">输出</span>
+          <span className="text-right">{(usage.outputTokens ?? 0).toLocaleString()}</span>
+          {!!usage.cacheReadInputTokens && (
+            <>
+              <span className="text-muted-foreground">Cache 读</span>
+              <span className="text-right">{usage.cacheReadInputTokens.toLocaleString()}</span>
+            </>
+          )}
+          {!!usage.cacheCreationInputTokens && (
+            <>
+              <span className="text-muted-foreground">Cache 写</span>
+              <span className="text-right">{usage.cacheCreationInputTokens.toLocaleString()}</span>
+            </>
+          )}
+          <span className="text-muted-foreground">合计</span>
+          <span className="text-right font-medium">{total.toLocaleString()}</span>
+          {cost && (
+            <>
+              <span className="text-muted-foreground">估算成本</span>
+              <span className="text-right">{cost}</span>
+            </>
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10px] text-muted-foreground">
+          <span>
+            状态：
+            {error ? "错误完成" : partial ? "中断估算" : "完成"}
+          </span>
+          <span>· 来源：{usage.source === "step-fallback" ? "估算兜底" : "SDK 汇总"}</span>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /**
  * 模型选择器：composer 底栏的单 chip，点击弹出按 provider 分组的模型列表。
  * 保留 provider×model 语义，收敛成单入口（Codex/Cursor 范式）。
