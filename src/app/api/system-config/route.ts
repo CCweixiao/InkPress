@@ -11,6 +11,10 @@ import {
 } from "@/lib/storage-config";
 import { AGENT_CONFIG_KEY, parseAgentConfig } from "@/lib/ai/agent-config";
 import {
+  WEB_RESEARCH_CONFIG_KEY,
+  parseWebResearchConfig,
+} from "@/lib/ai/web-research-config";
+import {
   CLAUDE_AGENT_CONFIG_KEY,
   parseClaudeAgentConfig,
 } from "@/lib/ai/claude-agent-config";
@@ -38,6 +42,7 @@ function validateConfigValue(key: string, value: string) {
   else if (key === OSS_CONFIG_KEY) parseOssConfig(value);
   else if (key === LLM_CONFIG_KEY) parseLlmConfigs(value);
   else if (key === AGENT_CONFIG_KEY) parseAgentConfig(value);
+  else if (key === WEB_RESEARCH_CONFIG_KEY) parseWebResearchConfig(value);
   else if (key === CLAUDE_AGENT_CONFIG_KEY) parseClaudeAgentConfig(value);
   else if (key === WECHAT_CONFIG_KEY) parseWechatConfig(value);
   else if (key === APPEARANCE_CONFIG_KEY) parseAppearanceConfig(value);
@@ -80,6 +85,27 @@ function maskConfigs(
               accessKeySecret:
                 typeof parsed.accessKeySecret === "string" &&
                 parsed.accessKeySecret
+                  ? "********"
+                  : "",
+            },
+            null,
+            2
+          ),
+        };
+      } catch {
+        return item;
+      }
+    }
+    if (item.key === WEB_RESEARCH_CONFIG_KEY) {
+      try {
+        const parsed = JSON.parse(item.value) as Record<string, unknown>;
+        return {
+          ...item,
+          value: JSON.stringify(
+            {
+              ...parsed,
+              tavilyApiKey:
+                typeof parsed.tavilyApiKey === "string" && parsed.tavilyApiKey
                   ? "********"
                   : "",
             },
@@ -261,6 +287,12 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
         return item;
       });
       return JSON.stringify(merged, null, 2);
+    }
+    if (key === WEB_RESEARCH_CONFIG_KEY) {
+      if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {
+        newVal.tavilyApiKey = oldVal.tavilyApiKey ?? "";
+      }
+      return JSON.stringify(newVal, null, 2);
     }
     if (key === AGENT_CONFIG_KEY) {
       if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {

@@ -18,7 +18,13 @@ import {
 } from "./settings-nav";
 
 function isConfigTab(key: SettingsKey): key is ConfigTab {
-  return key === "llm" || key === "agent" || key === "storage" || key === "wechat";
+  return (
+    key === "llm" ||
+    key === "agent" ||
+    key === "web" ||
+    key === "storage" ||
+    key === "wechat"
+  );
 }
 
 function LeafButton({

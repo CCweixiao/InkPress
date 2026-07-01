@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { Bot, Sparkles, Cloud, Share2, MessageCircle, ScrollText } from "lucide-react";
+import { Bot, Sparkles, Cloud, Share2, MessageCircle, ScrollText, Globe2 } from "lucide-react";
 
 /** 配置模块 Tab 键（与 SystemConfigManager 保持同步） */
-export type ConfigTab = "llm" | "agent" | "storage" | "wechat";
+export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat";
 
 /** 设置导航项的完整键集合：配置模块 + 系统日志 */
 export type SettingsKey = ConfigTab | "logs";
@@ -38,6 +38,13 @@ export const SETTINGS_NAV: NavNode[] = [
     label: "写作 Agent",
     description: "配置写作流程使用的 Agent 模型、提示词与执行参数。",
     icon: Bot,
+  },
+  {
+    kind: "leaf",
+    key: "web",
+    label: "联网搜索",
+    description: "配置 Tavily 联网搜索、网页抓取自动放权与域名白名单。",
+    icon: Globe2,
   },
   {
     kind: "leaf",
