@@ -329,7 +329,11 @@ export function partToAgentRuntimeEvent(
         ...base,
         kind: "context",
         stage: "context",
-        detail: `约 ${Number(data.estimatedTokens ?? 0)} / ${Number(data.budgetTokens ?? 0)} tokens`,
+        detail: data.compressed
+          ? `上下文已压缩：${Number(
+              data.compactPreTokens ?? 0
+            )} → ${Number(data.compactPostTokens ?? data.estimatedTokens ?? 0)} tokens`
+          : `约 ${Number(data.estimatedTokens ?? 0)} tokens`,
       };
     case "data-source-evidence":
     case "data-commit-evidence":
