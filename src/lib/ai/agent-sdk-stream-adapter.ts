@@ -163,6 +163,24 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     };
   }
 
+  function emitTurnUsage(summary: AgentTurnUsageSummary) {
+    writer.write({
+      type: "data-turn-usage",
+      id: "turn-usage",
+      data: {
+        inputTokens: summary.inputTokens,
+        outputTokens: summary.outputTokens,
+        reasoningTokens: 0,
+        totalTokens: summary.totalTokens,
+        cacheReadInputTokens: summary.cacheReadInputTokens,
+        cacheCreationInputTokens: summary.cacheCreationInputTokens,
+        costUsd: summary.costUsd,
+        status: summary.status,
+        source: summary.source,
+      },
+    } as never);
+  }
+
   function closeTaskById(
     taskId: string,
     input: {
@@ -305,6 +323,8 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         // P1.5：采集 step usage（按 messageId 去重），仅作中断 fallback。
         if (typeof msg.id === "string" && msg.id) {
           recordStepUsage(msg.id, msg.usage);
+          const summary = buildStepFallbackSummary("partial");
+          if (summary) emitTurnUsage(summary);
         }
         break;
       }
@@ -339,6 +359,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
           status: isError ? "error" : "completed",
           source: "sdk-result",
         };
+        emitTurnUsage(result.summary);
         if (isError) {
           result.isError = true;
           result.errorMessage =
