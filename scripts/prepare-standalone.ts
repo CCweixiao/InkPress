@@ -243,6 +243,22 @@ function ensureNativeBindingForElectron() {
   );
 }
 
+/**
+ * 检测 Mach-O 文件包含的 CPU 架构列表。
+ *
+ * macOS 26.x (Tahoe) 上 lipo 对部分 .node 文件会触发 SIGKILL（exit 137），
+ * 无法可靠检测架构。改用 `file -b` 读取 Mach-O 描述文本，从中匹配 arm64 / x86_64。
+ */
+function detectMachArchs(nodePath: string): string[] {
+  const r = spawnSync("file", ["-b", nodePath], { encoding: "utf8" });
+  if (r.status !== 0 || !r.stdout) return [];
+  const out = r.stdout.toLowerCase();
+  const archs: string[] = [];
+  if (out.includes("arm64")) archs.push("arm64");
+  if (out.includes("x86_64")) archs.push("x86_64");
+  return archs;
+}
+
 /** 在 node_modules 树中查找与目标架构匹配的 better_sqlite3.node */
 function findNativeBindingForArch(
   nmRoot: string,
@@ -251,9 +267,7 @@ function findNativeBindingForArch(
   const candidates = findAllFiles(nmRoot, "better_sqlite3.node");
   const expected = machArchLabel(arch);
   for (const candidate of candidates) {
-    const r = spawnSync("lipo", ["-archs", candidate], { encoding: "utf8" });
-    if (r.status !== 0) continue;
-    const actual = (r.stdout ?? "").trim().split(/\s+/);
+    const actual = detectMachArchs(candidate);
     if (actual.includes(expected)) return candidate;
   }
   return null;
@@ -262,12 +276,11 @@ function findNativeBindingForArch(
 /** 校验 .node 文件的 CPU 架构，不匹配则终止打包 */
 function verifyNodeArch(nodePath: string, arch: "arm64" | "x64"): void {
   const expected = machArchLabel(arch);
-  const r = spawnSync("lipo", ["-archs", nodePath], { encoding: "utf8" });
-  if (r.status !== 0) {
+  const actual = detectMachArchs(nodePath);
+  if (actual.length === 0) {
     console.warn(`  ⚠ 无法验证 ${path.relative(root, nodePath)} 的 CPU 架构`);
     return;
   }
-  const actual = (r.stdout ?? "").trim().split(/\s+/).filter(Boolean);
   if (!actual.includes(expected)) {
     console.error(
       `  ✗ ${path.relative(root, nodePath)} 架构不匹配：期望 ${expected}，实际 ${actual.join(", ") || "未知"}`
@@ -544,9 +557,23 @@ function hoistMissingTopLevel(): void {
   }
 }
 
-/** 把 src 目录的内容合并到 dest（只补 dest 缺失的文件，不覆盖已有的） */
+/**
+ * 把 src 目录的内容合并到 dest（只补 dest 缺失的文件，不覆盖已有的）。
+ *
+ * 注意：fs.existsSync(dest) 会跟随符号链接——对悬空符号链接（target 不存在）返回 false，
+ * 但路径实际被 symlink 目录项占用。Next.js NFT 追踪有时只创建 symlink 不复制实际包内容
+ * （如 mime-db），导致 bundle 里残留指向 standalone 已清理路径的悬空 symlink。
+ * 此处用 lstatSync 兜底：existsSync 返回 false 但 lstatSync 成功 → 悬空 symlink，先删后复制。
+ */
 function mergeDir(src: string, dest: string): void {
   if (!fs.existsSync(dest)) {
+    // 兜底：清理悬空符号链接（existsSync 返回 false 但路径被 symlink 占用）
+    try {
+      fs.lstatSync(dest);
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch {
+      /* 路径确实为空，正常走 cpSync */
+    }
     fs.cpSync(src, dest, { recursive: true, dereference: true });
     return;
   }
@@ -570,6 +597,13 @@ function mergeDir(src: string, dest: string): void {
     if (stat.isDirectory()) {
       mergeDir(s, d);
     } else if (stat.isFile() && !fs.existsSync(d)) {
+      // 同样清理可能存在的悬空 symlink（文件级）
+      try {
+        fs.lstatSync(d);
+        fs.rmSync(d, { force: true });
+      } catch {
+        /* 无残留项 */
+      }
       fs.copyFileSync(s, d);
     }
   }
