@@ -16,6 +16,7 @@ import {
   readUsageFromError,
   readSessionFromError,
 } from "@/lib/ai/claude-agent-runtime";
+import { chooseLlmConfig } from "@/lib/ai/llm-config";
 import { upsertUsageTurn } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
 import { createAgentEventWriter } from "@/lib/ai/agent-event-writer";
@@ -590,21 +591,6 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           }
         }
 
-        await prisma.agentChatSession.update({
-          where: { id: session.id },
-          data: {
-            selectedProjectId: session.selectedProjectId,
-            providerId: parsed.data.providerId ?? null,
-            modelId: parsed.data.modelId ?? null,
-            // P2 状态机：本轮开跑 → running。若上一轮已落 claudeAgentSessionId，本轮即 resume（PDC §5）。
-            claudeAgentSessionStatus: "running",
-            claudeAgentLastError: null,
-            ...(session.claudeAgentSessionId
-              ? { claudeAgentResumeCount: { increment: 1 } }
-              : {}),
-          },
-        });
-
         const context = {
           estimatedTokens:
             articleBodyTokens +
@@ -686,6 +672,67 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           return;
         }
 
+        const requestedProviderId = parsed.data.providerId ?? null;
+        const requestedModelId = parsed.data.modelId ?? null;
+        const selectedLlm = await chooseLlmConfig(
+          requestedProviderId,
+          requestedModelId
+        );
+        if (!selectedLlm) {
+          throw new Error(
+            "未配置 AI 模型：请在「设置 → 系统配置 → AI 模型」中添加至少一个 Anthropic 兼容供应商并填入 API Key。"
+          );
+        }
+
+        // 跨模型 resume 风险处理：若本轮最终生效的 provider/model 与上一轮不同，
+        // 且已有 SDK 会话，则强制开启新会话（SDK transcript 跨厂商回放有风险）。
+        const newProviderId = selectedLlm.id;
+        const newModelId = selectedLlm.model.id;
+        log.info(
+          {
+            sessionId: session.id,
+            requestedProviderId,
+            requestedModelId,
+            providerId: newProviderId,
+            modelId: newModelId,
+          },
+          "已解析本轮 AI 模型"
+        );
+        const previousProviderId = session.providerId ?? newProviderId;
+        const previousModelId = session.modelId ?? newModelId;
+        const modelChanged =
+          !!session.claudeAgentSessionId &&
+          (previousProviderId !== newProviderId || previousModelId !== newModelId);
+        let effectiveClaudeAgentSessionId =
+          session.claudeAgentSessionId ?? undefined;
+        if (modelChanged) {
+          effectiveClaudeAgentSessionId = undefined;
+          writeStep(ew, {
+            id: "model-switched",
+            kind: "intent",
+            title: "模型已切换，开启新的 Agent 会话",
+            detail: "切换模型后无法回放上一模型的上下文，已自动开启新会话",
+          });
+        }
+
+        await prisma.agentChatSession.update({
+          where: { id: session.id },
+          data: {
+            selectedProjectId: session.selectedProjectId,
+            providerId: newProviderId,
+            modelId: newModelId,
+            ...(modelChanged
+              ? { claudeAgentSessionId: null, claudeAgentStoreKey: null }
+              : {}),
+            // P2 状态机：本轮开跑 → running。若上一轮已落 claudeAgentSessionId，本轮即 resume（PDC §5）。
+            claudeAgentSessionStatus: "running",
+            claudeAgentLastError: null,
+            ...(effectiveClaudeAgentSessionId
+              ? { claudeAgentResumeCount: { increment: 1 } }
+              : {}),
+          },
+        });
+
         try {
           const outcome = await runClaudeAgentRuntime(
             {
@@ -701,15 +748,17 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               },
               sessionId: session.id,
               codeSource,
-              claudeAgentSessionId: session.claudeAgentSessionId ?? undefined,
+              claudeAgentSessionId: effectiveClaudeAgentSessionId,
               preferredSkillIds,
+              providerId: newProviderId,
+              modelId: newModelId,
               messages: mergedMessages,
               abortSignal: req.signal,
             },
             ew
           );
           const completedSessionId =
-            outcome.sessionId ?? session.claudeAgentSessionId ?? null;
+            outcome.sessionId ?? effectiveClaudeAgentSessionId ?? null;
           if (outcome.usage) {
             turnUsage = {
               ...outcome.usage,
@@ -758,8 +807,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 turnId,
                 targetKind: target.kind,
                 targetId: target.id,
-                providerId: parsed.data.providerId ?? null,
-                modelId: parsed.data.modelId ?? null,
+                providerId: newProviderId,
+                modelId: newModelId,
                 sdkSessionId: completedSessionId,
                 startedAt: turnStartedAt,
               },
@@ -773,7 +822,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           // 即便 result 前 abort（仅收到 system/init），只要有 SDK session id 就落库，保证下一轮可 resume。
           const summary = readUsageFromError(error);
           const sdkSessionId =
-            readSessionFromError(error) ?? session.claudeAgentSessionId ?? null;
+            readSessionFromError(error) ?? effectiveClaudeAgentSessionId ?? null;
           // 状态必须在错误/中断三路都落库；即便 sessionId 与旧值相同，也要从 running 收口到
           // interrupted/error（PDC §7.3），否则 UI 会误判为仍在运行。
           await prisma.agentChatSession
@@ -823,8 +872,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 turnId,
                 targetKind: target.kind,
                 targetId: target.id,
-                providerId: parsed.data.providerId ?? null,
-                modelId: parsed.data.modelId ?? null,
+                providerId: newProviderId,
+                modelId: newModelId,
                 sdkSessionId,
                 startedAt: turnStartedAt,
               },

@@ -5,13 +5,13 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInkPressMcpServer } from "../src/lib/ai/inkpress-mcp-server";
 import { listSkills } from "../src/lib/ai/skills";
-import { getClaudeAgentConfig } from "../src/lib/ai/claude-agent-config";
+import { chooseLlmConfig } from "../src/lib/ai/llm-config";
 import { buildInkPressSystemPrompt } from "../src/lib/ai/system-prompt";
 
 async function main() {
-  const cfg = await getClaudeAgentConfig();
-  if (!cfg.apiKey) {
-    console.error("[probe] 缺 API Key");
+  const cfg = await chooseLlmConfig();
+  if (!cfg || !cfg.apiKey) {
+    console.error("[probe] 缺 AI 模型配置");
     process.exit(1);
   }
   const skillCatalog = await listSkills();
@@ -19,7 +19,7 @@ async function main() {
     skillCatalog.find((s) => s.id === "wechat-writing")?.id ??
     skillCatalog[0]?.id ??
     "wechat-writing";
-  console.log("[probe] model=", cfg.model, "| firstSkill=", firstSkill);
+  console.log("[probe] model=", cfg.model.id, "| firstSkill=", firstSkill);
 
   const ctx = {
     target: { kind: "article" as const, id: "probe", title: "探测文章", markdown: "" },
@@ -42,7 +42,7 @@ async function main() {
         ANTHROPIC_AUTH_TOKEN: cfg.apiKey,
         ANTHROPIC_API_KEY: undefined,
       },
-      model: cfg.model,
+      model: cfg.model.id,
       systemPrompt: buildInkPressSystemPrompt({ target: ctx.target, skillCatalog }),
       mcpServers: { inkpress: mcp },
       allowedTools: [

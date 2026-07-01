@@ -1,31 +1,20 @@
 [
   {
-    "id": "openai",
-    "name": "OpenAI",
-    "apiProvider": "openai-compatible",
-    "baseUrl": "https://api.openai.com/v1",
+    "id": "anthropic",
+    "name": "Anthropic 官方",
+    "apiProvider": "anthropic",
+    "baseUrl": "https://api.anthropic.com",
     "models": [
-      { "id": "gpt-4o", "name": "GPT-4o" },
-      { "id": "gpt-4o-mini", "name": "GPT-4o mini" }
+      { "id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5" },
+      { "id": "claude-haiku-4-5", "name": "Claude Haiku 4.5" }
     ],
-    "docsUrl": "https://platform.openai.com/api-keys"
-  },
-  {
-    "id": "deepseek",
-    "name": "DeepSeek",
-    "apiProvider": "openai-compatible",
-    "baseUrl": "https://api.deepseek.com/v1",
-    "models": [
-      { "id": "deepseek-chat", "name": "DeepSeek Chat" },
-      { "id": "deepseek-reasoner", "name": "DeepSeek Reasoner" }
-    ],
-    "docsUrl": "https://platform.deepseek.com/api_keys"
+    "docsUrl": "https://console.anthropic.com/settings/keys"
   },
   {
     "id": "zhipu-glm",
     "name": "智谱 GLM",
-    "apiProvider": "openai-compatible",
-    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "apiProvider": "anthropic",
+    "baseUrl": "https://open.bigmodel.cn/api/anthropic",
     "models": [
       { "id": "glm-4.6", "name": "GLM-4.6" },
       { "id": "glm-4.5", "name": "GLM-4.5" }
@@ -33,48 +22,14 @@
     "docsUrl": "https://open.bigmodel.cn/usercenter/apikeys"
   },
   {
-    "id": "dashscope",
-    "name": "阿里云百炼（通义千问）",
-    "apiProvider": "openai-compatible",
-    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "models": [
-      { "id": "qwen-plus", "name": "Qwen Plus（推荐，均衡）" },
-      { "id": "qwen-max", "name": "Qwen Max（最强，较贵）" },
-      { "id": "qwen-turbo", "name": "Qwen Turbo（最快，最便宜）" }
-    ],
-    "docsUrl": "https://bailian.console.aliyun.com/?tab=api#/api/"
-  },
-  {
     "id": "openrouter",
     "name": "OpenRouter",
-    "apiProvider": "openai-compatible",
+    "apiProvider": "anthropic",
     "baseUrl": "https://openrouter.ai/api/v1",
     "models": [
       { "id": "anthropic/claude-sonnet-4.5", "name": "Claude Sonnet 4.5" },
-      { "id": "openai/gpt-4o", "name": "GPT-4o" }
+      { "id": "anthropic/claude-haiku-4.5", "name": "Claude Haiku 4.5" }
     ],
     "docsUrl": "https://openrouter.ai/keys"
-  },
-  {
-    "id": "azure",
-    "name": "Azure OpenAI",
-    "apiProvider": "openai-compatible",
-    "baseUrl": "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
-    "models": [
-      { "id": "gpt-4o", "name": "GPT-4o" },
-      { "id": "gpt-4o-mini", "name": "GPT-4o mini" }
-    ],
-    "docsUrl": "https://portal.azure.com"
-  },
-  {
-    "id": "ollama",
-    "name": "Ollama（本地）",
-    "apiProvider": "openai-compatible",
-    "baseUrl": "http://127.0.0.1:11434/v1",
-    "models": [
-      { "id": "qwen2.5:32b", "name": "Qwen2.5 32B" },
-      { "id": "llama3.3:70b", "name": "Llama 3.3 70B" }
-    ],
-    "docsUrl": "https://ollama.com"
   }
 ]
