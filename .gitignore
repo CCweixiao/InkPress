@@ -57,6 +57,7 @@ next-env.d.ts
 # sqlite database
 *.db
 *.db-journal
+*.db.bak*
 
 # 开发模式数据库目录（含 dev.db、备份、迁移脚本留档）
 /dev.database/
