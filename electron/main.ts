@@ -113,13 +113,11 @@ async function pickPort(preferred: number): Promise<number> {
 function startServer(port: number): ChildProcess {
   const serverDir = path.dirname(serverFile());
   /**
-   * 打包形态：用 LSUIElement helper 子 bundle 的可执行文件启动 server，
-   * 避免 macOS Dock 显示第二个图标（主 InkPress 二进制会被 LaunchServices
-   * 注册为独立 app 实例，helper 子 bundle 设了 LSUIElement=true 不显示 Dock）。
-   * 开发形态：直接用 process.execPath。
+   * 打包形态：用 electron-builder 生成并签名好的 LSUIElement Helper 启动 server，
+   * 避免 macOS Dock 显示第二个图标。开发形态：直接用 process.execPath。
    */
   const serverExe = app.isPackaged
-    ? path.join(process.resourcesPath!, "..", "PlugIns", "InkPressServer.app", "Contents", "MacOS", "InkPressServer")
+    ? path.join(process.resourcesPath!, "..", "Frameworks", "InkPress Helper.app", "Contents", "MacOS", "InkPress Helper")
     : process.execPath;
   // bundle 内的 node_modules 保留原名（prepare-standalone 已物化 pnpm symlink
   // 为真实文件，且 extraResources 不受 files 规则的 node_modules 剔除影响）。

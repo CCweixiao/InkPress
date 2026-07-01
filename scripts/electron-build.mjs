@@ -21,16 +21,26 @@ import path from "node:path";
 
 /**
  * 加载本地 .env.apple（已被 .gitignore 忽略）：Apple 签名 / 公证凭据。
- * electron-builder 公证时从环境变量读取 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD。
+ * electron-builder 签名 / 公证时从环境变量读取 CSC_NAME / APPLE_ID 等凭据。
  * 仅在文件存在时加载，缺失则跳过（开发期未配置签名时仍可打包未签名产物）。
  */
 const envFile = path.join(process.cwd(), ".env.apple");
 if (fs.existsSync(envFile)) {
   let loaded = 0;
   for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
-    const m = line.match(/^\s*export\s+([A-Z_]+)="?([^"\n]*)"?\s*$/);
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const m = trimmed.match(/^(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/);
     if (m && !process.env[m[1]]) {
-      process.env[m[1]] = m[2];
+      let value = m[2].trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.env[m[1]] = value;
       loaded++;
     }
   }

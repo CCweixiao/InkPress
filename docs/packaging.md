@@ -123,8 +123,7 @@ tail ~/.inkpress/logs/inkpress.log
 | 文件 | 作用 |
 |---|---|
 | `scripts/prepare-standalone.ts` | 打包前处理 standalone bundle（物化/补全/提升/改写路径/重编译 native） |
-| `electron/main.ts` | Electron 主进程，spawn standalone server 子进程 |
-| `scripts/after-pack.cjs` | electron-builder after-pack 钩子（创建 LSUIElement helper） |
+| `electron/main.ts` | Electron 主进程，通过 Electron 标准 Helper spawn standalone server 子进程 |
 | `next.config.ts` | `output: "standalone"` + `serverExternalPackages` |
 | `package.json` → `build` | electron-builder 配置（extraResources 拆分复制 node_modules + bundle） |
 | `docs/packaging-analysis.md` | 打包机制分析与架构评估报告（体积分析、主流方案对比、迁移评估） |
