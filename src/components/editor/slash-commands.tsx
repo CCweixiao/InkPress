@@ -6,14 +6,14 @@ import type { SkillCatalogItem } from "@/lib/ai/skills";
 
 /**
  * 斜杠命令系统（codex 式）：对话框输入 / 列出内置命令 + 已注册 Skill，
- * 命中精确意图路由（/clear 直接清空、/compact 压缩、/<skill> 强制加载该 Skill）。
+ * 命中精确意图路由（/clear 直接清空、/<skill> 强制加载该 Skill）。
  *
  * 设计：注册表是纯数据（token/label/description/group/kind），执行逻辑在
  * WritingAssistant 的 submit 路径按 kind 分发（保留状态就近）—— 与 PART_RENDERERS、
  * INTENT_RULES 同为声明式注册表，加命令/skill 只改数据。Skill 无则整组隐藏。
  */
 
-export type SlashCommandKind = "clear" | "compact" | "skill";
+export type SlashCommandKind = "clear" | "skill";
 
 export type SlashCommand = {
   /** 命令 token，含前导斜杠，如 "/clear"。Skill 用 "/<skillKey>"。 */
@@ -34,13 +34,6 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommand[] = [
     description: "清空对话与提案，并开启新的 Claude 会话（不清 Token 消耗大盘）",
     group: "builtin",
     kind: "clear",
-  },
-  {
-    token: "/compact",
-    label: "压缩对话",
-    description: "把历史压缩为摘要，保留关键信息与经验，腾出上下文",
-    group: "builtin",
-    kind: "compact",
   },
 ];
 

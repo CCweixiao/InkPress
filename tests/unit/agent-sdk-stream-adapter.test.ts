@@ -47,6 +47,38 @@ describe("createSdkToUiAdapter task events", () => {
     );
   });
 
+  it("emits context usage metadata for compact boundaries", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: {
+        trigger: "auto",
+        pre_tokens: 120_000,
+        post_tokens: 28_000,
+        duration_ms: 900,
+      },
+      uuid: "u1",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+
+    const contextPart = parts.find((p) => p.type === "data-context-usage");
+    expect(contextPart).toBeDefined();
+    expect(contextPart?.id).toBe("context-compact");
+    expect(contextPart?.data).toMatchObject({
+      estimatedTokens: 28_000,
+      compressed: true,
+      compactTrigger: "auto",
+      compactPreTokens: 120_000,
+      compactPostTokens: 28_000,
+      compactDurationMs: 900,
+    });
+  });
+
   it("retains subagent type for task notifications that omit subagent_type", () => {
     const parts: Array<Record<string, unknown>> = [];
     const adapter = createSdkToUiAdapter({

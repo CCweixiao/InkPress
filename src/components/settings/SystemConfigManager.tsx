@@ -1136,21 +1136,6 @@ function AgentEditor({
             }
           />
         </Field>
-        <Field label="上下文预算（Tokens）">
-          <Input
-            type="number"
-            min={8000}
-            max={200000}
-            step={1000}
-            value={value.contextBudgetTokens}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                contextBudgetTokens: Number(event.target.value),
-              })
-            }
-          />
-        </Field>
       </div>
 
       <div className="space-y-3">
