@@ -187,6 +187,16 @@ export async function getOrCreateAgentSession(target: AgentTarget | string) {
   });
 }
 
+/** 仅读取目标对应的 Agent 会话；打开页面/刷新历史时不制造空会话记录。 */
+export async function findAgentSession(target: AgentTarget) {
+  return prisma.agentChatSession.findFirst({
+    where:
+      target.kind === "article"
+        ? { articleId: target.id }
+        : { technicalDocumentId: target.id },
+  });
+}
+
 /**
  * 加载会话消息（游标分页）。
  * - 不传 beforePosition：取最近 limit 条（position 最高的）。

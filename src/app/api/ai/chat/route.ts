@@ -12,12 +12,16 @@ import {
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import { runClaudeAgentRuntime } from "@/lib/ai/claude-agent-runtime";
+import { getArticleProfile } from "@/lib/ai/article-type-profile";
+import { createAgentEventWriter } from "@/lib/ai/agent-event-writer";
 import {
+  findAgentSession,
   getOrCreateAgentSession,
   loadAgentMessages,
   mergeAndPersistMessages,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
+import { abortApproval } from "@/lib/ai/pending-approvals";
 import { classifyError } from "@/lib/ai/error-classify";
 import {
   CAPABILITY_REPLY,
@@ -73,6 +77,7 @@ type LoadedTarget = {
   digest?: string;
   documentType?: string;
   snapshotHash?: string;
+  profileId?: string | null;
 };
 
 function normalizeTarget(input: {
@@ -93,6 +98,7 @@ async function loadTarget(target: AgentTarget): Promise<LoadedTarget | null> {
         ? await readContentAt(article.contentPath)
         : article.contentMd,
       digest: article.digest ?? "",
+      profileId: article.profileId,
     };
   }
   const document = await prisma.technicalDocument.findUnique({
@@ -213,7 +219,7 @@ export async function GET(req: NextRequest) {
   }
   const loaded = await loadTarget(target);
   if (!loaded) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
-  const session = await getOrCreateAgentSession(target);
+  const session = await findAgentSession(target);
   const search = new URL(req.url).searchParams;
   const beforeRaw = search.get("before");
   const beforePosition =
@@ -223,7 +229,9 @@ export async function GET(req: NextRequest) {
   const limitRaw = search.get("limit");
   const limit =
     limitRaw && Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : undefined;
-  const page = await loadAgentMessages(session.id, { limit, beforePosition });
+  const page = session
+    ? await loadAgentMessages(session.id, { limit, beforePosition })
+    : { messages: [], hasMore: false, oldestPosition: null };
   // 分页追加请求（带 before）：只返回消息页，避免重复拉 proposals/session/userInputs
   if (beforePosition !== undefined) {
     return NextResponse.json(page);
@@ -258,14 +266,16 @@ export async function GET(req: NextRequest) {
         });
   // 用户历史输入缓存（仅取 user 消息文本，供对话框上下键导航）。
   // 限最近 50 条（position 倒序取后再翻正）：上下键历史足够用，避免长会话每次 refresh 全量扫描。
-  const userMessages = (
-    await prisma.agentChatMessage.findMany({
-      where: { sessionId: session.id, role: "user" },
-      orderBy: { position: "desc" },
-      take: 50,
-      select: { partsJson: true },
-    })
-  ).reverse();
+  const userMessages = session
+    ? (
+        await prisma.agentChatMessage.findMany({
+          where: { sessionId: session.id, role: "user" },
+          orderBy: { position: "desc" },
+          take: 50,
+          select: { partsJson: true },
+        })
+      ).reverse()
+    : [];
   const userInputs = userMessages.flatMap((row) => {
     try {
       const parts = JSON.parse(row.partsJson) as Array<{
@@ -349,20 +359,24 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
-        writeStep(writer, {
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "inkpress-runtime",
+        });
+        writeStep(ew, {
           id: "capability",
           kind: "intent",
           title: "能力介绍",
           detail: "列出 Agent 可提供的能力范围",
         });
         const textId = crypto.randomUUID();
-        writer.write({ type: "text-start", id: textId } as never);
-        writer.write({
+        ew.write({ type: "text-start", id: textId } as never);
+        ew.write({
           type: "text-delta",
           id: textId,
           delta: CAPABILITY_REPLY,
         } as never);
-        writer.write({ type: "text-end", id: textId } as never);
+        ew.write({ type: "text-end", id: textId } as never);
       },
     });
     return createUIMessageStreamResponse({ stream });
@@ -386,20 +400,24 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
-        writeStep(writer, {
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "inkpress-runtime",
+        });
+        writeStep(ew, {
           id: "clarify",
           kind: "intent",
           title: "需要补充信息",
           detail: "输入不够明确，引导用户补充需求细节",
         });
         const textId = crypto.randomUUID();
-        writer.write({ type: "text-start", id: textId } as never);
-        writer.write({
+        ew.write({ type: "text-start", id: textId } as never);
+        ew.write({
           type: "text-delta",
           id: textId,
           delta: CLARIFY_REPLY,
         } as never);
-        writer.write({ type: "text-end", id: textId } as never);
+        ew.write({ type: "text-end", id: textId } as never);
       },
     });
     return createUIMessageStreamResponse({ stream });
@@ -424,20 +442,24 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
-        writeStep(writer, {
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "inkpress-runtime",
+        });
+        writeStep(ew, {
           id: "empty-article",
           kind: "intent",
           title: "当前文章为空",
           detail: "编辑区还没有可处理的正文，引导用户先写入或粘贴",
         });
         const textId = crypto.randomUUID();
-        writer.write({ type: "text-start", id: textId } as never);
-        writer.write({
+        ew.write({ type: "text-start", id: textId } as never);
+        ew.write({
           type: "text-delta",
           id: textId,
           delta: EMPTY_ARTICLE_REPLY,
         } as never);
-        writer.write({ type: "text-end", id: textId } as never);
+        ew.write({ type: "text-end", id: textId } as never);
       },
     });
     return createUIMessageStreamResponse({ stream });
@@ -487,14 +509,22 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
+        // P0：包一层 seq 注入器，为本 turn 的 data/tool part 打上单调 seq + turnId + source。
+        // 下游 runtime/adapter/MCP/canUseTool/工具 execute 都汇流到 ew，保证无断号。
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "claude-agent-sdk",
+        });
         const messageText = lastUserText(mergedMessages);
         const articleBodyTokens = estimateTokens(
           `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
         );
         const articleBodyTooLarge = articleBodyTokens > config.contextBudgetTokens * 0.65;
+        // P3：斜杠命令 forceSkillIds 在前 + 文章 profile 的 defaultSkills 在后，合并去重。
+        const profile = getArticleProfile(loaded.profileId);
         const preferredSkillIds = Array.from(
-          new Set(parsed.data.forceSkillIds ?? [])
-        ).slice(0, 4);
+          new Set([...(parsed.data.forceSkillIds ?? []), ...profile.defaultSkills])
+        ).slice(0, 8);
         const needsGitHistory = looksLikeGitHistoryRequest(messageText);
         let codeSource: CodeSourceReference | undefined;
         let approval:
@@ -565,7 +595,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           retainedMessages: mergedMessages.length,
         };
         if (codeSourceCandidate) {
-          writer.write({
+          ew.write({
             type: "data-code-source-detected",
             id: "code-source-detected",
             data: {
@@ -576,13 +606,13 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           } as never);
         }
         if (approval) {
-          writer.write({
+          ew.write({
             type: "data-code-source-approval",
             id: `code-source-approval-${approval.id}`,
             data: approval,
           } as never);
         } else if (codeSource) {
-          writer.write({
+          ew.write({
             type: "data-code-source-ready",
             id: `code-source-ready-${codeSource.id}`,
             data: {
@@ -596,7 +626,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         }
         // 按需载入正文时，显式提示已注入实时编辑区正文（含字数），让用户确认上下文已就位。
         if (articleMarkdown.trim() !== "") {
-          writeStep(writer, {
+          writeStep(ew, {
             id: "current-article",
             kind: "intent",
             title: "已载入当前文章",
@@ -604,7 +634,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           });
           if (articleBodyTooLarge) {
             // 系统提示会截断超长正文；完整跨轮上下文由 Claude Agent SDK session/autocompact 管理。
-            writeStep(writer, {
+            writeStep(ew, {
               id: "current-article-digest",
               kind: "intent",
               title: "正文较长，已按预算截断注入",
@@ -612,14 +642,14 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             });
           }
         } else if (articleBodyTooLarge) {
-          writeStep(writer, {
+          writeStep(ew, {
             id: "current-article-digest",
             kind: "intent",
             title: "正文较长",
             detail: `当前文章约 ${articleBodyTokens.toLocaleString()} tokens`,
           });
         }
-        writer.write({
+        ew.write({
           type: "data-context-usage",
           id: "context",
           data: {
@@ -647,6 +677,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               digest: loaded.digest,
               documentType: loaded.documentType,
               snapshotHash: loaded.snapshotHash,
+              profileId: loaded.profileId ?? undefined,
             },
             sessionId: session.id,
             codeSource,
@@ -655,7 +686,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             messages: mergedMessages,
             abortSignal: req.signal,
           },
-          writer
+          ew
         );
         if (outcome.usage) {
           turnUsage = outcome.usage;
@@ -696,6 +727,13 @@ export async function DELETE(req: NextRequest) {
         : { technicalDocumentId: target.id },
   });
   if (session) {
+    const pendingToolGrants = await prisma.toolActionGrant.findMany({
+      where: { sessionId: session.id, status: "pending" },
+      select: { id: true },
+    });
+    for (const grant of pendingToolGrants) abortApproval(grant.id);
+
+    const sdkSessionId = session.claudeAgentSessionId;
     await prisma.$transaction([
       prisma.agentChatMessage.deleteMany({ where: { sessionId: session.id } }),
       // 提案硬删（防 DB 膨胀）：应用过的正文已在文章文件/技术文档版本里，不依赖提案行
@@ -714,6 +752,8 @@ export async function DELETE(req: NextRequest) {
           selectedProjectId: null,
           providerId: null,
           modelId: null,
+          claudeAgentSessionId: null,
+          claudeAgentStoreKey: null,
           lastInputTokens: 0,
           lastOutputTokens: 0,
           lastReasoningTokens: 0,
@@ -721,6 +761,14 @@ export async function DELETE(req: NextRequest) {
         },
       }),
       prisma.codeSourceGrant.deleteMany({ where: { sessionId: session.id } }),
+      prisma.toolActionGrant.deleteMany({ where: { sessionId: session.id } }),
+      ...(sdkSessionId
+        ? [
+            prisma.claudeAgentSessionEntry.deleteMany({
+              where: { sdkSessionId },
+            }),
+          ]
+        : []),
     ]);
   }
   return NextResponse.json({ ok: true });
