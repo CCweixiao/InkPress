@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Flame, Loader2, Trash2, TrendingUp } from "lucide-react";
+import {
+  Activity,
+  CalendarDays,
+  CircleDollarSign,
+  Flame,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  TrendingUp,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -43,6 +53,7 @@ type UsageSummary = {
 type TimeSeriesPoint = {
   bucket: string;
   groupKey: string;
+  groupLabel?: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheReadInputTokens: number;
@@ -59,6 +70,7 @@ type UsageInsights = {
   topTargets: Array<{
     targetKind: string;
     targetId: string;
+    targetTitle: string | null;
     totalTokens: number;
     turnCount: number;
   }>;
@@ -71,6 +83,7 @@ type UsageInsights = {
     status: string;
     targetKind: string;
     targetId: string;
+    targetTitle: string | null;
   }>;
 };
 
@@ -78,6 +91,7 @@ type UsageTurnRow = {
   id: string;
   targetKind: string;
   targetId: string;
+  targetTitle: string | null;
   modelId: string | null;
   inputTokens: number;
   outputTokens: number;
@@ -93,6 +107,15 @@ type UsageTurnRow = {
 type RangeKey = "7d" | "30d" | "all";
 type GroupBy = "model" | "target" | "status";
 type Metric = "tokens" | "cost";
+
+type TrendSeries = {
+  key: string;
+  label: string;
+  color: string;
+  values: Array<{ bucket: string; value: number; tokens: number; cost: number }>;
+  totalTokens: number;
+  totalCost: number;
+};
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; param: string }> = [
   { key: "7d", label: "近 7 天", param: "7d" },
@@ -124,15 +147,74 @@ function shortDate(bucket: string): string {
   return bucket;
 }
 
-/** 热力图色阶：按 token 强度从低到高着色（emerald 系，0 → 透明）。 */
-function heatColor(value: number, max: number): string {
-  if (value <= 0 || max <= 0) return "bg-muted/40";
-  const r = Math.min(1, value / max);
-  if (r > 0.75) return "bg-emerald-600";
-  if (r > 0.5) return "bg-emerald-500/80";
-  if (r > 0.25) return "bg-emerald-400/70";
-  return "bg-emerald-300/60";
+function formatDateLabel(value: string): string {
+  return new Date(value).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
+
+function shortModelName(modelId: string | null | undefined): string {
+  if (!modelId) return "unknown";
+  return modelId
+    .replace(/^models\//, "")
+    .replace(/^claude-/, "Claude ")
+    .replace(/^glm-/, "GLM-")
+    .replace(/-/g, " ");
+}
+
+function labelGroupKey(groupBy: GroupBy, key: string): string {
+  if (groupBy === "model") return shortModelName(key);
+  if (groupBy === "status") {
+    if (key === "completed") return "完成";
+    if (key === "partial") return "中断估算";
+    if (key === "error") return "错误完成";
+    return key;
+  }
+  const [kind, id] = key.split(":");
+  return `${labelTarget(kind ?? "")} ${id ? id.slice(0, 6) : key.slice(0, 8)}`;
+}
+
+function labelSeriesPoint(groupBy: GroupBy, key: string, groupLabel?: string | null): string {
+  if (groupBy === "target" && groupLabel?.trim()) return groupLabel.trim();
+  return labelGroupKey(groupBy, key);
+}
+
+function targetDisplayName(target: {
+  targetKind: string;
+  targetId: string;
+  targetTitle?: string | null;
+}): string {
+  const title = target.targetTitle?.trim();
+  if (title) return title;
+  return target.targetKind === "technical-document" ? "未命名文档" : "未命名文章";
+}
+
+function metricLabel(metric: Metric) {
+  return metric === "cost" ? "成本" : "Token";
+}
+
+function formatMetric(value: number, metric: Metric): string {
+  return metric === "cost" ? formatCost(value) || "$0" : formatTokens(value);
+}
+
+function heatColor(value: number, max: number): string {
+  if (value <= 0 || max <= 0) return "bg-zinc-100 dark:bg-zinc-900";
+  const r = Math.min(1, value / max);
+  if (r > 0.75) return "bg-sky-500";
+  if (r > 0.5) return "bg-sky-400";
+  if (r > 0.25) return "bg-sky-300";
+  return "bg-sky-100 dark:bg-sky-950";
+}
+
+const SERIES_COLORS = [
+  "#3b82f6",
+  "#f97316",
+  "#a855f7",
+  "#06b6d4",
+  "#22c55e",
+  "#f59e0b",
+];
 
 // ─── 组件 ────────────────────────────────────────────────────────────────────
 
@@ -221,11 +303,42 @@ export function UsageDashboard() {
     }
   }
 
+  const modelSummary = useMemo(() => {
+    const totals = new Map<string, { tokens: number; cost: number; turns: number }>();
+    for (const point of points) {
+      const row = totals.get(point.groupKey) ?? { tokens: 0, cost: 0, turns: 0 };
+      row.tokens += point.totalTokens;
+      row.cost += point.costUsd;
+      row.turns += point.turnCount;
+      totals.set(point.groupKey, row);
+    }
+    return Array.from(totals.entries())
+      .map(([key, value], index) => ({
+        key,
+        label:
+          labelSeriesPoint(
+            groupBy,
+            key,
+            points.find((point) => point.groupKey === key)?.groupLabel
+          ),
+        color: SERIES_COLORS[index % SERIES_COLORS.length],
+        ...value,
+      }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 5);
+  }, [groupBy, points]);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {confirmDialog}
       {/* 顶部控件：时间筛选 + 清空 */}
       <div className="flex flex-wrap items-center gap-2">
+        <div className="mr-auto">
+          <div className="text-sm font-semibold">Token 消耗</div>
+          <div className="text-xs text-muted-foreground">
+            跟踪 Agent 对话的上下文、模型消耗和每日活跃度
+          </div>
+        </div>
         <Select value={range} onValueChange={(v) => setRange(v as RangeKey)}>
           <SelectTrigger className="h-8 w-32 text-xs">
             <SelectValue />
@@ -245,48 +358,31 @@ export function UsageDashboard() {
           onClick={refresh}
           disabled={loading}
         >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TrendingUp className="h-3.5 w-3.5" />}
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           刷新
         </Button>
-        <div className="ml-auto">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40"
-            onClick={clearAll}
-            disabled={clearing || !summary?.turnCount}
-          >
-            {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-            清空统计
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40"
+          onClick={clearAll}
+          disabled={clearing || !summary?.turnCount}
+        >
+          {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          清空统计
+        </Button>
       </div>
 
-      {/* KPI 横条 */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <KpiCard label="累计 Token" value={summary ? formatTokens(summary.totalTokens) : "—"} />
-        <KpiCard
-          label="估算成本"
-          value={summary ? formatCost(summary.totalCostUsd) || "$0" : "—"}
-        />
-        <KpiCard label="峰值单轮" value={summary ? formatTokens(summary.peakTurnTokens) : "—"} />
-        <KpiCard
-          label="平均每轮"
-          value={summary ? formatTokens(summary.avgTurnTokens) : "—"}
-        />
-        <KpiCard
-          label="连续使用"
-          value={summary ? `${summary.streakDays} 天` : "—"}
-          icon={<Flame className="h-3.5 w-3.5 text-amber-500" />}
-        />
-        <KpiCard label="会话总数" value={summary ? String(summary.sessionCount) : "—"} />
-      </div>
+      <StatsStrip summary={summary} />
 
       {/* 主趋势图 */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="border-b pb-3">
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-sm">消耗趋势</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <TrendingUp className="h-4 w-4 text-primary" />
+              用量趋势
+            </CardTitle>
             <Select value={String(groupBy)} onValueChange={(v) => setGroupBy(v as GroupBy)}>
               <SelectTrigger className="h-7 w-28 text-xs">
                 <SelectValue />
@@ -306,24 +402,53 @@ export function UsageDashboard() {
                 <SelectItem value="cost" className="text-xs">成本</SelectItem>
               </SelectContent>
             </Select>
+            <div className="ml-auto flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+              <span>cache 命中 {summary ? pct(summary.cacheHitRatio) : "—"}</span>
+              <span>中断 {summary?.partialTurnCount ?? 0} 轮</span>
+              <span>错误 {summary?.errorTurnCount ?? 0} 轮</span>
+            </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <TrendChart points={points} metric={metric} />
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-            <span>cache 命中占比 {summary ? pct(summary.cacheHitRatio) : "—"}</span>
-            <span>· 中断估算 {summary?.partialTurnCount ?? 0} 轮</span>
-            <span>· 错误完成 {summary?.errorTurnCount ?? 0} 轮</span>
-          </div>
+        <CardContent className="space-y-4 p-4">
+          {modelSummary.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+              {modelSummary.map((item) => (
+                <div key={item.key} className="border-l pl-3">
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                  <div className="mt-1 text-xl font-semibold tabular-nums">
+                    {formatTokens(item.tokens)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {item.turns} 轮 · {formatCost(item.cost) || "$0"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <TrendChart points={points} metric={metric} groupBy={groupBy} />
         </CardContent>
       </Card>
 
       {/* 热力图 */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">活动热力图</CardTitle>
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Activity className="h-4 w-4 text-sky-500" />
+              Token 活动
+            </CardTitle>
+            <div className="text-xs text-muted-foreground">
+              {range === "7d" ? "近 7 天" : range === "30d" ? "近 30 天" : "全部记录"}
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4">
           <Heatmap cells={cells} />
         </CardContent>
       </Card>
@@ -347,14 +472,22 @@ export function UsageDashboard() {
               label="token 最高目标"
               value={
                 insights?.topTargets?.length
-                  ? insights.topTargets
-                      .map(
-                        (t) =>
-                          `${labelTarget(t.targetKind)}(${t.targetId.slice(0, 6)}) ${formatTokens(
-                            t.totalTokens
-                          )}`
-                      )
-                      .join("，")
+                  ? (
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {insights.topTargets.slice(0, 3).map((t) => (
+                          <span
+                            key={`${t.targetKind}:${t.targetId}`}
+                            title={targetDisplayName(t)}
+                            className="inline-flex max-w-44 items-center gap-1 rounded-md border px-1.5 py-0.5"
+                          >
+                            <span className="truncate">{targetDisplayName(t)}</span>
+                            <span className="shrink-0 text-muted-foreground">
+                              {formatTokens(t.totalTokens)}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    )
                   : "—"
               }
             />
@@ -373,11 +506,19 @@ export function UsageDashboard() {
               <div className="text-muted-foreground">暂无数据</div>
             )}
             {(insights?.costliestRecentTurns ?? []).map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-2">
-                <span className="truncate font-mono text-[11px] text-muted-foreground">
-                  {t.modelId ?? "unknown"}
-                </span>
-                <span className="shrink-0">
+              <div key={t.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                <div className="min-w-0">
+                  <div
+                    className="truncate font-medium"
+                    title={targetDisplayName(t)}
+                  >
+                    {targetDisplayName(t)}
+                  </div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground">
+                    {shortModelName(t.modelId)}
+                  </div>
+                </div>
+                <span className="shrink-0 tabular-nums">
                   {formatTokens(t.totalTokens)} · {formatCost(t.costUsd) || "$0"}
                 </span>
                 <span className="shrink-0">{statusBadge(t.status)}</span>
@@ -392,6 +533,9 @@ export function UsageDashboard() {
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
             <CardTitle className="text-sm">明细</CardTitle>
+            <span className="text-xs text-muted-foreground">
+              已加载 {turns.length} 条{nextCursor ? "，可继续分页加载" : ""}
+            </span>
             <Select
               value={statusFilter}
               onValueChange={(v) => setStatusFilter(v)}
@@ -427,29 +571,66 @@ function labelTarget(kind: string): string {
   return kind === "technical-document" ? "文档" : "文章";
 }
 
-function KpiCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon?: ReactNode;
-}) {
+function StatsStrip({ summary }: { summary: UsageSummary | null }) {
+  const items = [
+    {
+      label: "累计 Token 数",
+      value: summary ? formatTokens(summary.totalTokens) : "—",
+      icon: <Sparkles className="h-4 w-4 text-blue-500" />,
+    },
+    {
+      label: "峰值单轮",
+      value: summary ? formatTokens(summary.peakTurnTokens) : "—",
+      icon: <TrendingUp className="h-4 w-4 text-orange-500" />,
+    },
+    {
+      label: "估算成本",
+      value: summary ? formatCost(summary.totalCostUsd) || "$0" : "—",
+      icon: <CircleDollarSign className="h-4 w-4 text-emerald-500" />,
+    },
+    {
+      label: "连续使用",
+      value: summary ? `${summary.streakDays} 天` : "—",
+      icon: <Flame className="h-4 w-4 text-amber-500" />,
+    },
+    {
+      label: "会话总数",
+      value: summary ? String(summary.sessionCount) : "—",
+      icon: <CalendarDays className="h-4 w-4 text-violet-500" />,
+    },
+  ];
+
   return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          {icon}
-          {label}
+    <div className="grid overflow-hidden rounded-2xl border bg-background shadow-sm md:grid-cols-5">
+      {items.map((item, index) => (
+        <div
+          key={item.label}
+          className={cn(
+            "flex min-h-[68px] items-center gap-2.5 px-3 py-2.5",
+            index > 0 && "border-t md:border-l md:border-t-0"
+          )}
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/70">
+            {item.icon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div
+              className="whitespace-nowrap text-xl font-semibold leading-tight tabular-nums md:text-lg lg:text-xl"
+              title={`${item.label}：${item.value}`}
+            >
+              {item.value}
+            </div>
+            <div className="mt-0.5 whitespace-nowrap text-xs text-muted-foreground">
+              {item.label}
+            </div>
+          </div>
         </div>
-        <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
-      </CardContent>
-    </Card>
+      ))}
+    </div>
   );
 }
 
-function InsightRow({ label, value }: { label: string; value: string }) {
+function InsightRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-3">
       <span className="shrink-0 text-muted-foreground">{label}</span>
@@ -458,88 +639,316 @@ function InsightRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 趋势图：按 bucket 聚合为单柱（多 groupKey 求和），高度 ∝ 该 bucket 的 metric 值。 */
 function TrendChart({
   points,
   metric,
+  groupBy,
 }: {
   points: TimeSeriesPoint[];
   metric: Metric;
+  groupBy: GroupBy;
 }) {
-  const buckets = useMemo(() => {
-    const map = new Map<string, { tokens: number; cost: number; groups: Map<string, number> }>();
+  const { buckets, series } = useMemo(() => {
+    const bucketSet = new Set<string>();
+    const groupTotals = new Map<string, { tokens: number; cost: number; turns: number }>();
     for (const p of points) {
-      const b = map.get(p.bucket) ?? { tokens: 0, cost: 0, groups: new Map() };
-      b.tokens += p.totalTokens;
-      b.cost += p.costUsd;
-      b.groups.set(p.groupKey, (b.groups.get(p.groupKey) ?? 0) + p.totalTokens);
-      map.set(p.bucket, b);
+      bucketSet.add(p.bucket);
+      const total = groupTotals.get(p.groupKey) ?? { tokens: 0, cost: 0, turns: 0 };
+      total.tokens += p.totalTokens;
+      total.cost += p.costUsd;
+      total.turns += p.turnCount;
+      groupTotals.set(p.groupKey, total);
     }
-    return Array.from(map.entries())
-      .map(([bucket, v]) => ({ bucket, ...v }))
-      .sort((a, b) => (a.bucket < b.bucket ? -1 : 1));
-  }, [points]);
+    const buckets = Array.from(bucketSet).sort();
+    const topGroups = Array.from(groupTotals.entries())
+      .sort((a, b) => b[1].tokens - a[1].tokens)
+      .slice(0, 5);
+    const pointMap = new Map<string, TimeSeriesPoint>();
+    for (const p of points) pointMap.set(`${p.groupKey}__${p.bucket}`, p);
+    const series: TrendSeries[] = topGroups.map(([key, totals], index) => ({
+      key,
+      label:
+        labelSeriesPoint(
+          groupBy,
+          key,
+          points.find((point) => point.groupKey === key)?.groupLabel
+        ),
+      color: SERIES_COLORS[index % SERIES_COLORS.length],
+      totalTokens: totals.tokens,
+      totalCost: totals.cost,
+      values: buckets.map((bucket) => {
+        const p = pointMap.get(`${key}__${bucket}`);
+        return {
+          bucket,
+          value: metric === "cost" ? p?.costUsd ?? 0 : p?.totalTokens ?? 0,
+          tokens: p?.totalTokens ?? 0,
+          cost: p?.costUsd ?? 0,
+        };
+      }),
+    }));
+    return { buckets, series };
+  }, [groupBy, metric, points]);
 
-  if (buckets.length === 0) {
+  if (buckets.length === 0 || series.length === 0) {
     return (
-      <div className="flex h-28 items-center justify-center text-xs text-muted-foreground">
+      <div className="flex h-64 items-center justify-center rounded-xl bg-muted/30 text-xs text-muted-foreground">
         暂无趋势数据
       </div>
     );
   }
-  const max = Math.max(
-    1,
-    ...buckets.map((b) => (metric === "cost" ? b.cost : b.tokens))
-  );
+  const width = Math.max(720, buckets.length * 44);
+  const height = 280;
+  const pad = { left: 50, right: 24, top: 20, bottom: 42 };
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
+  const max = Math.max(1, ...series.flatMap((s) => s.values.map((v) => v.value)));
+  const x = (index: number) =>
+    pad.left + (buckets.length <= 1 ? chartW / 2 : (index / (buckets.length - 1)) * chartW);
+  const y = (value: number) => pad.top + chartH - (value / max) * chartH;
+  const grid = [0, 0.25, 0.5, 0.75, 1];
+
+  function pathFor(values: TrendSeries["values"]) {
+    return values
+      .map((v, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(v.value).toFixed(1)}`)
+      .join(" ");
+  }
+
   return (
-    <div className="flex h-32 items-end gap-1 overflow-x-auto">
-      {buckets.map((b) => {
-        const val = metric === "cost" ? b.cost : b.tokens;
-        const h = Math.max(2, Math.round((val / max) * 100));
-        return (
-          <div
-            key={b.bucket}
-            className="group relative flex h-full flex-1 min-w-[6px] flex-col justify-end"
-            title={`${shortDate(b.bucket)}：${formatTokens(b.tokens)} tokens · ${formatCost(b.cost) || "$0"} · ${b.groups.size} 组`}
-          >
-            <div
-              className={cn(
-                "w-full rounded-t-sm transition-all",
-                metric === "cost" ? "bg-amber-400/70" : "bg-primary/70"
+    <div className="space-y-3">
+      <div className="overflow-x-auto rounded-xl bg-slate-50 p-3 dark:bg-slate-950/40">
+        <svg width={width} height={height} role="img" aria-label={`${metricLabel(metric)}趋势折线图`}>
+          <defs>
+            <linearGradient id="usageArea" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.12" />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+            </linearGradient>
+            <filter id="usageTooltipShadow" x="-20%" y="-20%" width="140%" height="150%">
+              <feDropShadow dx="0" dy="4" stdDeviation="5" floodColor="currentColor" floodOpacity="0.12" />
+            </filter>
+          </defs>
+          {grid.map((g) => {
+            const gy = pad.top + chartH - g * chartH;
+            return (
+              <g key={g}>
+                <line x1={pad.left} x2={width - pad.right} y1={gy} y2={gy} stroke="currentColor" className="text-border" />
+                <text x={12} y={gy + 4} className="fill-muted-foreground text-[10px]">
+                  {formatMetric(max * g, metric)}
+                </text>
+              </g>
+            );
+          })}
+          {buckets.map((bucket, index) => {
+            if (index % Math.ceil(buckets.length / 8) !== 0 && index !== buckets.length - 1) return null;
+            return (
+              <text
+                key={bucket}
+                x={x(index)}
+                y={height - 12}
+                textAnchor="middle"
+                className="fill-muted-foreground text-[10px]"
+              >
+                {shortDate(bucket)}
+              </text>
+            );
+          })}
+          {series.map((s) => (
+            <g key={s.key}>
+              <path d={pathFor(s.values)} fill="none" stroke={s.color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+              {s.values.map((v, index) =>
+                v.value > 0 ? (
+                  <g key={`${s.key}-${v.bucket}`} className="group">
+                    <circle cx={x(index)} cy={y(v.value)} r={3} fill={s.color} />
+                    <circle
+                      cx={x(index)}
+                      cy={y(v.value)}
+                      r={9}
+                      fill="transparent"
+                      className="cursor-crosshair"
+                    />
+                    <g className="pointer-events-none opacity-0 transition-opacity group-hover:opacity-100">
+                      <rect
+                        x={Math.min(width - 188, Math.max(56, x(index) - 76))}
+                        y={Math.max(8, y(v.value) - 62)}
+                        width={168}
+                        height={52}
+                        rx={8}
+                        className="fill-white stroke-slate-200 text-slate-900 dark:fill-slate-900 dark:stroke-slate-700 dark:text-slate-950"
+                        filter="url(#usageTooltipShadow)"
+                      />
+                      <text
+                        x={Math.min(width - 178, Math.max(66, x(index) - 66))}
+                        y={Math.max(27, y(v.value) - 42)}
+                        className="fill-slate-900 text-[11px] font-medium dark:fill-slate-100"
+                      >
+                        {s.label}
+                      </text>
+                      <text
+                        x={Math.min(width - 178, Math.max(66, x(index) - 66))}
+                        y={Math.max(43, y(v.value) - 26)}
+                        className="fill-slate-500 text-[10px] dark:fill-slate-400"
+                      >
+                        {`${formatDateLabel(v.bucket)} · ${formatTokens(v.tokens)} tokens`}
+                      </text>
+                      <text
+                        x={Math.min(width - 178, Math.max(66, x(index) - 66))}
+                        y={Math.max(59, y(v.value) - 10)}
+                        className="fill-slate-500 text-[10px] dark:fill-slate-400"
+                      >
+                        {`成本 ${formatCost(v.cost) || "$0"}`}
+                      </text>
+                    </g>
+                  </g>
+                ) : null
               )}
-              style={{ height: `${h}%` }}
-            />
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {series.map((s) => (
+          <div key={s.key} className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]">
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
+            <span className="max-w-32 truncate">{s.label}</span>
+            <span className="text-muted-foreground">
+              {metric === "cost" ? formatCost(s.totalCost) || "$0" : formatTokens(s.totalTokens)}
+            </span>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
 
-/** 热力图：每日一个色块，按 token 强度着色。 */
 function Heatmap({ cells }: { cells: HeatmapCell[] }) {
-  const max = Math.max(1, ...cells.map((c) => c.totalTokens));
-  if (cells.length === 0) {
+  const dayMap = useMemo(
+    () => new Map(cells.map((cell) => [cell.day, cell])),
+    [cells]
+  );
+  const days = useMemo(() => buildHeatmapDays(cells), [cells]);
+  const max = Math.max(1, ...days.map((day) => day.cell?.totalTokens ?? 0));
+  if (days.length === 0) {
     return (
-      <div className="flex h-20 items-center justify-center text-xs text-muted-foreground">
+      <div className="flex h-28 items-center justify-center rounded-xl bg-muted/30 text-xs text-muted-foreground">
         暂无活动数据
       </div>
     );
   }
+  const weeks = Math.ceil(days.length / 7);
+  const monthLabels = buildHeatmapMonthLabels(days);
   return (
-    <div className="flex flex-wrap gap-1">
-      {cells.map((c) => (
-        <div
-          key={c.day}
-          title={`${c.day}：${formatTokens(c.totalTokens)} tokens · ${c.turnCount} 轮 · ${formatCost(c.costUsd) || "$0"}`}
-          className={cn(
-            "h-4 w-4 rounded-sm",
-            heatColor(c.totalTokens, max)
-          )}
-        />
-      ))}
+    <div className="space-y-3">
+      <div className="overflow-visible">
+        <div className="w-full">
+          <div
+            className="grid grid-flow-col grid-rows-7 gap-1"
+            style={{ gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))` }}
+          >
+            {days.map((day, index) => {
+              const cell = dayMap.get(day.date);
+              const weekIndex = Math.floor(index / 7);
+              const tooltip = cell
+                ? `${day.date} · ${formatTokens(cell.totalTokens)} tokens · ${cell.turnCount} 轮 · ${formatCost(cell.costUsd) || "$0"}`
+                : `${day.date} · 无用量`;
+              const tooltipAlign =
+                weekIndex < 4
+                  ? "left-0"
+                  : weekIndex > weeks - 5
+                    ? "right-0"
+                    : "left-1/2 -translate-x-1/2";
+              return (
+                <div
+                  key={`${day.date}-${index}`}
+                  title={tooltip}
+                  className={cn(
+                    "group relative aspect-square w-full min-w-0 rounded-[4px] ring-1 ring-black/[0.02] dark:ring-white/[0.03]",
+                    heatColor(cell?.totalTokens ?? 0, max)
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "pointer-events-none absolute bottom-5 z-30 hidden w-max max-w-56 rounded-md border bg-background px-2 py-1.5 text-[11px] shadow-lg group-hover:block",
+                      tooltipAlign
+                    )}
+                  >
+                    <div className="font-medium text-foreground">{day.date}</div>
+                    {cell ? (
+                      <div className="mt-0.5 space-y-0.5 text-muted-foreground">
+                        <div>{formatTokens(cell.totalTokens)} tokens</div>
+                        <div>{cell.turnCount} 轮 · {formatCost(cell.costUsd) || "$0"}</div>
+                      </div>
+                    ) : (
+                      <div className="mt-0.5 text-muted-foreground">无用量</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div
+            className="mt-3 grid text-[11px] leading-none text-muted-foreground"
+            style={{ gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: weeks }).map((_, index) => (
+              <span key={index} className="whitespace-nowrap">
+                {monthLabels.get(index) ?? ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+        <span>颜色越深，代表当天 token 使用越多</span>
+        <div className="flex items-center gap-1">
+          <span>少</span>
+          {[0, 0.2, 0.45, 0.7, 1].map((v) => (
+            <span key={v} className={cn("h-3 w-3 rounded-sm", heatColor(v * max, max))} />
+          ))}
+          <span>多</span>
+        </div>
+      </div>
     </div>
   );
+}
+
+function dateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function buildHeatmapDays(cells: HeatmapCell[]) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = addDays(today, 6 - today.getDay());
+  const tenMonthsAgo = new Date(today);
+  tenMonthsAgo.setMonth(tenMonthsAgo.getMonth() - 10);
+  tenMonthsAgo.setHours(0, 0, 0, 0);
+  const start = addDays(tenMonthsAgo, -tenMonthsAgo.getDay());
+  const dayCount =
+    Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  const dayMap = new Map(cells.map((cell) => [cell.day, cell]));
+  return Array.from({ length: dayCount }, (_, index) => {
+    const date = addDays(start, index);
+    const key = dateKey(date);
+    return { date: key, cell: dayMap.get(key) };
+  });
+}
+
+function buildHeatmapMonthLabels(days: Array<{ date: string }>) {
+  const labels = new Map<number, string>();
+  let lastMonth = "";
+  days.forEach((day, index) => {
+    const month = day.date.slice(5, 7);
+    if (month !== lastMonth) {
+      labels.set(Math.floor(index / 7), `${Number(month)}月`);
+      lastMonth = month;
+    }
+  });
+  return labels;
 }
 
 function TurnsTable({ turns }: { turns: UsageTurnRow[] }) {
@@ -575,8 +984,18 @@ function TurnsTable({ turns }: { turns: UsageTurnRow[] }) {
                   minute: "2-digit",
                 })}
               </td>
-              <td className="py-1.5 pr-2">
-                {labelTarget(t.targetKind)}·{t.targetId.slice(0, 6)}
+              <td className="max-w-72 py-1.5 pr-2">
+                <div className="min-w-0">
+                  <div
+                    className="truncate font-medium"
+                    title={targetDisplayName(t)}
+                  >
+                    {targetDisplayName(t)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {labelTarget(t.targetKind)}
+                  </div>
+                </div>
               </td>
               <td className="py-1.5 pr-2 font-mono text-muted-foreground">
                 {t.modelId ?? "—"}
