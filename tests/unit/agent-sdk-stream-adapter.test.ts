@@ -3,6 +3,50 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkToUiAdapter } from "../../src/lib/ai/agent-sdk-stream-adapter";
 
 describe("createSdkToUiAdapter task events", () => {
+  it("streams step usage updates and overwrites with final result usage", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "assistant",
+      message: {
+        id: "msg-1",
+        content: [],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "assistant",
+      message: {
+        id: "msg-2",
+        content: [],
+        usage: { input_tokens: 3, output_tokens: 4 },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "done",
+      usage: { input_tokens: 20, output_tokens: 8 },
+    } as unknown as SDKMessage);
+
+    const usageParts = parts.filter((p) => p.type === "data-turn-usage");
+    expect(usageParts).toHaveLength(3);
+    expect(
+      usageParts.map((p) => (p.data as { totalTokens?: number }).totalTokens)
+    ).toEqual([12, 19, 28]);
+    expect((usageParts[0].data as { source?: string }).source).toBe(
+      "step-fallback"
+    );
+    expect((usageParts[2].data as { source?: string }).source).toBe(
+      "sdk-result"
+    );
+  });
+
   it("retains subagent type for task notifications that omit subagent_type", () => {
     const parts: Array<Record<string, unknown>> = [];
     const adapter = createSdkToUiAdapter({

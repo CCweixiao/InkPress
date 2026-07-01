@@ -100,6 +100,37 @@ function proposalIdFromOutput(value: unknown) {
   return typeof id === "string" ? id : "";
 }
 
+function readLastTurnUsagePart(part: unknown): NonNullable<LastTurnUsage> | null {
+  if (!part || typeof part !== "object") return null;
+  const p = part as { type?: unknown; data?: unknown };
+  if (p.type !== "data-turn-usage" || !p.data || typeof p.data !== "object") {
+    return null;
+  }
+  const data = p.data as {
+    inputTokens?: unknown;
+    outputTokens?: unknown;
+    reasoningTokens?: unknown;
+    totalTokens?: unknown;
+  };
+  const inputTokens = Number(data.inputTokens ?? 0);
+  const outputTokens = Number(data.outputTokens ?? 0);
+  const reasoningTokens = Number(data.reasoningTokens ?? 0);
+  const totalTokens = Number(
+    data.totalTokens ?? inputTokens + outputTokens + reasoningTokens
+  );
+  if (
+    ![inputTokens, outputTokens, reasoningTokens, totalTokens].every(
+      Number.isFinite
+    )
+  ) {
+    return null;
+  }
+  if (inputTokens + outputTokens + reasoningTokens + totalTokens <= 0) {
+    return null;
+  }
+  return { inputTokens, outputTokens, reasoningTokens, totalTokens };
+}
+
 /** 自闭合 mermaid SVG 中的 HTML void 元素（<br> 等），避免 XML 严格解析报错 */
 function xmlSafeSvg(svg: string): string {
   return svg.replace(/<(br|hr|img|input|meta|link)([^>]*?)(?<!\/)>/gi, "<$1$2/>");
@@ -1484,7 +1515,8 @@ const AgentMessageRow = memo(function AgentMessageRow({
         const part = item.part;
         const isProcessPart =
           part.type === "data-agent-step" ||
-          part.type === "data-context-usage";
+          part.type === "data-context-usage" ||
+          part.type === "data-turn-usage";
         if (isProcessPart && !isLastAssistant) return null;
         return (
           <Fragment key={item.key}>
@@ -2166,8 +2198,22 @@ export function WritingAssistant({
     }
   }, [latestContextUsage]);
 
+  // 本轮结束时后端会在同一条流里下发 data-turn-usage。直接从最新助手消息读取，
+  // 避免等 onFinish 持久化 + refresh 才把上一轮消耗显示到浮窗，造成“下一轮才加”的错觉。
+  useEffect(() => {
+    if (!lastAssistantParts) return;
+    for (let j = lastAssistantParts.length - 1; j >= 0; j -= 1) {
+      const usage = readLastTurnUsagePart(lastAssistantParts[j]);
+      if (usage) {
+        setLastTurnUsage(usage);
+        return;
+      }
+    }
+  }, [lastAssistantParts]);
+
   // 扫描已完成的 propose_article_revision 工具结果 —— 仅最新助手消息。
-  const latestDirectArticle = useMemo(() => {
+  // 同 latestContextUsage：按 markdown 叶子 memoize，值不变时引用稳定，避免下游 effect 每 chunk 重跑。
+  const directArticleRaw = useMemo(() => {
     if (!lastAssistantParts) return null;
     for (let j = lastAssistantParts.length - 1; j >= 0; j--) {
       const p = lastAssistantParts[j] as unknown as Record<string, unknown>;
