@@ -71,101 +71,11 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
-/** 估算成本格式：< 0.01 用 4 位小数，否则 2 位（PDC §12.7 chip 示例 `· $0.03`）。 */
+/** 估算成本格式：< 0.01 用 4 位小数，否则 2 位。 */
 export function formatCost(usd: number): string {
   if (usd <= 0) return "";
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
-}
-
-/** 单条 assistant 回复底部的低存在感 token chip（PDC §12.7）。 */
-export type TurnUsageMeta = {
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  totalTokens?: number;
-  cacheReadInputTokens?: number;
-  cacheCreationInputTokens?: number;
-  costUsd?: number;
-  status?: "completed" | "partial" | "error";
-  source?: "sdk-result" | "step-fallback";
-};
-
-export function TurnUsageChip({
-  usage,
-  streaming,
-}: {
-  usage: TurnUsageMeta | null | undefined;
-  /** 当前消息仍在流式输出（无 usage 时显示「统计中…」）。 */
-  streaming?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const total = usage?.totalTokens ?? 0;
-
-  // 流式中且尚无 usage：显示「统计中…」，不占主输出高度。
-  if (streaming && !total) {
-    return (
-      <span className="text-[10px] text-muted-foreground/50">统计中…</span>
-    );
-  }
-  if (!usage || total <= 0) return null;
-
-  const partial = usage.status === "partial" || usage.source === "step-fallback";
-  const error = usage.status === "error";
-  const cost = formatCost(usage.costUsd ?? 0);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground hover:bg-accent/40 transition-colors"
-        >
-          <Gauge className="h-3 w-3" />
-          <span>{formatTokens(total)} tokens</span>
-          {cost && <span>· {cost}</span>}
-          {partial && <span className="text-amber-600/80">· 估算</span>}
-          {error && <span className="text-red-500/80">· 已计入错误消耗</span>}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-60">
-        <div className="text-xs font-semibold">本轮用量</div>
-        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-          <span className="text-muted-foreground">输入</span>
-          <span className="text-right">{(usage.inputTokens ?? 0).toLocaleString()}</span>
-          <span className="text-muted-foreground">输出</span>
-          <span className="text-right">{(usage.outputTokens ?? 0).toLocaleString()}</span>
-          {!!usage.cacheReadInputTokens && (
-            <>
-              <span className="text-muted-foreground">Cache 读</span>
-              <span className="text-right">{usage.cacheReadInputTokens.toLocaleString()}</span>
-            </>
-          )}
-          {!!usage.cacheCreationInputTokens && (
-            <>
-              <span className="text-muted-foreground">Cache 写</span>
-              <span className="text-right">{usage.cacheCreationInputTokens.toLocaleString()}</span>
-            </>
-          )}
-          <span className="text-muted-foreground">合计</span>
-          <span className="text-right font-medium">{total.toLocaleString()}</span>
-          {cost && (
-            <>
-              <span className="text-muted-foreground">估算成本</span>
-              <span className="text-right">{cost}</span>
-            </>
-          )}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10px] text-muted-foreground">
-          <span>
-            状态：
-            {error ? "错误完成" : partial ? "中断估算" : "完成"}
-          </span>
-          <span>· 来源：{usage.source === "step-fallback" ? "估算兜底" : "SDK 汇总"}</span>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 /**
@@ -262,9 +172,15 @@ function contextTone(contextUsage: ContextUsage) {
   return { dot: "bg-muted-foreground/50", icon: "text-muted-foreground" };
 }
 
+/** 格式化 token 数：≥1000 用 k 后缀（1 位小数），否则原样。 */
+function fmtTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
 /**
- * Token 计量：composer 底栏的 chip，显示 SDK 报告的上下文规模与上一轮消耗。
- * 点击弹出消耗面板：最近一次自动压缩前后 + 上一轮 input/output/reasoning + 模型。
+ * Token 计量：composer 底栏的统一入口。
+ * 语义只保留两层：当前上下文规模 + 最近一轮模型消耗。
  */
 // memo + 稳定引用 props：流式期间 contextUsage/lastTurn/modelName 引用稳定（见 WritingAssistant 的
 // latestContextUsage 叶子 memoize）→ TokenMeter 跳过重渲染，避免底栏数字宽度变化触发 composer 回流。
@@ -288,28 +204,24 @@ export const TokenMeter = memo(function TokenMeter({
       <PopoverTrigger asChild>
         <button
           type="button"
-          title="上下文与消耗"
-          className="inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] hover:bg-accent tabular-nums"
+          title="Token 用量"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border bg-background hover:bg-accent"
         >
-          <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
-          <Gauge className={cn("h-3 w-3", tone.icon)} />
-          <span className={cn(contextUsage?.compressed ? tone.icon : "text-muted-foreground")}>
-            {formatTokens(estimated)}
-          </span>
+          <Gauge className={cn("h-3.5 w-3.5", tone.icon)} />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64">
-        <div className="text-xs font-semibold">上下文与消耗</div>
+        <div className="text-xs font-semibold">Token 用量</div>
         {estimated > 0 && (
           <div className="mt-2">
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-muted-foreground">
-                {contextUsage?.compressed ? "压缩后上下文" : "当前上下文估算"}
+                当前上下文
               </span>
-              <span className="font-medium">{estimated.toLocaleString()}</span>
+              <span className="font-medium">{fmtTokens(estimated)}</span>
             </div>
             <div className="mt-1 text-[10px] text-muted-foreground">
-              该数值来自当前消息流或 Claude Agent SDK 自动压缩事件，不代表模型最大窗口。
+              发送给模型的上下文规模估算；不是已花费 token，也不是最大窗口。
             </div>
           </div>
         )}
@@ -318,25 +230,28 @@ export const TokenMeter = memo(function TokenMeter({
             <div className="font-medium">Claude Agent 已自动压缩上下文</div>
             <div className="mt-1 text-sky-700 dark:text-sky-300">
               {typeof compactPre === "number" && typeof compactPost === "number"
-                ? `${compactPre.toLocaleString()} → ${compactPost.toLocaleString()} tokens`
+                ? `${fmtTokens(compactPre)} → ${fmtTokens(compactPost)} tokens`
                 : "SDK 已整理早期历史，后续会话将基于压缩后的摘要继续"}
             </div>
           </div>
         )}
         {lastTurn && (
           <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t pt-2 text-[11px]">
-            <span className="text-muted-foreground">上一轮输入</span>
-            <span className="text-right">{lastTurn.inputTokens.toLocaleString()}</span>
-            <span className="text-muted-foreground">上一轮输出</span>
-            <span className="text-right">{lastTurn.outputTokens.toLocaleString()}</span>
+            <span className="text-muted-foreground">最近一轮输入</span>
+            <span className="text-right">{fmtTokens(lastTurn.inputTokens)}</span>
+            <span className="text-muted-foreground">最近一轮输出</span>
+            <span className="text-right">{fmtTokens(lastTurn.outputTokens)}</span>
             {lastTurn.reasoningTokens > 0 && (
               <>
                 <span className="text-muted-foreground">思考</span>
-                <span className="text-right">{lastTurn.reasoningTokens.toLocaleString()}</span>
+                <span className="text-right">{fmtTokens(lastTurn.reasoningTokens)}</span>
               </>
             )}
-            <span className="text-muted-foreground">合计</span>
-            <span className="text-right font-medium">{lastTurn.totalTokens.toLocaleString()}</span>
+            <span className="text-muted-foreground">最近一轮消耗</span>
+            <span className="text-right font-medium">{fmtTokens(lastTurn.totalTokens)}</span>
+            <div className="col-span-2 text-[10px] text-muted-foreground">
+              消耗 = 该轮模型实际报告的输入 + 输出 + 思考 token。
+            </div>
           </div>
         )}
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10px] text-muted-foreground">
