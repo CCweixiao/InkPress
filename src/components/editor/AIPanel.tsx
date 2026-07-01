@@ -14,6 +14,8 @@ export function AIPanel({
   currentMarkdown,
   articleId,
   spaceId,
+  profileId,
+  onProfileChange,
   onModeChange,
   onFlushArticle,
   onApplyDigest,
@@ -27,6 +29,9 @@ export function AIPanel({
   currentMarkdown: string;
   articleId: string;
   spaceId?: string | null;
+  /** P3 文章类型 profile id，下传给 WritingAssistant 显示 badge。 */
+  profileId?: string | null;
+  onProfileChange?: (profileId: string) => void;
   onModeChange?: (mode: AIPanelMode) => void;
   onFlushArticle: (patch?: {
     title?: string;
@@ -75,6 +80,8 @@ export function AIPanel({
       <div className={mode === "chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
         <WritingAssistant
           articleId={articleId}
+          profileId={profileId}
+          onProfileChange={onProfileChange}
           currentMarkdown={currentMarkdown}
           onApplyArticle={onApplyArticle}
           onApplyDigest={onApplyDigest}
