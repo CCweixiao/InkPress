@@ -5,6 +5,31 @@ import {
   type InkPressToolDefinition,
 } from "@/lib/ai/tools/registry";
 
+export function buildInkPressToolCallResult(
+  def: InkPressToolDefinition,
+  result: unknown
+) {
+  const structured =
+    result && typeof result === "object"
+      ? (result as Record<string, unknown>)
+      : undefined;
+  const textResult = def.toContentText
+    ? def.toContentText(result)
+    : typeof result === "string"
+      ? result
+      : JSON.stringify(result);
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: textResult,
+      },
+    ],
+    ...(def.modelResultMode === "text-only" ? {} : { structuredContent: structured }),
+    isError: false as const,
+  };
+}
+
 /**
  * 把 InkPress 工具注册表包装成 Claude Agent SDK 的 in-process MCP server。
  *
@@ -26,43 +51,53 @@ export function createInkPressMcpServer(ctx: InkPressToolContext) {
         // 自生成的 toolCallId 仅供 UI 卡片聚合（input/output 用同一 id），
         // 与模型 tool_use 的内部 id 无关。
         const toolCallId = crypto.randomUUID();
+        // P1：后端生成展示语义，经 toolMetadata.display 透传给前端 ToolCallBlock（前端回退 TOOL_REGISTRY）。
+        const displayCtx = {
+          target: {
+            kind: ctx.target.kind,
+            id: ctx.target.id,
+            title: ctx.target.title,
+          },
+        };
+        const inputDisplay = def.display({ phase: "executing", args, ctx: displayCtx });
         ctx.emit({
           type: "tool-input-available",
           toolCallId,
           toolName: def.name,
           input: args,
           dynamic: true,
+          toolMetadata: { display: inputDisplay },
         } as never);
         try {
           const result = await def.execute(ctx, args as Record<string, unknown>);
+          const outputDisplay = def.display({
+            phase: "completed",
+            args,
+            output: result,
+            ctx: displayCtx,
+          });
           ctx.emit({
             type: "tool-output-available",
             toolCallId,
             output: result,
             dynamic: true,
+            toolMetadata: { display: outputDisplay },
           } as never);
-          const structured =
-            result && typeof result === "object"
-              ? (result as Record<string, unknown>)
-              : undefined;
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text:
-                  typeof result === "string" ? result : JSON.stringify(result),
-              },
-            ],
-            structuredContent: structured,
-            isError: false as const,
-          };
+          return buildInkPressToolCallResult(def, result);
         } catch (err) {
           const message = err instanceof Error ? err.message : "工具执行失败。";
+          const errorDisplay = def.display({
+            phase: "failed",
+            args,
+            error: message,
+            ctx: displayCtx,
+          });
           ctx.emit({
             type: "tool-output-error",
             toolCallId,
             errorText: message,
             dynamic: true,
+            toolMetadata: { display: errorDisplay },
           } as never);
           return {
             content: [{ type: "text" as const, text: message }],

@@ -39,19 +39,31 @@ function appVersion(): string {
  * 由 Next.js instrumentation.ts（server 进程启动时）调用，确保在标准 Node 运行时下执行，
  * 从而原生加载 better-sqlite3（避免 Electron 主进程的 Node ABI 冲突）。
  *
- * 仅在打包形态（usesDataHome() 为真）下执行实际工作；开发模式直接返回。
+ * 打包形态（usesDataHome() 为真）执行完整初始化；开发模式只做幂等 seed
+ * （内置主题 + 默认空间），目录创建与 schema 迁移仍归 prisma migrate dev。
  *
- * 步骤：
+ * 打包形态步骤：
  * 1. 创建 ~/.inkpress 下的子目录结构（含 database/backups/scripts、user skills、logs）
  * 2. 检测首次安装 vs 更新（.update 标记），写版本元数据
  * 3. 版本化迁移：备份 → 事务执行 DDL/DML → 写 migration_history + .success 审计标识
  *    （支持跨版本更新；旧库自动兼容导入 _prisma_migrations）
- * 4. seed 内置主题
+ * 4. seed 内置主题 + 默认空间
  *
  * 系统 skill 不再拷贝：运行时从资源根只读目录实时读取，app 更新即自动全量更新。
  */
 export async function ensureDataHome(): Promise<void> {
-  if (!usesDataHome()) return; // 开发模式：用项目目录，无需初始化
+  // 开发模式：用项目目录下的 dev.db。目录创建与 schema 迁移归 prisma migrate dev 管，
+  // 这里不介入；但仍需 seed 内置主题与默认空间（均幂等），否则重建 dev.db
+  // （切分支带新 migration / migrate reset / 删除 dev.db）后主题列表会空。
+  if (!usesDataHome()) {
+    await seedBuiltInThemes().catch((e) => {
+      log.error({ err: e }, "seed 内置主题失败（开发模式）");
+    });
+    await ensureDefaultSpace().catch((e) => {
+      log.error({ err: e }, "seed 默认空间失败（开发模式）");
+    });
+    return;
+  }
 
   const home = dataHome()!;
   const version = appVersion();

@@ -62,8 +62,53 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   let streamedAnyText = false;
   let lastText = "";
   const blockKind = new Map<number, "text" | "thinking" | "other">();
+  const taskTypeById = new Map<string, string>();
+  const openTaskIds = new Set<string>();
+  const hiddenTaskIds = new Set<string>();
 
   const result: ClaudeAgentTurnResult = { isError: false };
+
+  function closeTaskById(
+    taskId: string,
+    input: {
+      status: "completed" | "failed";
+      detail?: string;
+      titleStatus?: "完成" | "失败";
+    }
+  ) {
+    if (hiddenTaskIds.has(taskId)) {
+      hiddenTaskIds.delete(taskId);
+      taskTypeById.delete(taskId);
+      openTaskIds.delete(taskId);
+      return;
+    }
+    if (!openTaskIds.has(taskId)) return;
+    const subagentType = taskTypeById.get(taskId);
+    writer.write({
+      type: "data-agent-step",
+      id: crypto.randomUUID(),
+      data: {
+        kind: "intent",
+        title: `子任务${input.titleStatus ?? (input.status === "completed" ? "完成" : "失败")}（${subagentType ?? "subagent"}）`,
+        detail:
+          input.detail ??
+          (input.status === "completed"
+            ? "子 agent 已返回，主 agent 正在综合结果"
+            : "子 agent 未正常完成"),
+        status: input.status,
+        ...(subagentType ? { subagentType } : {}),
+        subTaskId: taskId,
+      },
+    } as never);
+    openTaskIds.delete(taskId);
+    taskTypeById.delete(taskId);
+  }
+
+  function closeAllOpenTasks(input: { status: "completed" | "failed"; detail?: string }) {
+    for (const taskId of Array.from(openTaskIds)) {
+      closeTaskById(taskId, input);
+    }
+  }
 
   function openText() {
     if (textId === null) {
@@ -183,8 +228,18 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             (Array.isArray(r.errors) && r.errors[0]) ||
             (typeof r.result === "string" && r.result) ||
             "Claude Agent 运行出错。";
+          closeAllOpenTasks({
+            status: "failed",
+            detail: "本轮对话结束时子 agent 仍未返回完成事件",
+          });
         } else if (typeof r.result === "string" && r.result && !lastText) {
           lastText = r.result;
+        }
+        if (!result.isError) {
+          closeAllOpenTasks({
+            status: "completed",
+            detail: "本轮对话已收口，子 agent 结果已由主 agent 综合",
+          });
         }
         break;
       }
@@ -288,6 +343,136 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             },
           } as never);
         }
+        // P4：子 agent（task_*）事件 → data-agent-step，前端看到子任务进度。
+        // 字段来自 SDKTaskStarted/Progress/Notification（subagent_type/task_id/summary/last_tool_name/status）。
+        if (m.subtype === "task_started") {
+          if (m.skip_transcript === true && typeof m.task_id === "string") {
+            hiddenTaskIds.add(m.task_id);
+            openTaskIds.delete(m.task_id);
+            taskTypeById.delete(m.task_id);
+            break;
+          }
+          if (typeof m.task_id === "string" && typeof m.subagent_type === "string") {
+            taskTypeById.set(m.task_id, m.subagent_type);
+          }
+          if (typeof m.task_id === "string") openTaskIds.add(m.task_id);
+          const subagentType =
+            typeof m.subagent_type === "string"
+              ? m.subagent_type
+              : typeof m.task_id === "string"
+                ? taskTypeById.get(m.task_id)
+                : undefined;
+          writer.write({
+            type: "data-agent-step",
+            id: crypto.randomUUID(),
+            data: {
+              kind: "intent",
+              title: `子任务启动（${subagentType ?? "subagent"}）`,
+              detail: typeof m.prompt === "string" ? m.prompt.slice(0, 160) : "",
+              status: "running",
+              ...(subagentType ? { subagentType } : {}),
+              ...(typeof m.task_id === "string" ? { subTaskId: m.task_id } : {}),
+            },
+          } as never);
+        } else if (m.subtype === "task_progress") {
+          if (typeof m.task_id === "string" && hiddenTaskIds.has(m.task_id)) break;
+          if (typeof m.task_id === "string" && typeof m.subagent_type === "string") {
+            taskTypeById.set(m.task_id, m.subagent_type);
+          }
+          const subagentType =
+            typeof m.subagent_type === "string"
+              ? m.subagent_type
+              : typeof m.task_id === "string"
+                ? taskTypeById.get(m.task_id)
+                : undefined;
+          writer.write({
+            type: "data-agent-step",
+            id: crypto.randomUUID(),
+            data: {
+              kind: "intent",
+              title: `子任务进行中（${subagentType ?? "subagent"}）`,
+              detail:
+                (typeof m.summary === "string" && m.summary) ||
+                (typeof m.description === "string" && m.description) ||
+                (typeof m.last_tool_name === "string" ? m.last_tool_name : ""),
+              status: "running",
+              ...(subagentType ? { subagentType } : {}),
+              ...(typeof m.task_id === "string" ? { subTaskId: m.task_id } : {}),
+            },
+          } as never);
+        } else if (m.subtype === "task_notification") {
+          if (typeof m.task_id === "string" && hiddenTaskIds.has(m.task_id)) {
+            hiddenTaskIds.delete(m.task_id);
+            taskTypeById.delete(m.task_id);
+            openTaskIds.delete(m.task_id);
+            break;
+          }
+          const ok = m.status === "completed";
+          const subagentType =
+            typeof m.task_id === "string" ? taskTypeById.get(m.task_id) : undefined;
+          writer.write({
+            type: "data-agent-step",
+            id: crypto.randomUUID(),
+            data: {
+              kind: "intent",
+              title: `子任务${ok ? "完成" : "失败"}（${subagentType ?? "subagent"}）`,
+              detail: typeof m.summary === "string" ? m.summary : "",
+              status: ok ? "completed" : "failed",
+              ...(subagentType ? { subagentType } : {}),
+              ...(typeof m.task_id === "string" ? { subTaskId: m.task_id } : {}),
+            },
+          } as never);
+          if (typeof m.task_id === "string") {
+            openTaskIds.delete(m.task_id);
+            taskTypeById.delete(m.task_id);
+          }
+        } else if (m.subtype === "task_updated") {
+          const taskId = typeof m.task_id === "string" ? m.task_id : "";
+          if (taskId && hiddenTaskIds.has(taskId)) {
+            const patch =
+              m.patch && typeof m.patch === "object"
+                ? (m.patch as Record<string, unknown>)
+                : {};
+            const status = String(patch.status ?? "");
+            if (status === "completed" || status === "failed" || status === "killed") {
+              hiddenTaskIds.delete(taskId);
+              taskTypeById.delete(taskId);
+              openTaskIds.delete(taskId);
+            }
+            break;
+          }
+          const patch =
+            m.patch && typeof m.patch === "object"
+              ? (m.patch as Record<string, unknown>)
+              : {};
+          const status = String(patch.status ?? "");
+          const description =
+            typeof patch.description === "string" ? patch.description : "";
+          if (taskId && (status === "completed" || status === "failed" || status === "killed")) {
+            closeTaskById(taskId, {
+              status: status === "completed" ? "completed" : "failed",
+              titleStatus: status === "completed" ? "完成" : "失败",
+              detail:
+                description ||
+                (typeof patch.error === "string" ? patch.error : undefined),
+            });
+          } else if (taskId && description) {
+            writer.write({
+              type: "data-agent-step",
+              id: crypto.randomUUID(),
+              data: {
+                kind: "intent",
+                title: `子任务进行中（${taskTypeById.get(taskId) ?? "subagent"}）`,
+                detail: description,
+                status: "running",
+                ...(taskTypeById.get(taskId)
+                  ? { subagentType: taskTypeById.get(taskId) }
+                  : {}),
+                subTaskId: taskId,
+              },
+            } as never);
+          }
+        }
         break;
       }
       case "rate_limit_event": {
@@ -343,6 +528,12 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   function flush() {
     closeText();
     closeReasoning();
+    closeAllOpenTasks({
+      status: result.isError ? "failed" : "completed",
+      detail: result.isError
+        ? "本轮对话结束时子 agent 仍未返回完成事件"
+        : "本轮对话已收口，子 agent 结果已由主 agent 综合",
+    });
     // 全程没有增量输出时，用整段文本兜底，至少给用户一个完整回复。
     if (!streamedAnyText && lastText) {
       const id = crypto.randomUUID();

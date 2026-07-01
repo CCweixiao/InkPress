@@ -3,10 +3,14 @@ import fs from "node:fs/promises";
 import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
 import { getClaudeAgentConfig } from "@/lib/ai/claude-agent-config";
 import { buildInkPressSystemPrompt } from "@/lib/ai/system-prompt";
+import { buildSubagents } from "@/lib/ai/subagents";
 import { createInkPressMcpServer } from "@/lib/ai/inkpress-mcp-server";
 import { listSkills } from "@/lib/ai/skills";
 import type { CodeSourceReference } from "@/lib/ai/code-source";
 import { getAgentConfig } from "@/lib/ai/agent-config";
+import { getWebResearchConfig } from "@/lib/ai/web-research-config";
+import { isDomainAllowed, normalizeDomain } from "@/lib/ai/web-allowlist";
+import { assessWebUrlRisk } from "@/lib/ai/web-url-risk";
 import { prisma } from "@/lib/db";
 import {
   claudeAllowedTools,
@@ -29,6 +33,8 @@ export type ClaudeAgentTarget = {
   digest?: string;
   documentType?: string;
   snapshotHash?: string;
+  /** P3 文章类型 profile id（article 时影响 prompt 引导 + 默认 skill）。 */
+  profileId?: string;
 };
 
 export type BuildClaudeAgentOptionsInput = {
@@ -66,6 +72,7 @@ function hashInput(input: Record<string, unknown>): string {
 function buildCanUseTool(ctx: {
   sessionId: string;
   emit: (part: never) => void;
+  autoApprove: boolean;
 }): CanUseTool {
   return async (toolName, input, options) => {
     const bareName = stripToolPrefix(toolName);
@@ -76,6 +83,49 @@ function buildCanUseTool(ctx: {
     if (decision === "deny")
       return { behavior: "deny", message: `工具 ${bareName} 已被禁用。` };
 
+    // P2.5：web_fetch 域名白名单 / 自动放权短路——命中则不弹审批卡，并 emit 提示 step
+    // （前端 AgentStepBlock 免费渲染，让用户知道这次为何没问）。
+    let webFetchUrl = "";
+    let webFetchRisk: ReturnType<typeof assessWebUrlRisk> | null = null;
+    if (
+      bareName === "web_fetch" &&
+      typeof (input as Record<string, unknown> | null)?.url === "string"
+    ) {
+      webFetchUrl = String((input as Record<string, unknown>).url);
+      webFetchRisk = assessWebUrlRisk(webFetchUrl);
+      const domain = normalizeDomain(
+        String((input as Record<string, unknown>).url)
+      );
+      if (ctx.autoApprove) {
+        ctx.emit({
+          type: "data-agent-step",
+          id: crypto.randomUUID(),
+          data: {
+            kind: "intent",
+            title: "已自动放权联网抓取",
+            detail: domain
+              ? `直接读取 ${domain}（已开启自动放权）`
+              : "已开启自动放权",
+            status: "completed",
+          },
+        } as never);
+        return { behavior: "allow", updatedInput: input };
+      }
+      if (domain && (await isDomainAllowed(domain))) {
+        ctx.emit({
+          type: "data-agent-step",
+          id: crypto.randomUUID(),
+          data: {
+            kind: "intent",
+            title: "白名单自动放行",
+            detail: `${domain} 在信任域名白名单中`,
+            status: "completed",
+          },
+        } as never);
+        return { behavior: "allow", updatedInput: input };
+      }
+    }
+
     const approvalToken = crypto.randomBytes(24).toString("base64url");
     const grant = await prisma.toolActionGrant.create({
       data: {
@@ -83,9 +133,24 @@ function buildCanUseTool(ctx: {
         toolName: bareName,
         inputHash: hashInput(input),
         approvalTokenHash: hashToken(approvalToken),
+        decisionJson: JSON.stringify({
+          input,
+          riskAssessment: webFetchRisk,
+          approvalKind: bareName === "web_fetch" ? "external_network" : "tool",
+        }),
         status: "pending",
       },
     });
+    const pendingBatchCount =
+      bareName === "web_fetch"
+        ? await prisma.toolActionGrant.count({
+            where: {
+              sessionId: ctx.sessionId,
+              toolName: "web_fetch",
+              status: "pending",
+            },
+          })
+        : 1;
     ctx.emit({
       type: "data-tool-approval",
       id: crypto.randomUUID(),
@@ -94,6 +159,14 @@ function buildCanUseTool(ctx: {
         toolName: bareName,
         displayName: options.displayName,
         input,
+        url: webFetchUrl || undefined,
+        domain: webFetchRisk?.domain,
+        riskAssessment: webFetchRisk,
+        batch: {
+          enabled: bareName === "web_fetch",
+          pendingCount: pendingBatchCount,
+          scope: "session:web_fetch",
+        },
         approvalToken,
       },
     } as never);
@@ -129,7 +202,7 @@ function buildCanUseTool(ctx: {
  * 构造 Claude Agent SDK 的 Options。
  *
  * P1 变化：挂载 InkPress MCP 工具（in-process，handler 闭包持有本次 ctx），
- * 通过 allowedTools 自动批准；tools:[] 仍禁用所有内置工具，只用 MCP 工具。
+ * 通过 allowedTools 自动批准；内置工具只开放 Agent，用于 SDK 原生子 agent 委派。
  *
  * - options.env 整体替换 process.env，必须保留 PATH/HOME 等。
  * - backend（baseUrl/apiKey）从 DB 的 SystemConfig 读取后注入 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN。
@@ -147,11 +220,13 @@ export async function buildClaudeAgentOptions(
 
   const skillCatalog = await listSkills();
   const agentConfig = await getAgentConfig();
+  const webResearch = await getWebResearchConfig();
   const mcpServer = createInkPressMcpServer({
     target: input.target,
     sessionId: input.sessionId,
     codeSource: input.codeSource,
     agentConfig,
+    webResearch,
     skillCatalog,
     emit: input.emit,
   });
@@ -179,17 +254,28 @@ export async function buildClaudeAgentOptions(
       skillCatalog,
       preferredSkillIds: input.preferredSkillIds,
       codeSource: input.codeSource,
+      tavilyApiKey: webResearch.tavilyApiKey,
     }),
     model: cfg.model,
     // 固定 cwd，避免 SDK 默认绑定到 InkPress 开发仓库或用户本地 Claude Code 工作目录。
     cwd: claudeWorkspaceDir,
     includePartialMessages: true,
     mcpServers: { inkpress: mcpServer },
-    // allow 工具自动批准；ask 工具（如 set_article_digest）不在此列 → 触发 canUseTool 审批闸门。
-    allowedTools: claudeAllowedTools(),
-    canUseTool: buildCanUseTool({ sessionId: input.sessionId, emit: input.emit }),
-    // 禁用所有内置工具（Read/Edit/Bash/...），只用 InkPress MCP 工具。
-    tools: [],
+    // P4：声明的子 agent（research/review/fact_check），模型经内置 Agent 工具调起；
+    // forwardSubagentText:false → 子任务内部历史不进主会话，只回 finalText。
+    agents: buildSubagents(),
+    forwardSubagentText: false,
+    agentProgressSummaries: true,
+    // allow 工具自动批准；web_fetch 即便全局 autoApprove 也不进 allowedTools，
+    // 统一走 canUseTool 以保留自动放行提示、白名单判断和未来审计入口。
+    allowedTools: [...claudeAllowedTools(), "Agent"],
+    canUseTool: buildCanUseTool({
+      sessionId: input.sessionId,
+      emit: input.emit,
+      autoApprove: webResearch.autoApprove,
+    }),
+    // 只启用 SDK 内置 Agent 工具来调起子 agent；Read/Edit/Bash/WebFetch 等内置工具仍不暴露。
+    tools: ["Agent"],
     settingSources: [],
     // P5：持久化 + 镜像到 Prisma SessionStore；resume 让 Claude 跨轮/跨刷新记忆。
     persistSession: true,

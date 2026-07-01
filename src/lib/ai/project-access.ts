@@ -113,7 +113,8 @@ export async function listProjectFiles(
       .split("\n")
       .filter(Boolean)
       .map((item) => item.replace(/^\.\//, "").replaceAll("\\", "/"))
-      .filter((item) => !isBlockedRelativePath(item));
+      .filter((item) => !isBlockedRelativePath(item))
+      .sort();
   } catch (error) {
     // rg 不可用（ENOENT：系统无独立 ripgrep，shell alias 不被 execFile 解析）
     // 或被沙箱/超时拒绝时，退回 Node 原生遍历。记录原因，避免"文件列表为空"变成无声黑洞。
@@ -332,7 +333,8 @@ export async function searchProject(
     const allMatches = stdout
       .split("\n")
       .filter(Boolean)
-      .filter((line) => !isBlockedRelativePath(line.split(":")[0] ?? ""));
+      .filter((line) => !isBlockedRelativePath(line.split(":")[0] ?? ""))
+      .sort();
     const matches = allMatches.slice(offset, offset + limit);
     return {
       project: project.name,

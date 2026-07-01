@@ -94,6 +94,33 @@ const RULES: Array<{
       "请在设置里更新写作 Agent 的 GitHub Token（或清空后对公开仓库匿名访问），再重试。",
   },
   {
+    // GitHub API 限流（匿名 60 次/小时耗尽，code-source.ts 的 403/429 分支）：
+    // 其文案「访问受限」「稍后重试」不匹配通用 rate-limit 规则（要求「访问频率」「稍后再试」），
+    // 不补这条会落到 unknown 兜底，误提示「检查模型与网络配置」。
+    category: "rate-limit",
+    test: /GitHub.*(访问受限|限流)|API rate limit exceeded/i,
+    label: "GitHub API 访问受限",
+    suggestion:
+      "匿名访问 GitHub 限流（60 次/小时）。请在设置里为写作 Agent 配置 GitHub Token（提升到 5000 次/小时）后重试。",
+  },
+  {
+    // GitHub 仓库不可访问（404：私有 / 不存在 / 无权，code-source.ts 的 404 分支与私有仓库判断）：
+    // 排在「Token 无效」auth 规则之后——Token 无效的文案由前者捕获，其余落到这里。
+    category: "auth",
+    test: /GitHub.*(私有仓库|仓库不存在|无权访问)|仓库为私有/i,
+    label: "GitHub 仓库不可访问",
+    suggestion:
+      "仓库为私有或不存在。若是私有仓库，请在设置里为写作 Agent 配置有权限的 GitHub Token 后重试。",
+  },
+  {
+    // 其他 GitHub 请求错误（code-source.ts 兜底「GitHub：{msg}」/「GitHub 请求失败（xxx）」）。
+    category: "network",
+    test: /GitHub[：:]|GitHub 请求失败/i,
+    label: "GitHub 请求失败",
+    suggestion:
+      "访问 GitHub 失败，请检查网络或稍后重试；若反复受限，请在设置里为写作 Agent 配置 GitHub Token。",
+  },
+  {
     category: "quota",
     test: /余额不足|额度|配额|请充值|insufficient|quota|payment required|exceeded your current quota/i,
     label: "模型余额不足或额度已尽",
