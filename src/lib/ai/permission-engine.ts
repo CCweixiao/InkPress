@@ -7,6 +7,9 @@
  * - ask   → 不进 allowedTools，触发 canUseTool，由 buildCanUseTool 弹审批卡并 await
  * - deny  → 进入 `disallowedTools`（模型上下文里直接移除）
  *
+ * web_fetch 是特例：即便用户开启全局自动放权，也仍不进入 allowedTools，
+ * 统一经过 canUseTool 做动态白名单/自动放行提示，执行层再做 SSRF 守卫。
+ *
  * 未知工具默认 ask（最小信任：未显式 allow 的工具一律需审批）。
  */
 import { INKPRESS_TOOLS } from "@/lib/ai/tools/registry";
@@ -25,7 +28,7 @@ const DECISION_BY_NAME: ReadonlyMap<string, PermissionDecision> = new Map(
   INKPRESS_TOOLS.map((t) => [t.name, t.permission])
 );
 
-/** 评估单个工具的权限决策。未知工具默认 ask。 */
+/** 评估单个工具的静态权限决策。未知工具默认 ask。 */
 export function evaluateToolPermission(bareName: string): PermissionDecision {
   return DECISION_BY_NAME.get(bareName) ?? "ask";
 }
