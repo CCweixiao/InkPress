@@ -31,7 +31,7 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommand[] = [
   {
     token: "/clear",
     label: "清空上下文",
-    description: "清空当前目标的 Agent 对话与未处理提案",
+    description: "清空对话与提案，并开启新的 Claude 会话（不清 Token 消耗大盘）",
     group: "builtin",
     kind: "clear",
   },

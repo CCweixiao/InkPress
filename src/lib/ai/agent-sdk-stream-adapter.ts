@@ -383,6 +383,12 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
       }
       case "system": {
         if (m.subtype === "init") {
+          // 尽早捕获 SDK session id（PDC §2.3/§7.1）：system/init 早于任何 result 到达，
+          // 即便用户在 result 前中断/abort，route 也能拿到 claudeAgentSessionId 用于下一轮 resume。
+          // result.session_id 仍会随后覆盖（权威值），此处仅作早捕获兜底。
+          if (typeof m.session_id === "string" && m.session_id) {
+            result.sessionId = m.session_id;
+          }
           const tools = Array.isArray(m.tools) ? m.tools.length : 0;
           const mcpServers = Array.isArray(m.mcp_servers)
             ? m.mcp_servers

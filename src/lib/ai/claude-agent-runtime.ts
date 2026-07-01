@@ -113,15 +113,27 @@ function finalizeOutcome(
   };
 }
 
-/** 把 usage summary 挂到错误对象上（不改变错误身份，AbortError 仍可被 isAbortError 识别）。 */
-function attachUsageToError(
+/**
+ * Runtime 抛出错误时携带的附加载荷（PDC §7.2）。
+ * - usageSummary：失败/中断轮次的用量（route catch 持久化到 ledger）。
+ * - sessionId：本轮已捕获的 Claude SDK session id（早自 system/init，route catch 落
+ *   claudeAgentSessionId，保证中断后下一轮可 resume）。
+ * 挂载到错误对象上，不改变错误身份（AbortError 仍可被 isAbortError 识别）。
+ */
+export type ClaudeAgentRuntimeError = Error & {
+  usageSummary?: AgentTurnUsageSummary;
+  sessionId?: string;
+};
+
+/** 把 usage summary + sessionId 挂到错误对象上（不改变错误身份）。 */
+function attachErrorPayload(
   err: Error,
-  summary: AgentTurnUsageSummary | undefined
-): Error {
-  if (summary) {
-    (err as Error & { usageSummary?: AgentTurnUsageSummary }).usageSummary = summary;
-  }
-  return err;
+  payload: { summary?: AgentTurnUsageSummary; sessionId?: string }
+): ClaudeAgentRuntimeError {
+  const e = err as ClaudeAgentRuntimeError;
+  if (payload.summary) e.usageSummary = payload.summary;
+  if (payload.sessionId) e.sessionId = payload.sessionId;
+  return e;
 }
 
 /** 从错误对象上读回挂载的 usage summary（route 在 catch 分支持久化失败轮次用量）。 */
@@ -133,6 +145,18 @@ export function readUsageFromError(
     if (summary && typeof summary === "object") {
       return summary as AgentTurnUsageSummary;
     }
+  }
+  return undefined;
+}
+
+/**
+ * 从错误对象上读回挂载的 Claude SDK session id（PDC §7.2）。
+ * route catch 分支用它落 AgentChatSession.claudeAgentSessionId，使中断/错误后下一轮可 resume。
+ */
+export function readSessionFromError(err: unknown): string | undefined {
+  if (err && typeof err === "object" && "sessionId" in err) {
+    const sessionId = (err as { sessionId?: unknown }).sessionId;
+    if (typeof sessionId === "string" && sessionId) return sessionId;
   }
   return undefined;
 }
@@ -337,21 +361,24 @@ export async function runClaudeAgentRuntime(
       return finalizeOutcome(outcome, merged, "completed", hadSdkResult);
     }
 
-    // 用户取消 / 断连中止：不再重试，挂 partial usage 后上抛（route 归类为「对话已取消」）。
+    // 用户取消 / 断连中止：不再重试，挂 partial usage + sessionId 后上抛（route 归类为「对话已取消」）。
+    // sessionId 即便在 result 前 abort（仅收到 system/init）也能带出，供下一轮 resume（PDC §5.2）。
     if (errorKind === "abort" || isAbortError(error)) {
-      throw attachUsageToError(
-        error,
-        finalizeOutcome(outcome, merged, "partial", hadSdkResult).usageSummary
-      );
+      throw attachErrorPayload(error, {
+        summary: finalizeOutcome(outcome, merged, "partial", hadSdkResult)
+          .usageSummary,
+        sessionId: outcome.sessionId,
+      });
     }
 
-    // 非限流错误 / 重试用尽：挂 error usage 后上抛（route onError 归类展示）。
+    // 非限流错误 / 重试用尽：挂 error usage + sessionId 后上抛（route onError 归类展示）。
     // result-error 也可能是 SDK result 承载的 429/访问量过大，仍需进入整轮重试。
     if (!isRateLimitError(error) || attempt > RATE_LIMIT_MAX_RETRIES) {
-      throw attachUsageToError(
-        error,
-        finalizeOutcome(outcome, merged, "error", hadSdkResult).usageSummary
-      );
+      throw attachErrorPayload(error, {
+        summary: finalizeOutcome(outcome, merged, "error", hadSdkResult)
+          .usageSummary,
+        sessionId: outcome.sessionId,
+      });
     }
 
     // 限流：下发「整轮重试」提示后可中止 sleep，再重试。
@@ -370,10 +397,11 @@ export async function runClaudeAgentRuntime(
       await abortableSleep(RATE_LIMIT_RETRY_WAIT_MS, input.abortSignal);
     } catch {
       // sleep 期间用户取消 → 当作 abort 上抛（route 归类为「对话已取消」）。
-      throw attachUsageToError(
-        new DOMException("aborted", "AbortError"),
-        finalizeOutcome(outcome, merged, "partial", hadSdkResult).usageSummary
-      );
+      throw attachErrorPayload(new DOMException("aborted", "AbortError"), {
+        summary: finalizeOutcome(outcome, merged, "partial", hadSdkResult)
+          .usageSummary,
+        sessionId: outcome.sessionId,
+      });
     }
   }
 }
