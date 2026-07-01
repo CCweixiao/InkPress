@@ -393,22 +393,27 @@ async function addTrustedProject(name: string, root: string) {
   });
 }
 
-export async function githubRequest(
+async function rawGithubFetch(
   pathname: string,
-  config: AgentConfig
-): Promise<unknown> {
+  token?: string
+): Promise<{ response: Response; text: string }> {
   const response = await fetch(`https://api.github.com${pathname}`, {
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "InkPress-CodeExplorer",
-      ...(config.githubToken
-        ? { Authorization: `Bearer ${config.githubToken}` }
-        : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     signal: AbortSignal.timeout(20_000),
   });
   const text = await response.text();
+  return { response, text };
+}
+
+function parseGithubPayload(text: string): {
+  data: unknown;
+  record: Record<string, unknown>;
+} {
   if (text.length > 8 * 1024 * 1024) {
     throw new Error("GitHub 返回内容过大，已停止读取。");
   }
@@ -417,9 +422,37 @@ export async function githubRequest(
     data && typeof data === "object" && !Array.isArray(data)
       ? (data as Record<string, unknown>)
       : {};
+  return { data, record };
+}
+
+/**
+ * GitHub API 请求（ensureGithubCodeSource 与 fetchGithubPullRequest 共用）。
+ *
+ * Token 策略：token-first + 401 匿名回退——
+ * - 有 token 先带 token（享受 5000/hr 高限流）。
+ * - 若 token 自身无效（401 Bad credentials），自动回退一次匿名请求：**公开仓库不依赖
+ *   token 有效性**即可访问；私有仓库匿名会 404，落到下方错误处理。
+ */
+export async function githubRequest(
+  pathname: string,
+  config: AgentConfig
+): Promise<unknown> {
+  const token = config.githubToken;
+  let { response, text } = await rawGithubFetch(pathname, token);
+  let tokenRejected = false;
+  if (response.status === 401 && token) {
+    // token 自身无效：公开仓库匿名仍可访问，重试一次匿名。
+    tokenRejected = true;
+    ({ response, text } = await rawGithubFetch(pathname, undefined));
+  }
+  const { data, record } = parseGithubPayload(text);
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error("GitHub 仓库不存在、不是公开仓库，或当前令牌无权访问。");
+      throw new Error(
+        tokenRejected
+          ? "GitHub Token 无效，或仓库不存在/为私有仓库（私有仓库需配置有权限的 Token）。"
+          : "GitHub 仓库不存在，或为无权访问的私有仓库（私有仓库需配置有权限的 Token）。"
+      );
     }
     if (response.status === 403 || response.status === 429) {
       throw new Error("GitHub API 访问受限，请稍后重试或配置 GitHub Token。");
@@ -554,7 +587,10 @@ export async function ensureGithubCodeSource(
     config
   );
   const metadataRecord = metadata as Record<string, unknown>;
-  if (metadataRecord.private === true) throw new Error("首版仅支持 GitHub 公开仓库。");
+  const isPrivate = metadataRecord.private === true;
+  if (isPrivate && !config.githubToken) {
+    throw new Error("该 GitHub 仓库为私有仓库，需配置有权限的 GitHub Token 才能访问。");
+  }
   const defaultBranch =
     typeof metadataRecord.default_branch === "string"
       ? metadataRecord.default_branch
@@ -570,8 +606,12 @@ export async function ensureGithubCodeSource(
   const gitDirectory = path.join(cacheRoot, ".git");
   const exists = await fs.stat(gitDirectory).then(() => true).catch(() => false);
   await fs.mkdir(path.dirname(cacheRoot), { recursive: true });
+  const publicUrl = `https://github.com/${grant.owner}/${grant.repo}.git`;
   if (!exists) {
-    const url = `https://github.com/${grant.owner}/${grant.repo}.git`;
+    // 公开仓库匿名 clone；私有仓库（token 必有效——匿名对私有 404）用 x-access-token 内嵌 token。
+    const url = isPrivate
+      ? `https://x-access-token:${encodeURIComponent(config.githubToken!)}@github.com/${grant.owner}/${grant.repo}.git`
+      : publicUrl;
     await runGit(
       [
         "clone",
@@ -616,6 +656,12 @@ export async function ensureGithubCodeSource(
         await runGit(["checkout", "--detach", "FETCH_HEAD"], cacheRoot);
       }
     });
+    // 私有仓库用 token 内嵌 URL clone 后，立即把 origin remote 改回匿名 URL，避免 token 写入 .git/config。
+    if (isPrivate) {
+      await runGit(["remote", "set-url", "origin", publicUrl], cacheRoot).catch(
+        () => undefined
+      );
+    }
   } else {
     await runGit(
       [

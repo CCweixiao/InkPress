@@ -1,5 +1,5 @@
 /**
- * 预路由快速短路（route.ts 在意图路由前先判一次，命中即直接回执，省 LLM 调用）。
+ * 本地快速短路（route.ts 在启动 Claude Agent 前先判一次，命中即直接回执，省 LLM 调用）。
  *
  * 两类零成本短路：
  * 1. 能力/身份介绍类询问（你能做什么 / 帮助 / 你是谁）→ 精简确定的能力清单。
@@ -49,7 +49,7 @@ export function isCapabilityQuestion(raw: string): boolean {
 
 /**
  * 能力清单（精简、确定）。命中能力询问时直接回这段，不走 Agent。
- * 顺带提示斜杠命令（/clear /compact /skill），与新交互呼应。
+ * 顺带提示斜杠命令（/clear /skill），与新交互呼应。
  */
 export const CAPABILITY_REPLY = `我是 InkPress 写作 Agent，能帮你做这些事：
 
@@ -59,7 +59,7 @@ export const CAPABILITY_REPLY = `我是 InkPress 写作 Agent，能帮你做这�
 - 🔀 **变更复盘**：分析 Git 提交、Diff、版本区间，写成变更说明文章
 - 🌐 **联网调研**：搜索资料辅助写作，并在回答中保留来源
 
-直接把需求发给我即可，我会自动匹配 Skill 与工具。在对话框输入 \`/\` 可查看命令（\`/clear\` 清空上下文、\`/compact\` 压缩历史、\`/<skill>\` 指定技能）。
+直接把需求发给我即可，我会自动匹配 Skill 与工具。在对话框输入 \`/\` 可查看命令（\`/clear\` 清空上下文、\`/<skill>\` 指定技能）。
 
 我不能修改/编写源代码、执行命令、操作数据库，也不处理支付/转账。`
 

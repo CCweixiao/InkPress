@@ -42,8 +42,35 @@ const fixtures: Fixture[] = [
     name: "source-evidence",
     part: { type: "data-source-evidence", data: {} },
   },
+  {
+    // P2 web evidence：命中 web-source renderer（不被通用 tool renderer 误命中）。
+    name: "web-source",
+    part: { type: "data-web-source", data: { title: "T", url: "https://a.com" } },
+  },
   { name: "source-url", part: { type: "source-url", url: "https://x" } },
   { name: "agent-step", part: { type: "data-agent-step", data: {} } },
+  {
+    // P1 回归：带 toolMetadata.display + seq 的 tool part 仍唯一命中 tool renderer。
+    name: "dynamic-tool-with-display",
+    part: {
+      type: "dynamic-tool",
+      toolName: "project_read",
+      toolMetadata: {
+        display: { title: "读取项目文件", activityKind: "read" },
+        seq: 1,
+        turnId: "t",
+        source: "tool",
+      },
+    },
+  },
+  {
+    // P0 回归：带 data.seq/turnId/source 的 data part 仍唯一命中原 renderer。
+    name: "agent-step-with-seq",
+    part: {
+      type: "data-agent-step",
+      data: { title: "已启动", seq: 5, turnId: "t", source: "claude-agent-sdk" },
+    },
+  },
   { name: "context-usage", part: { type: "data-context-usage", data: {} } },
   {
     name: "dynamic-tool",
@@ -93,6 +120,15 @@ const writePart = () => ({
 });
 const evidencePart = () => ({ type: "data-source-evidence", data: {} });
 const textPart = () => ({ type: "text", text: "hi" });
+const subTaskPart = (subTaskId: string, title = "子任务启动（research）") => ({
+  type: "data-agent-step",
+  data: {
+    title,
+    status: title.includes("完成") ? "completed" : "running",
+    subTaskId,
+    subagentType: "research",
+  },
+});
 
 describe("aggregateParts", () => {
   it("空输入返回空数组", () => {
@@ -125,7 +161,7 @@ describe("aggregateParts", () => {
       explorePart("project_search"),
       explorePart("project_read"),
       webPart("web_search"),
-      webPart("web_extract"),
+      webPart("web_fetch"),
     ]);
     expect(items.length).toBe(2);
     expect(items[0].kind).toBe("tool-group");
@@ -220,6 +256,101 @@ describe("aggregateParts", () => {
     expect(items[1]).toMatchObject({ kind: "single", part: approvalPart });
     expect(items[2]).toMatchObject({ kind: "tool-group", groupType: "explore" });
     expect(items[3]).toMatchObject({ kind: "single", part: readyPart });
+  });
+
+  it("同一个 subTaskId 的子 agent 步骤聚合为一张 sub-agent-task 卡片", () => {
+    const started = subTaskPart("task-1");
+    const progress = subTaskPart("task-1", "子任务进行中（research）");
+    const completed = subTaskPart("task-1", "子任务完成（research）");
+    const items = aggregateParts([started, textPart(), progress, completed]);
+
+    expect(items.length).toBe(2);
+    expect(items[0].kind).toBe("sub-agent-task");
+    if (items[0].kind === "sub-agent-task") {
+      expect(items[0].parts).toEqual([started, progress, completed]);
+      expect(items[0].key).toBe("sub-agent-task-task-1");
+    }
+    expect(items[1].kind).toBe("single");
+  });
+
+  it("子 agent running 区间内的 web 工具和来源归入子任务卡片", () => {
+    const started = subTaskPart("task-web");
+    const webInput = {
+      type: "tool-input-available",
+      toolCallId: "tool-1",
+      toolName: "web_search",
+      input: { query: "Claude Agent SDK" },
+    };
+    const webOutput = {
+      type: "tool-output-available",
+      toolCallId: "tool-1",
+      output: { results: [{ title: "A" }] },
+    };
+    const webSource = {
+      type: "data-web-source",
+      data: { title: "Anthropic docs", url: "https://docs.anthropic.com" },
+    };
+    const completed = subTaskPart("task-web", "子任务完成（research）");
+
+    const items = aggregateParts([started, webInput, webOutput, webSource, completed]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe("sub-agent-task");
+    if (items[0].kind === "sub-agent-task") {
+      expect(items[0].parts).toEqual([
+        started,
+        webInput,
+        webOutput,
+        webSource,
+        completed,
+      ]);
+    }
+  });
+
+  it("子 agent running 区间内的非分组工具也归入子任务卡片", () => {
+    const started = subTaskPart("task-skill");
+    const skillInput = {
+      type: "tool-input-available",
+      toolCallId: "tool-skill",
+      toolName: "load_skill",
+      input: { id: "tech-writing" },
+    };
+    const skillOutput = {
+      type: "tool-output-available",
+      toolCallId: "tool-skill",
+      output: { id: "tech-writing", name: "技术写作" },
+    };
+    const completed = subTaskPart("task-skill", "子任务完成（research）");
+
+    const items = aggregateParts([started, skillInput, skillOutput, completed]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe("sub-agent-task");
+    if (items[0].kind === "sub-agent-task") {
+      expect(items[0].parts).toEqual([
+        started,
+        skillInput,
+        skillOutput,
+        completed,
+      ]);
+    }
+  });
+
+  it("不同 subTaskId 的子 agent 步骤分别聚合", () => {
+    const items = aggregateParts([
+      subTaskPart("task-1"),
+      subTaskPart("task-2", "子任务启动（review）"),
+      subTaskPart("task-1", "子任务完成（research）"),
+      subTaskPart("task-2", "子任务完成（review）"),
+    ]);
+
+    expect(items.length).toBe(2);
+    expect(items[0].kind).toBe("sub-agent-task");
+    expect(items[1].kind).toBe("sub-agent-task");
+    if (items[0].kind === "sub-agent-task" && items[1].kind === "sub-agent-task") {
+      expect(items[0].parts.length).toBe(2);
+      expect(items[1].parts.length).toBe(2);
+    }
   });
 
   it("组 key 编码首末索引，保证流式 reconciliation 稳定", () => {
