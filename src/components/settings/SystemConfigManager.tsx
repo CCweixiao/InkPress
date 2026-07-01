@@ -51,8 +51,9 @@ export const STORAGE_CONFIG_KEY = "inkpress.storage";
 export const AGENT_CONFIG_KEY = "inkpress.agent";
 export const CLAUDE_AGENT_CONFIG_KEY = "inkpress.claude-agent";
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
+export const WEB_RESEARCH_CONFIG_KEY = "inkpress.web-research";
 
-export type ConfigTab = "llm" | "agent" | "storage" | "wechat";
+export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat";
 
 type SystemConfig = {
   id: string;
@@ -112,6 +113,11 @@ type AgentForm = {
   contextBudgetTokens: number;
 };
 
+type WebResearchForm = {
+  tavilyApiKey: string;
+  autoApprove: boolean;
+};
+
 type ClaudeAgentForm = {
   baseUrl: string;
   apiKey: string;
@@ -163,6 +169,11 @@ const DEFAULT_AGENT: AgentForm = {
   projects: [],
   maxSteps: 12,
   contextBudgetTokens: 32000,
+};
+
+const DEFAULT_WEB_RESEARCH: WebResearchForm = {
+  tavilyApiKey: "",
+  autoApprove: false,
 };
 
 /**
@@ -364,6 +375,20 @@ function parseAgentValue(value?: string): AgentForm {
   }
 }
 
+function parseWebResearchValue(value?: string): WebResearchForm {
+  if (!value) return { ...DEFAULT_WEB_RESEARCH };
+  try {
+    const parsed = JSON.parse(value) as Partial<WebResearchForm>;
+    return {
+      tavilyApiKey:
+        typeof parsed.tavilyApiKey === "string" ? parsed.tavilyApiKey : "",
+      autoApprove: parsed.autoApprove === true,
+    };
+  } catch {
+    return { ...DEFAULT_WEB_RESEARCH };
+  }
+}
+
 const DEFAULT_CLAUDE_AGENT: ClaudeAgentForm = {
   baseUrl: "https://open.bigmodel.cn/api/anthropic",
   apiKey: "",
@@ -424,6 +449,9 @@ export function SystemConfigManager({
     (c) => c.key === CLAUDE_AGENT_CONFIG_KEY
   );
   const wechatConfig = configsState.find((c) => c.key === WECHAT_CONFIG_KEY);
+  const webResearchConfig = configsState.find(
+    (c) => c.key === WEB_RESEARCH_CONFIG_KEY
+  );
 
   const [llmForms, setLlmForms] = useState<LlmForm[]>(() =>
     parseLlmValue(llmConfig?.value)
@@ -433,6 +461,9 @@ export function SystemConfigManager({
   );
   const [agentForm, setAgentForm] = useState<AgentForm>(() =>
     parseAgentValue(agentConfig?.value)
+  );
+  const [webResearchForm, setWebResearchForm] = useState<WebResearchForm>(
+    () => parseWebResearchValue(webResearchConfig?.value)
   );
   const [wechatForm, setWechatForm] = useState<WechatForm>(() =>
     parseWechatValue(wechatConfig?.value)
@@ -455,6 +486,10 @@ export function SystemConfigManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
   useEffect(() => {
+    setWebResearchForm(parseWebResearchValue(webResearchConfig?.value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configsState]);
+  useEffect(() => {
     setWechatForm(parseWechatValue(wechatConfig?.value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
@@ -471,6 +506,10 @@ export function SystemConfigManager({
   const agentValue = useMemo(
     () => JSON.stringify(agentForm, null, 2),
     [agentForm]
+  );
+  const webResearchValue = useMemo(
+    () => JSON.stringify(webResearchForm, null, 2),
+    [webResearchForm]
   );
   const wechatValue = useMemo(
     () => JSON.stringify(wechatForm, null, 2),
@@ -531,6 +570,27 @@ export function SystemConfigManager({
       }
       await refreshConfigs();
       setMessage("存储配置已保存。");
+    });
+  }
+
+  function saveWebResearch() {
+    clearMsg();
+    startTransition(async () => {
+      const res = await fetch("/api/system-config", {
+        method: webResearchConfig ? "PUT" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          key: WEB_RESEARCH_CONFIG_KEY,
+          value: webResearchValue,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "保存失败。");
+        return;
+      }
+      await refreshConfigs();
+      setMessage("联网搜索配置已保存。");
     });
   }
 
@@ -633,6 +693,13 @@ export function SystemConfigManager({
             pending={pending}
           />
         </div>
+      ) : activeTab === "web" ? (
+        <WebResearchEditor
+          value={webResearchForm}
+          onChange={setWebResearchForm}
+          onSave={saveWebResearch}
+          pending={pending}
+        />
       ) : activeTab === "wechat" ? (
         <WechatEditor
           value={wechatForm}
@@ -730,6 +797,233 @@ function ClaudeAgentEditor({
   );
 }
 
+function WebResearchEditor({
+  value,
+  onChange,
+  onSave,
+  pending,
+}: {
+  value: WebResearchForm;
+  onChange: (value: WebResearchForm) => void;
+  onSave: () => void;
+  pending: boolean;
+}) {
+  const [domains, setDomains] = useState<{
+    items: { id: string; domain: string; note: string; createdAt: string }[];
+    total: number;
+    hasMore: boolean;
+  }>({ items: [], total: 0, hasMore: false });
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState("");
+  const [newDomain, setNewDomain] = useState("");
+  const [newNote, setNewNote] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadDomains(p = page, query = q) {
+    setLoading(true);
+    try {
+      const url = new URL("/api/ai/web-allowlist", window.location.origin);
+      url.searchParams.set("page", String(p));
+      url.searchParams.set("pageSize", "10");
+      if (query) url.searchParams.set("q", query);
+      const res = await fetch(url);
+      const data = await res.json();
+      setDomains({
+        items: data.items ?? [],
+        total: data.total ?? 0,
+        hasMore: !!data.hasMore,
+      });
+    } catch {
+      // 忽略网络错误
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDomains(1, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function addDomain() {
+    setError("");
+    if (!newDomain.trim()) return;
+    const res = await fetch("/api/ai/web-allowlist", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: newDomain, note: newNote || undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error || "添加失败。");
+      return;
+    }
+    setNewDomain("");
+    setNewNote("");
+    setPage(1);
+    await loadDomains(1, q);
+  }
+
+  async function removeDomain(id: string) {
+    await fetch(`/api/ai/web-allowlist/${id}`, { method: "DELETE" });
+    await loadDomains(page, q);
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          联网搜索让写作 Agent 检索最新资料（Tavily）与抓取网页正文。web_fetch
+          可按下方策略放行——私网/本机地址始终被安全守卫拦截。
+        </p>
+        <Button onClick={onSave} disabled={pending} size="sm">
+          {pending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          保存配置
+        </Button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Tavily API Key">
+          <Input
+            type="password"
+            value={value.tavilyApiKey === "********" ? "" : value.tavilyApiKey}
+            placeholder={
+              value.tavilyApiKey === "********"
+                ? "已配置（留空保持不变）"
+                : "tvly-..."
+            }
+            onChange={(event) =>
+              onChange({ ...value, tavilyApiKey: event.target.value })
+            }
+          />
+        </Field>
+        <div className="flex items-center gap-3 rounded-md border p-3">
+          <Switch
+            checked={value.autoApprove}
+            onCheckedChange={(v) => onChange({ ...value, autoApprove: v })}
+          />
+          <div className="text-xs">
+            <div className="font-medium">自动放权网页抓取（web_fetch）</div>
+            <div className="text-muted-foreground">
+              开启后对话中读取网页不再逐个确认；未开启则仅白名单域名免确认，其余逐个授权。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">网页抓取域名白名单</h3>
+          <Input
+            className="h-8 w-56 text-xs"
+            placeholder="搜索域名…"
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                setPage(1);
+                void loadDomains(1, q);
+              }
+            }}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Input
+            className="h-8 flex-1 text-xs"
+            placeholder="添加信任域名，如 github.com"
+            value={newDomain}
+            onChange={(event) => setNewDomain(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void addDomain();
+            }}
+          />
+          <Input
+            className="h-8 w-40 text-xs"
+            placeholder="备注（可选）"
+            value={newNote}
+            onChange={(event) => setNewNote(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void addDomain();
+            }}
+          />
+          <Button size="sm" className="h-8" onClick={() => void addDomain()}>
+            添加
+          </Button>
+        </div>
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        <div className="rounded-md border">
+          {domains.items.length === 0 ? (
+            <div className="p-3 text-xs text-muted-foreground">
+              {loading
+                ? "加载中…"
+                : "暂无白名单域名。添加后，这些域名的网页抓取将自动放行。"}
+            </div>
+          ) : (
+            domains.items.map((d) => (
+              <div
+                key={d.id}
+                className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs last:border-b-0"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{d.domain}</div>
+                  {d.note && (
+                    <div className="truncate text-muted-foreground">{d.note}</div>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs text-red-600"
+                  onClick={() => void removeDomain(d.id)}
+                >
+                  删除
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>共 {domains.total} 条{domains.hasMore ? "（更多未显示）" : ""}</span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              disabled={page <= 1 || loading}
+              onClick={() => {
+                const p = page - 1;
+                setPage(p);
+                void loadDomains(p, q);
+              }}
+            >
+              上一页
+            </Button>
+            <span className="leading-7">第 {page} 页</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              disabled={!domains.hasMore || loading}
+              onClick={() => {
+                const p = page + 1;
+                setPage(p);
+                void loadDomains(p, q);
+              }}
+            >
+              下一页
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentEditor({
   value,
   onChange,
@@ -817,20 +1111,6 @@ function AgentEditor({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Tavily API Key">
-          <Input
-            type="password"
-            value={value.tavilyApiKey === "********" ? "" : value.tavilyApiKey}
-            placeholder={
-              value.tavilyApiKey === "********"
-                ? "已配置（留空保持不变）"
-                : "tvly-..."
-            }
-            onChange={(event) =>
-              onChange({ ...value, tavilyApiKey: event.target.value })
-            }
-          />
-        </Field>
         <Field label="GitHub Token（可选）">
           <Input
             type="password"

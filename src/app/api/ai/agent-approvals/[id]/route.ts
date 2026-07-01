@@ -3,6 +3,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { resolveApproval } from "@/lib/ai/pending-approvals";
+import { addAllowedDomain } from "@/lib/ai/web-allowlist";
+import {
+  assessWebUrlRisk,
+  summarizeRiskForAllowlist,
+  type WebUrlRiskAssessment,
+} from "@/lib/ai/web-url-risk";
 
 export const runtime = "nodejs";
 
@@ -13,6 +19,39 @@ const schema = z.object({
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function parseGrantMetadata(decisionJson: string): {
+  input?: Record<string, unknown>;
+  riskAssessment?: WebUrlRiskAssessment;
+} {
+  try {
+    const parsed = JSON.parse(decisionJson) as {
+      input?: Record<string, unknown>;
+      riskAssessment?: WebUrlRiskAssessment;
+    };
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function trustGrantDomain(grant: {
+  toolName: string;
+  decisionJson: string;
+}): Promise<string | null> {
+  if (grant.toolName !== "web_fetch") return null;
+  const metadata = parseGrantMetadata(grant.decisionJson);
+  const rawUrl = metadata.riskAssessment?.url ?? String(metadata.input?.url ?? "");
+  if (!rawUrl) return null;
+  const risk = metadata.riskAssessment ?? assessWebUrlRisk(rawUrl);
+  if (!risk.domain) return null;
+  await addAllowedDomain(
+    risk.domain,
+    `审批时加入：${summarizeRiskForAllowlist(risk)}`,
+    risk
+  );
+  return risk.domain;
 }
 
 /**
@@ -47,6 +86,10 @@ export async function POST(
     ) {
       return NextResponse.json({ error: "令牌无效。" }, { status: 409 });
     }
+    let trustedDomain: string | null = null;
+    if (decision === "allow") {
+      trustedDomain = await trustGrantDomain(grant);
+    }
     // 唤醒 canUseTool 的 blocking-Promise；同一 in-flight query 自动恢复，无需用户重发。
     const woken = resolveApproval(grant.id, decision);
     const updated = await prisma.toolActionGrant.update({
@@ -56,7 +99,12 @@ export async function POST(
         approvalTokenHash: null,
       },
     });
-    return NextResponse.json({ ok: true, status: updated.status, woken });
+    return NextResponse.json({
+      ok: true,
+      status: updated.status,
+      woken,
+      trustedDomain,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "审批失败。" },
