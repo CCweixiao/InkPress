@@ -79,6 +79,7 @@ React / Next / Electron UI
 | 外部检索工具缺失 | “可检索外部资料”不成立 | 增加受控 web_search/web_fetch MCP |
 | 权限规则不可学习 | 用户反复审批同类操作 | 增加 suggestedRule 和规则管理 |
 | 工具失败/重复调用保护较弱 | agent 卡在工具循环 | 增加 runtime guard 事件和提醒 |
+| token/cost 统计只保存 last turn | `/clear` 或消息清理后无法做历史大盘，且中断轮次可能丢用量 | 建立独立 usage ledger，按对话轮次汇总，step 仅作运行时兜底 |
 | 打包/服务端后端可替换性不足 | 未来迁 Python/Go 成本高 | 以前端协议稳定化为边界 |
 
 ---
@@ -542,9 +543,225 @@ Claude Agent SDK runtime 必须固定：
 
 ---
 
-## 12. 前端渲染升级
+## 12. Token 成本跟踪与消耗大盘
 
-### 12.1 组件
+目标：把 Claude Agent SDK 的 token/cost 信息变成 InkPress 自己可审计、可聚合、可展示的 usage ledger。聊天窗口只做轻量反馈，不遮挡主输出；完整分析放到设置页“Token 消耗”大盘。
+
+### 12.1 官方语义边界
+
+必须遵守 Claude Agent SDK 的成本跟踪语义：
+
+- `query()` 是单次 SDK 调用边界，调用结束时产出一条 `result` 消息。
+- 单个 `query()` 可能包含多个 assistant step。assistant 消息上的 `message.message.usage` 可用于 step 级 token 采集。
+- 并行工具调用可能让同一个 step 产生多条 assistant 消息，这些消息共享同一个 `message.message.id`，必须按 id 去重。
+- `result.usage` 和 `result.total_cost_usd` 是单次 `query()` 的最终汇总；成功和错误 `result` 都要计入。
+- `resume` 串起的是 Claude 会话上下文，不是成本账本。多轮对话成本必须由 InkPress 自己按 turn 聚合。
+- `total_cost_usd` / `modelUsage.costUSD` 是 SDK 本地估算，只能用于产品可观测和预算提示，不作为权威计费。
+
+### 12.2 产品原则
+
+- 只持久化每个对话轮次的汇总，不持久化每个 step 的明细。
+- step usage 只在运行时内存中维护，作为中断、退出、没有收到 `result` 时的 fallback。
+- `/clear` 只清聊天消息、当前上下文和前端 token meter，不清 usage ledger。
+- token 统计独立于 `AgentChatMessage` 生命周期；删除消息、清理会话、压缩上下文不应影响历史消耗统计。
+- 设置页提供单独“清空 token 统计”入口，必须二次确认。
+- 删除文章/技术文档后，历史统计仍保留；目标可显示为“已删除文章/文档”。
+
+### 12.3 数据模型
+
+新增独立事实表 `AgentUsageTurn`，作为 token/cost 统计唯一事实来源：
+
+```prisma
+model AgentUsageTurn {
+  id                       String   @id @default(cuid())
+  sessionId                String
+  turnId                   String
+  targetKind               String   // article | technical-document
+  targetId                 String
+  providerId               String?
+  modelId                  String?
+  sdkSessionId             String?
+  inputTokens              Int      @default(0)
+  outputTokens             Int      @default(0)
+  cacheReadInputTokens     Int      @default(0)
+  cacheCreationInputTokens Int      @default(0)
+  totalTokens              Int      @default(0)
+  costUsd                  Float    @default(0)
+  status                   String   @default("completed") // completed | partial | error
+  source                   String   @default("sdk-result") // sdk-result | step-fallback
+  modelUsageJson           String   @default("{}")
+  metadataJson             String   @default("{}")
+  startedAt                DateTime @default(now())
+  finishedAt               DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([sessionId, turnId])
+  @@index([sessionId, startedAt])
+  @@index([targetKind, targetId, startedAt])
+  @@index([modelId, startedAt])
+  @@index([status, startedAt])
+}
+```
+
+保留 `AgentChatSession.lastInputTokens/lastOutputTokens/lastTotalTokens` 作为最后一轮快捷显示字段，但它们不是历史统计事实源。
+
+### 12.4 运行时采集
+
+`createSdkToUiAdapter` 内维护一个轻量 usage collector：
+
+```ts
+type RuntimeStepUsage = {
+  messageId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+};
+
+type AgentTurnUsageSummary = {
+  turnId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  modelUsage: Record<string, unknown>;
+  status: "completed" | "partial" | "error";
+  source: "sdk-result" | "step-fallback";
+};
+```
+
+采集规则：
+
+- 收到 `assistant` 消息时，读取 `message.message.id` 和 `message.message.usage`。
+- 同一 `messageId` 只计一次；若同 id 的 output token 不一致，保留最大值。
+- 收到 `result` 消息时，以 `result.usage`、`result.total_cost_usd`、`result.modelUsage` 作为最终 turn summary。
+- 如果 stream 结束、请求 abort、页面退出或 runtime 抛错时没有 `result`，用内存中的去重 step usage 求和，保存 `status=partial`、`source=step-fallback`。
+- 如果收到错误 `result`，仍保存 usage，`status=error`、`source=sdk-result`。
+- 如果没有任何 SDK usage，不写统计；若产品需要失败审计，可写 `status=partial` 且 token 为 0，但默认不写。
+
+### 12.5 重试与中断
+
+一个用户轮次可能包含多个 SDK attempt，例如限流后整轮重试。
+
+- 每个用户发送请求生成一个应用级 `turnId`。
+- 正常情况下：一个 `turnId` 对应一个 SDK `query()`，以 result 汇总为准。
+- 限流/错误重试时：同一个 `turnId` 下可能有多个 attempt。若失败 attempt 已产生 result usage，也要累加进该用户轮次。
+- 若前一个 attempt 只产生 step fallback，后一个 attempt 成功，则最终 `AgentUsageTurn` 应合并两部分成本，并在 `metadataJson` 中保留 attempts 摘要。
+- 若同一 `turnId` 先写入 `partial`，后续恢复拿到 `result`，应 upsert 更新为 `completed`，避免重复计费。
+
+### 12.6 `/clear` 与统计生命周期
+
+`/clear` 的产品语义必须明确：
+
+| 操作 | 清理内容 | 不清理内容 |
+|---|---|---|
+| `/clear` | UI 消息、当前上下文、composer token meter、当前 Claude resume 入口（按既有会话语义） | `AgentUsageTurn` 历史流水、设置页大盘聚合 |
+| 删除会话消息 | `AgentChatMessage` | `AgentUsageTurn` |
+| 删除文章/技术文档 | 业务内容和关联聊天 | 历史 usage，可显示为已删除目标 |
+| 清空 token 统计 | `AgentUsageTurn` | 文章、消息、Claude session |
+
+因此 token 大盘的累计值不会因为 `/clear` 归零。若用户需要归零，必须走设置页的独立清空统计动作。
+
+### 12.7 聊天窗口轻量 UI
+
+聊天窗口不做大面积统计卡片，只在每条 assistant 回复底部右侧显示低存在感 chip：
+
+```text
+12.4K tokens · $0.03
+```
+
+交互规则：
+
+- 默认只显示总 token 和估算成本，颜色使用低对比灰色。
+- hover 后显示浮层：输入、输出、cache read、cache creation、模型、状态。
+- 流式过程中显示 `统计中...`，不占主输出高度。
+- `partial` 状态显示 `估算` 标记，例如 `9.8K tokens · 估算`。
+- 错误 result 显示 `已计入错误消耗`，避免用户误以为失败不消耗。
+- 不在每个 agent step、工具卡、子任务卡上显示 token，避免统计噪音遮盖主输出。
+
+### 12.8 设置页 Token 消耗大盘
+
+设置页新增一级导航：`Token 消耗`。
+
+页面布局：
+
+1. KPI 横条
+   - 累计 Token 数
+   - 近 7 天 Token
+   - 峰值单轮 Token
+   - 累计估算成本
+   - 当前连续使用天数
+   - 会话总数
+
+2. 主趋势图
+   - 时间筛选：`当日`、`近7天`、`近30天`、自定义日期。
+   - 维度切换：`模型用量`、`会话用量`、`成本`。
+   - 折线按模型或目标聚合 token/cost。
+   - tooltip 展示 input/output/cache/cost/status 统计。
+
+3. 活动热力图
+   - 类似日历热力图展示每日 token 活跃度。
+   - 切换：`每日`、`每周`、`累计`。
+   - 点击某天后，下方明细表过滤到当天。
+
+4. 洞察区
+   - 最常用模型。
+   - token 消耗最高的文章/技术文档。
+   - 平均每轮 token。
+   - cache 命中占比。
+   - 中断估算轮次数。
+   - 成本最高的最近 10 轮。
+
+5. 明细表
+   - 时间。
+   - 目标文章/技术文档。
+   - 模型。
+   - 输入 token。
+   - 输出 token。
+   - cache read/create。
+   - 总 token。
+   - 估算成本。
+   - 状态：完成 / 中断估算 / 错误完成。
+
+### 12.9 API 与聚合
+
+建议新增只读接口：
+
+- `GET /api/ai/usage/summary?range=7d|30d|custom&from=&to=`
+- `GET /api/ai/usage/timeseries?bucket=hour|day|week&groupBy=model|target|status`
+- `GET /api/ai/usage/heatmap?from=&to=`
+- `GET /api/ai/usage/turns?from=&to=&modelId=&targetId=&status=&limit=&cursor=`
+
+建议新增危险操作接口：
+
+- `DELETE /api/ai/usage`：清空 token 统计，必须二次确认。
+
+聚合口径：
+
+- `totalTokens = inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens`。
+- 成本趋势优先用 `costUsd` 求和。
+- cache 命中占比：`cacheReadInputTokens / totalTokens`。
+- 峰值单轮：按 `AgentUsageTurn.totalTokens` 最大值。
+- 连续使用天数：按有非零 token turn 的自然日计算。
+
+### 12.10 验收标准
+
+- 正常 result 能保存一条 `AgentUsageTurn`，包含 token、cost、modelUsage。
+- 中断/abort 时，若已有 assistant usage，能保存 `partial + step-fallback`。
+- 同一 assistant `messageId` 的并行工具消息不会重复计数。
+- `/clear` 后聊天清空，但 Token 消耗大盘累计值不变。
+- 删除消息或文章后，历史 usage 仍可聚合。
+- 设置页支持近 7 天、近 30 天、模型维度、日期热力图和明细表。
+- 聊天窗口 token chip 不遮挡主输出，`partial/error` 状态可识别。
+
+---
+
+## 13. 前端渲染升级
+
+### 13.1 组件
 
 建议新增/重构：
 
@@ -559,7 +776,7 @@ Claude Agent SDK runtime 必须固定：
 | `ContextCompactCard` | autocompact 可观测 |
 | `ArticleProfileBadge` | 当前文章类型和 checklist |
 
-### 12.2 渲染规则
+### 13.2 渲染规则
 
 - 文本和 reasoning 保留流式体验。
 - 工具卡默认一行摘要，展开看 input/output。
@@ -569,9 +786,9 @@ Claude Agent SDK runtime 必须固定：
 
 ---
 
-## 13. 后端可插拔 runtime
+## 14. 后端可插拔 runtime
 
-### 13.1 Runtime interface
+### 14.1 Runtime interface
 
 ```ts
 type AgentRuntime = {
@@ -583,7 +800,7 @@ type AgentRuntime = {
 };
 ```
 
-### 13.2 Runtime 适配器
+### 14.2 Runtime 适配器
 
 | Adapter | 作用 |
 |---|---|
@@ -596,7 +813,7 @@ type AgentRuntime = {
 
 ---
 
-## 14. 分阶段实施计划
+## 15. 分阶段实施计划
 
 ### P0：协议冻结
 
@@ -619,6 +836,22 @@ type AgentRuntime = {
 验收：
 
 - 新增工具只改 registry 即可显示合理标题和 activity kind。
+
+### P1.5：Token usage ledger 与大盘
+
+- 新增 `AgentUsageTurn` 表和 migration。
+- adapter/runtime 采集 `result.usage`、`total_cost_usd`、`modelUsage`。
+- adapter 运行时维护 assistant step 去重汇总，仅作为中断 fallback，不持久化 step 明细。
+- route 按 `turnId` upsert `AgentUsageTurn`，并继续更新 `AgentChatSession.last*Tokens`。
+- `/clear` 不删除 usage ledger。
+- 聊天 assistant 消息底部增加轻量 token chip。
+- 设置页新增 `Token 消耗` 导航和大盘页面。
+
+验收：
+
+- 正常、错误、中断三种轮次都有正确 usage 记录。
+- `/clear` 后大盘累计不变。
+- 大盘支持 KPI、趋势图、热力图、洞察和明细表。
 
 ### P2：Web research
 
@@ -674,7 +907,7 @@ type AgentRuntime = {
 
 ---
 
-## 15. 开发约束
+## 16. 开发约束
 
 - 不恢复旧 `ToolLoopAgent`。
 - 不重新引入外层 LLM 意图 router。
@@ -684,10 +917,13 @@ type AgentRuntime = {
 - 所有外部资料必须产 evidence。
 - 所有子任务必须带 `subTaskId`。
 - 所有 agent runtime 本地目录必须归属 `~/.inkpress`。
+- token/cost 统计必须写入独立 usage ledger，不依赖 `AgentChatMessage` 是否存在。
+- `/clear` 不得删除 usage ledger；清空 token 统计必须是设置页独立危险操作。
+- 不持久化 step 级 usage 明细；step usage 只可作为中断 fallback 的运行时输入。
 
 ---
 
-## 16. AI 开发者任务提示词
+## 17. AI 开发者任务提示词
 
 后续 AI 开发可使用以下工作入口：
 
@@ -701,21 +937,22 @@ type AgentRuntime = {
 4. 新增工具必须带 permission/display/evidence/output contract。
 5. 子任务内部历史不得污染主会话。
 6. Web/代码/写入类能力必须走权限系统。
-7. 所有变更需补 typecheck 和关键 probe/test。
+7. token/cost 统计必须使用独立 usage ledger；/clear 不能清历史统计。
+8. 所有变更需补 typecheck 和关键 probe/test。
 ```
 
 ---
 
-## 17. 验收总表
+## 18. 验收总表
 
 | 能力 | 验收标准 |
 |---|---|
 | 多类型文章 | 至少 4 个 profile 能影响工具/Skill/checklist |
 | 可插拔工具 | 新增工具无需改前端 if/else 主链路 |
+| Token 消耗大盘 | 每轮汇总持久化，`/clear` 不清统计，设置页可查看 KPI/趋势/热力图/明细 |
 | Web research | 有审批、有来源、有 evidence chip |
 | 子任务 | 子任务可展开，主上下文不被内部历史污染 |
 | 权限学习 | 可本次/本会话/长期允许或拒绝 |
 | Runtime 可替换 | TS/Python/远程 runtime 可共享事件协议 |
 | 打包隔离 | SDK config/cwd 均在 `~/.inkpress/cache/claude-agent` |
 | 可观测性 | compact/retry/tool progress/error 都能在对话窗口看到 |
-

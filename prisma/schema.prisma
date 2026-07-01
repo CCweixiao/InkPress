@@ -120,6 +120,41 @@ model ToolActionGrant {
   @@index([toolName])
 }
 
+/// P1.5 Token usage ledger：每个对话轮次的 token/cost 汇总，独立于 AgentChatMessage 生命周期。
+/// 刻意不建到 AgentChatSession 的 Prisma 关系（无 FK）：删除消息/会话/文章不应影响历史消耗统计
+/// （PDC §12.2/§12.6）。sessionId/targetKind/targetId 均为普通字符串，删除目标后仍可聚合，
+/// 大盘可显示「已删除文章/文档」。
+model AgentUsageTurn {
+  id                       String   @id @default(cuid())
+  sessionId                String
+  turnId                   String
+  targetKind               String // article | technical-document
+  targetId                 String
+  providerId               String?
+  modelId                  String?
+  sdkSessionId             String?
+  inputTokens              Int      @default(0)
+  outputTokens             Int      @default(0)
+  cacheReadInputTokens     Int      @default(0)
+  cacheCreationInputTokens Int      @default(0)
+  totalTokens              Int      @default(0)
+  costUsd                  Float    @default(0)
+  status                   String   @default("completed") // completed | partial | error
+  source                   String   @default("sdk-result") // sdk-result | step-fallback
+  modelUsageJson           String   @default("{}")
+  metadataJson             String   @default("{}")
+  startedAt                DateTime @default(now())
+  finishedAt               DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([sessionId, turnId])
+  @@index([sessionId, startedAt])
+  @@index([targetKind, targetId, startedAt])
+  @@index([modelId, startedAt])
+  @@index([status, startedAt])
+}
+
 // P5 Claude Agent SessionStore：SDK transcript 条目镜像（append 写多条 entry），供跨轮/跨进程 resume。
 model ClaudeAgentSessionEntry {
   id           String   @id @default(cuid())
