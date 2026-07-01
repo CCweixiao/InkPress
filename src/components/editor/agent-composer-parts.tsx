@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { Check, ChevronDown, Gauge, Sparkles } from "lucide-react";
 import {
   Popover,
@@ -56,10 +56,11 @@ export function useModelSelection() {
     };
   }, []);
 
-  function select(providerNext: string, modelNext: string) {
+  // useCallback：select 作为 ModelSelector 的 onSelect 传入，稳定引用让 memo 生效（流式期间不重渲染）。
+  const select = useCallback((providerNext: string, modelNext: string) => {
     setProviderId(providerNext);
     setModelId(modelNext);
-  }
+  }, []);
 
   return { providers, providerId, modelId, select };
 }
@@ -171,7 +172,9 @@ export function TurnUsageChip({
  * 模型选择器：composer 底栏的单 chip，点击弹出按 provider 分组的模型列表。
  * 保留 provider×model 语义，收敛成单入口（Codex/Cursor 范式）。
  */
-export function ModelSelector({
+// memo：composer 每 ~50ms 流式 chunk 重渲染，但 ModelSelector 的 props（providers/providerId/modelId/selectModel）
+// 在流式期间稳定 → memo 让它跳过重渲染，减少底栏无谓 diff。
+export const ModelSelector = memo(function ModelSelector({
   providers,
   providerId,
   modelId,
@@ -231,7 +234,7 @@ export function ModelSelector({
       </PopoverContent>
     </Popover>
   );
-}
+});
 
 export type ContextUsage = {
   estimatedTokens: number;
@@ -258,7 +261,9 @@ function occupancyTone(pct: number) {
  * Token 计量：composer 底栏的 chip，显示上下文窗口占用（来自 data-context-usage）。
  * 点击弹出消耗面板：占用进度条 + 上一轮 input/output/reasoning + 模型 + 压缩状态。
  */
-export function TokenMeter({
+// memo + 稳定引用 props：流式期间 contextUsage/lastTurn/modelName 引用稳定（见 WritingAssistant 的
+// latestContextUsage 叶子 memoize）→ TokenMeter 跳过重渲染，避免底栏数字宽度变化触发 composer 回流。
+export const TokenMeter = memo(function TokenMeter({
   contextUsage,
   lastTurn,
   modelName,
@@ -285,7 +290,7 @@ export function TokenMeter({
         <button
           type="button"
           title="上下文与消耗"
-          className="inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] hover:bg-accent"
+          className="inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] hover:bg-accent tabular-nums"
         >
           <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
           <Gauge className={cn("h-3 w-3", tone.text)} />
@@ -339,4 +344,4 @@ export function TokenMeter({
       </PopoverContent>
     </Popover>
   );
-}
+});
