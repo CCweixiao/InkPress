@@ -366,9 +366,12 @@ export async function searchProject(
     const matcher = input.regex
       ? new RegExp(input.query, "i")
       : null;
-    const matches: string[] = [];
-    const scanLimit = offset + limit;
-    for (const relative of listed.files) {
+    // 先收集全部匹配（受 MAX_SEARCH_RESULTS 上限保护），再按 offset/limit 切片。
+    // 此前用 scanLimit = offset + limit 提前中断收集，会让 total 反映被截断的
+    // 收集量而非真实匹配数，分页 nextOffset/truncated 也跟着失真。
+    const allMatches: string[] = [];
+    let truncated = listed.truncated;
+    outer: for (const relative of listed.files) {
       const absolute = path.join(root, relative);
       const stat = await fs.stat(absolute).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_READ_BYTES) continue;
@@ -379,26 +382,25 @@ export async function searchProject(
         const hit = matcher
           ? matcher.test(lines[index])
           : lines[index].toLowerCase().includes(input.query.toLowerCase());
-        if (hit) matches.push(`${relative}:${index + 1}:${lines[index].slice(0, 500)}`);
-        if (matches.length >= scanLimit) break;
+        if (hit) {
+          allMatches.push(`${relative}:${index + 1}:${lines[index].slice(0, 500)}`);
+          if (allMatches.length >= MAX_SEARCH_RESULTS) {
+            truncated = true;
+            break outer;
+          }
+        }
       }
-      if (matches.length >= scanLimit) break;
     }
-    const page = matches.slice(offset, offset + limit);
+    const page = allMatches.slice(offset, offset + limit);
     return {
       project: project.name,
-      total: matches.length,
+      total: allMatches.length,
       offset,
       limit,
       nextOffset:
-        offset + page.length < matches.length || matches.length >= scanLimit
-          ? offset + page.length
-          : null,
+        offset + page.length < allMatches.length ? offset + page.length : null,
       matches: page,
-      truncated:
-        offset + page.length < matches.length ||
-        matches.length >= scanLimit ||
-        listed.truncated,
+      truncated,
     };
   }
 }
