@@ -135,8 +135,8 @@ export function InlineText({
         className={cn(
           changed &&
             (side === "old"
-              ? "bg-red-400/55 text-red-50"
-              : "bg-emerald-400/55 text-emerald-50")
+              ? "rounded-sm bg-red-500/20 px-0.5 text-red-950 dark:bg-red-400/35 dark:text-red-50"
+              : "rounded-sm bg-emerald-500/20 px-0.5 text-emerald-950 dark:bg-emerald-400/35 dark:text-emerald-50")
         )}
       >
         {part.value}

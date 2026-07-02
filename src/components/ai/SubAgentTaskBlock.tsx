@@ -32,6 +32,142 @@ type TaskStep = {
   subagentType: string;
 };
 
+type TimelineItem = {
+  key: string;
+  title: string;
+  detail: string;
+  status: string;
+  count?: number;
+};
+
+type ChildEvent = {
+  title: string;
+  detail: string;
+  status: "running" | "completed" | "failed";
+  toolName?: string;
+};
+
+const MAX_PROGRESS_DETAILS = 4;
+const MAX_CHILD_EVENTS = 8;
+
+export function getEffectiveTaskStatus(
+  taskSteps: TaskStep[],
+  settled?: boolean
+) {
+  const latest = taskSteps[taskSteps.length - 1];
+  const terminal = [...taskSteps]
+    .reverse()
+    .find((step) => step.status === "completed" || step.status === "failed");
+  if (terminal && latest?.status === "running") return terminal.status;
+  if (latest?.status) return latest.status;
+  return settled ? "completed" : "running";
+}
+
+export function getStepDisplayStatus(
+  stepStatus: string,
+  effectiveTaskStatus: string
+) {
+  if (stepStatus !== "running") return stepStatus;
+  if (effectiveTaskStatus === "completed" || effectiveTaskStatus === "failed") {
+    return effectiveTaskStatus;
+  }
+  return stepStatus;
+}
+
+function compactText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function uniqueCompacted(values: string[], limit: number) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  let hidden = 0;
+  for (const value of values) {
+    const text = compactText(value);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    if (result.length < limit) {
+      result.push(text);
+    } else {
+      hidden += 1;
+    }
+  }
+  return { result, hidden };
+}
+
+export function summarizeTaskTimeline(
+  taskSteps: TaskStep[],
+  effectiveTaskStatus: string
+): TimelineItem[] {
+  if (taskSteps.length === 0) return [];
+  const items: TimelineItem[] = [];
+  const first = taskSteps[0];
+  const terminal = [...taskSteps]
+    .reverse()
+    .find((step) => step.status === "completed" || step.status === "failed");
+  const progressSteps = taskSteps.filter(
+    (step, index) => step.status === "running" && index > 0
+  );
+
+  items.push({
+    key: "start",
+    title: "任务",
+    detail: first.detail,
+    status: getStepDisplayStatus(first.status, effectiveTaskStatus),
+  });
+
+  if (progressSteps.length > 0) {
+    const { result, hidden } = uniqueCompacted(
+      progressSteps.map((step) => step.detail || shortTaskTitle(step.title)),
+      MAX_PROGRESS_DETAILS
+    );
+    const detail = [
+      ...result,
+      ...(hidden > 0 ? [`另有 ${hidden} 类更新`] : []),
+    ].join(" / ");
+    items.push({
+      key: "progress",
+      title: effectiveTaskStatus === "running" ? "进度更新" : "过程摘要",
+      detail,
+      status:
+        effectiveTaskStatus === "running"
+          ? "running"
+          : getStepDisplayStatus("running", effectiveTaskStatus),
+      count: progressSteps.length,
+    });
+  }
+
+  if (terminal) {
+    items.push({
+      key: "terminal",
+      title: terminal.status === "failed" ? "收口失败" : "收口",
+      detail: terminal.detail,
+      status: terminal.status,
+    });
+  }
+
+  return items;
+}
+
+export function summarizeChildEvents(events: ChildEvent[]) {
+  const groups = new Map<string, ChildEvent & { count: number }>();
+  for (const event of events) {
+    const detail = compactText(event.detail);
+    const key = `${event.title}\u0000${detail}\u0000${event.status}\u0000${event.toolName ?? ""}`;
+    const prev = groups.get(key);
+    if (prev) {
+      prev.count += 1;
+      continue;
+    }
+    groups.set(key, { ...event, detail, count: 1 });
+  }
+  const list = Array.from(groups.values());
+  return {
+    visible: list.slice(0, MAX_CHILD_EVENTS),
+    hidden: Math.max(0, list.length - MAX_CHILD_EVENTS),
+  };
+}
+
 function stepFromPart(part: AgentPart): TaskStep {
   const data =
     part.data && typeof part.data === "object"
@@ -52,12 +188,7 @@ function isTaskStep(part: AgentPart) {
 function childSummary(
   part: AgentPart,
   toolNameByCallId: Map<string, string>
-): {
-  title: string;
-  detail: string;
-  status: "running" | "completed" | "failed";
-  toolName?: string;
-} | null {
+): ChildEvent | null {
   const type = String(part.type ?? "");
   if (type === "source-url" && typeof part.url === "string") {
     return {
@@ -165,10 +296,29 @@ export function SubAgentTaskBlock({
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
     return events;
   }, [parts]);
-  const latest = taskSteps[taskSteps.length - 1] ?? steps[steps.length - 1];
-  const running = latest?.status === "running" && !settled;
-  const failed = latest?.status === "failed";
-  const interrupted = latest?.status === "running" && Boolean(settled);
+  const compactChildEvents = useMemo(
+    () => summarizeChildEvents(childEvents),
+    [childEvents]
+  );
+  const latestTaskStep = taskSteps[taskSteps.length - 1];
+  const terminalTaskStep = [...taskSteps]
+    .reverse()
+    .find((step) => step.status === "completed" || step.status === "failed");
+  const rawLatest =
+    terminalTaskStep && latestTaskStep?.status === "running"
+      ? terminalTaskStep
+      : (latestTaskStep ?? steps[steps.length - 1]);
+  const effectiveTaskStatus = getEffectiveTaskStatus(taskSteps, settled);
+  const timelineItems = useMemo(
+    () => summarizeTaskTimeline(taskSteps, effectiveTaskStatus),
+    [taskSteps, effectiveTaskStatus]
+  );
+  const latest = rawLatest
+    ? { ...rawLatest, status: effectiveTaskStatus }
+    : rawLatest;
+  const running = effectiveTaskStatus === "running" && !settled;
+  const failed = effectiveTaskStatus === "failed";
+  const interrupted = effectiveTaskStatus === "running" && Boolean(settled);
   const subagentType =
     [...steps].reverse().find((step) => step.subagentType)?.subagentType ||
     "subagent";
@@ -208,12 +358,12 @@ export function SubAgentTaskBlock({
           子 agent：{subagentType}
         </span>
         <span className="shrink-0 text-muted-foreground">
-          · {statusLabel(latest?.status ?? "completed", settled)}
+          · {statusLabel(effectiveTaskStatus, settled)}
         </span>
         <span className="min-w-0 flex-1 truncate text-muted-foreground">
           {summary}
         </span>
-        <StatusIcon status={latest?.status ?? "completed"} settled={settled} className="ml-auto h-3 w-3 shrink-0" />
+        <StatusIcon status={effectiveTaskStatus} settled={settled} className="ml-auto h-3 w-3 shrink-0" />
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="space-y-2 border-t border-cyan-200 px-3 py-2 dark:border-cyan-900">
@@ -221,41 +371,48 @@ export function SubAgentTaskBlock({
             仅展示子 agent 调度过程；内部 token 流不注入主会话。
           </div>
           <ol className="space-y-1.5">
-            {taskSteps.map((step, index) => (
+            {timelineItems.map((item) => {
+              return (
               <li
-                key={`${step.title}-${index}`}
+                key={item.key}
                 className="grid grid-cols-[14px_1fr] gap-2 text-[11px]"
               >
                 <StatusIcon
-                  status={step.status}
+                  status={item.status}
                   settled={settled}
                   className="mt-0.5 h-3.5 w-3.5"
                 />
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="font-medium">
-                      {shortTaskTitle(step.title)}
+                      {item.title}
                     </span>
+                    {item.count && item.count > 1 ? (
+                      <span className="rounded border border-cyan-200 px-1 text-[9px] leading-4 text-muted-foreground dark:border-cyan-900">
+                        {item.count} 次
+                      </span>
+                    ) : null}
                     <span className="text-[10px] text-muted-foreground">
-                      {statusLabel(step.status, settled)}
+                      {statusLabel(item.status, settled)}
                     </span>
                   </div>
-                  {step.detail ? (
-                    <div className="mt-0.5 whitespace-pre-wrap break-words leading-5 text-muted-foreground">
-                      {step.detail}
+                  {item.detail ? (
+                    <div className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words leading-5 text-muted-foreground">
+                      {item.detail}
                     </div>
                   ) : null}
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ol>
-          {childEvents.length ? (
+          {compactChildEvents.visible.length ? (
             <div className="space-y-1.5">
               <div className="text-[10px] font-medium text-muted-foreground">
                 内部工具与资料
               </div>
               <ol className="space-y-1.5">
-                {childEvents.map((event, index) => (
+                {compactChildEvents.visible.map((event, index) => (
                   <li
                     key={`${event.title}-${index}`}
                     className="grid grid-cols-[14px_1fr] gap-2 text-[11px]"
@@ -270,6 +427,11 @@ export function SubAgentTaskBlock({
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium">{event.title}</span>
+                        {event.count > 1 ? (
+                          <span className="rounded border border-cyan-200 px-1 text-[9px] leading-4 text-muted-foreground dark:border-cyan-900">
+                            {event.count} 次
+                          </span>
+                        ) : null}
                         <span className="text-[10px] text-muted-foreground">
                           {statusLabel(
                             event.status === "running" && !running
@@ -285,6 +447,14 @@ export function SubAgentTaskBlock({
                     </div>
                   </li>
                 ))}
+                {compactChildEvents.hidden > 0 ? (
+                  <li className="grid grid-cols-[14px_1fr] gap-2 text-[11px] text-muted-foreground">
+                    <Check className="mt-0.5 h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <div className="leading-5">
+                      还有 {compactChildEvents.hidden} 条相似记录已收起
+                    </div>
+                  </li>
+                ) : null}
               </ol>
             </div>
           ) : null}

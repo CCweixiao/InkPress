@@ -101,6 +101,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   const taskTypeById = new Map<string, string>();
   const openTaskIds = new Set<string>();
   const hiddenTaskIds = new Set<string>();
+  const terminalTaskStatusById = new Map<string, "completed" | "failed">();
   // P1.5：assistant step usage 内存表，按 messageId 去重（同 id 取各 token 字段最大值）。
   // 仅作为中断/abort/无 result 时的 fallback 输入，绝不持久化 step 明细。
   const stepUsageByMessageId = new Map<string, RuntimeStepUsage>();
@@ -195,6 +196,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
       openTaskIds.delete(taskId);
       return;
     }
+    if (terminalTaskStatusById.has(taskId)) return;
     if (!openTaskIds.has(taskId)) return;
     const subagentType = taskTypeById.get(taskId);
     writer.write({
@@ -215,6 +217,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     } as never);
     openTaskIds.delete(taskId);
     taskTypeById.delete(taskId);
+    terminalTaskStatusById.set(taskId, input.status);
   }
 
   function closeAllOpenTasks(input: { status: "completed" | "failed"; detail?: string }) {
@@ -366,18 +369,8 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             (Array.isArray(r.errors) && r.errors[0]) ||
             (typeof r.result === "string" && r.result) ||
             "Claude Agent 运行出错。";
-          closeAllOpenTasks({
-            status: "failed",
-            detail: "本轮对话结束时子 agent 仍未返回完成事件",
-          });
         } else if (typeof r.result === "string" && r.result && !lastText) {
           lastText = r.result;
-        }
-        if (!result.isError) {
-          closeAllOpenTasks({
-            status: "completed",
-            detail: "本轮对话已收口，子 agent 结果已由主 agent 综合",
-          });
         }
         break;
       }
@@ -513,6 +506,9 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             taskTypeById.delete(m.task_id);
             break;
           }
+          if (typeof m.task_id === "string") {
+            terminalTaskStatusById.delete(m.task_id);
+          }
           if (typeof m.task_id === "string" && typeof m.subagent_type === "string") {
             taskTypeById.set(m.task_id, m.subagent_type);
           }
@@ -537,6 +533,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
           } as never);
         } else if (m.subtype === "task_progress") {
           if (typeof m.task_id === "string" && hiddenTaskIds.has(m.task_id)) break;
+          if (typeof m.task_id === "string" && terminalTaskStatusById.has(m.task_id)) break;
           if (typeof m.task_id === "string" && typeof m.subagent_type === "string") {
             taskTypeById.set(m.task_id, m.subagent_type);
           }
@@ -568,6 +565,9 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             openTaskIds.delete(m.task_id);
             break;
           }
+          if (typeof m.task_id === "string" && terminalTaskStatusById.has(m.task_id)) {
+            break;
+          }
           const ok = m.status === "completed";
           const subagentType =
             typeof m.task_id === "string" ? taskTypeById.get(m.task_id) : undefined;
@@ -586,6 +586,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
           if (typeof m.task_id === "string") {
             openTaskIds.delete(m.task_id);
             taskTypeById.delete(m.task_id);
+            terminalTaskStatusById.set(m.task_id, ok ? "completed" : "failed");
           }
         } else if (m.subtype === "task_updated") {
           const taskId = typeof m.task_id === "string" ? m.task_id : "";
@@ -607,6 +608,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
               ? (m.patch as Record<string, unknown>)
               : {};
           const status = String(patch.status ?? "");
+          if (taskId && terminalTaskStatusById.has(taskId)) break;
           const description =
             typeof patch.description === "string" ? patch.description : "";
           if (taskId && (status === "completed" || status === "failed" || status === "killed")) {
