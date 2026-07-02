@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { Check, Loader2, Upload, X, RefreshCw } from "lucide-react";
 import {
   Dialog,
@@ -17,6 +24,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Asset } from "@/types/asset";
 import { splitTagInput } from "@/lib/asset";
+import {
+  extractImageFiles,
+  normalizePastedImages,
+  pasteShortcutLabel,
+  useProactiveClipboardRead,
+} from "@/components/materials/useClipboardImagePaste";
+import { ImagePreviewDialog } from "@/components/materials/ImagePreviewDialog";
 
 type UploadTask = {
   id: string;
@@ -27,12 +41,17 @@ type UploadTask = {
   retries: number;
   /** true=分片上传（含断点续传），false=直接 multipart 直传 */
   chunked: boolean;
+  /** 是否勾选（暂存盘多选）：undefined / true 视为选中。仅对 pending 有意义。 */
+  selected?: boolean;
   /** 上传完成后回填的 asset id（用于「完成」时补写元数据） */
   assetId?: string;
   // 公众号素材库同步结果（仅当勾选 syncToWechat 时服务端返回）
   wxSyncStatus?: "success" | "failed" | null;
   wxSyncError?: string | null;
 };
+
+/** selected 字段缺失视为选中（默认勾选）。 */
+const isTaskSelected = (t: UploadTask) => t.selected !== false;
 
 // ≤ 此阈值走直接上传（multipart），大于则走分片 + 断点续传
 const DIRECT_UPLOAD_LIMIT = 5 * 1024 * 1024; // 5MB
@@ -48,36 +67,61 @@ function formatSize(bytes: number) {
 /**
  * 文件上传弹窗。两种入口模式：
  * - 点击上传（initialFiles=null）：先选文件 + 填描述/标签，点「确认上传」开始传（元数据随传携带）。
- * - 拖拽上传（initialFiles 非空）：弹窗打开即开始上传，边传边填，点「完成」时把已填描述/标签补写到已传完的素材。
+ * - 拖拽 / 粘贴上传（initialFiles 非空）：弹窗打开即开始上传，边传边填，点「完成」时把已填描述/标签补写到已传完的素材。
+ *   弹窗已开时再次粘贴，宿主通过 ref.addFiles() 追加到当前批次（不重置任务）。
  */
-export function UploadDialog({
-  open,
-  onOpenChange,
-  articleId,
-  spaceId,
-  initialFiles,
-  onUploaded,
-  onAllDone,
-}: {
+export type UploadDialogProps = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  articleId: string;
+  /** 归属文章；空表示空间级 / 未分类（API 层可选）。 */
+  articleId?: string | null;
   spaceId?: string | null;
-  /** 拖拽时预填的文件；null 表示点击进入（需在弹窗内选择） */
+  /** 拖拽 / 粘贴时预填的文件；null 表示点击进入（需在弹窗内选择） */
   initialFiles: File[] | null;
   onUploaded?: (asset: Asset) => void;
   onAllDone?: () => void;
-}) {
+};
+
+/**
+ * 命令式句柄：弹窗已开时，宿主（粘贴监听器）调用 addFiles 追加文件到当前批次，
+ * 而不必关再开（关再开会触发 [open, initialFiles] reset effect 重置任务列表）。
+ */
+export type UploadDialogHandle = {
+  addFiles: (files: File[]) => void;
+};
+
+export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
+  function UploadDialog({
+    open,
+    onOpenChange,
+    articleId,
+    spaceId,
+    initialFiles,
+    onUploaded,
+    onAllDone,
+  }: UploadDialogProps,
+    ref
+  ) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [syncToWechat, setSyncToWechat] = useState(false);
   const [convertSvgToPng, setConvertSvgToPng] = useState(true);
   const [uploading, setUploading] = useState(false);
-  /** true=拖拽进入，弹窗打开即上传；false=点击进入，先填表单再传 */
+  /** true=拖拽 / 粘贴进入，弹窗打开即上传；false=点击进入，先填表单再传 */
   const liveMode = initialFiles !== null;
   const [finalizing, setFinalizing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  /** 进行中的上传数（startUpload / addFiles 共用），归零才解除 uploading。 */
+  const inFlightRef = useRef(0);
+  /** 图片任务的 object URL（任务行缩略图用）。state 以便渲染；effect 负责增删 + 回收。 */
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  const thumbUrlsRef = useRef<Record<string, string>>({});
+  /** 粘贴非图片时的瞬时提示（2.5s 自清）。 */
+  const [pasteHint, setPasteHint] = useState<string | null>(null);
+  /** 图片预览：点击缩略图放大查看（存 url + 文件名）。 */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState<string | undefined>(undefined);
 
   // 弹窗打开 / 关闭时重置状态
   useEffect(() => {
@@ -204,6 +248,10 @@ export function UploadDialog({
 
   const uploadOne = useCallback(
     async (task: UploadTask) => {
+      // 共享 in-flight 计数：startUpload 与 addFiles 都通过它正确维护 uploading，
+      // 只有所有批次都结束（计数归零）才解除「上传中」。
+      inFlightRef.current += 1;
+      setUploading(true);
       try {
         const result = task.chunked
           ? await uploadChunked(task)
@@ -244,12 +292,15 @@ export function UploadDialog({
               : t
           )
         );
+      } finally {
+        inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+        if (inFlightRef.current === 0) setUploading(false);
       }
     },
     [uploadChunked, uploadDirect, articleId, onUploaded]
   );
 
-  /** 启动一批文件的上传（串行，避免并发竞争） */
+  /** 启动一批文件的上传（串行，避免并发竞争）。uploading 由 uploadOne 的 in-flight 计数维护。 */
   const startUpload = useCallback(
     (files: File[]) => {
       const newTasks: UploadTask[] = files.map((f) => ({
@@ -261,16 +312,126 @@ export function UploadDialog({
         chunked: f.size > DIRECT_UPLOAD_LIMIT,
       }));
       setTasks(newTasks);
-      setUploading(true);
       (async () => {
         for (const t of newTasks) {
           await uploadOne(t);
         }
-        setUploading(false);
       })();
     },
     [uploadOne]
   );
+
+  /**
+   * 追加文件到当前批次（弹窗已开时粘贴 / 主动读剪贴板调用）。不动 initialFiles / 不触发 reset effect。
+   * - liveMode（拖拽 / 粘贴进入）：追加为 uploading 并立即串行上传；
+   * - 点击模式：追加为 pending（默认选中），进暂存盘等用户勾选后点「确认上传」。
+   * - 去重：与已有任务同 size+type+lastModified 的文件跳过（避免「主动读 + 紧接着粘贴同一张」重复）。
+   *   注意：上传副作用在 setTasks 之外发起——绝不能写在 updater 里（StrictMode 会双调用 → 重复上传）。
+   */
+  const addFiles = useCallback(
+    (files: File[]) => {
+      if (!open || files.length === 0) return;
+      const status: UploadTask["status"] = liveMode ? "uploading" : "pending";
+      const appended = files
+        .filter(
+          (f) =>
+            !tasks.some(
+              (t) =>
+                t.file.size === f.size &&
+                t.file.type === f.type &&
+                t.file.lastModified === f.lastModified
+            )
+        )
+        .map((f) => ({
+          id: crypto.randomUUID(),
+          file: f,
+          progress: 0,
+          status,
+          retries: 0,
+          chunked: f.size > DIRECT_UPLOAD_LIMIT,
+        }));
+      if (appended.length === 0) return;
+      setTasks((cur) => [...cur, ...appended]);
+      if (liveMode) {
+        (async () => {
+          for (const t of appended) await uploadOne(t);
+        })();
+      }
+    },
+    [open, liveMode, uploadOne, tasks]
+  );
+
+  useImperativeHandle(ref, () => ({ addFiles }), [addFiles]);
+
+  // 点击模式：主动读一次当前剪贴板（若有截图，免 ⌘V 直接进暂存盘）。
+  // live 模式不开（那是「现在就传」快捷通道，不混入选择流）。失败/拒绝/非图片静默回落。
+  useProactiveClipboardRead({
+    enabled: open && !liveMode,
+    onImage: (file) => addFiles([file]),
+  });
+
+  /** 点击模式：只上传「勾选 + pending」的任务（暂存盘多选语义）。 */
+  const uploadSelectedPending = useCallback(() => {
+    if (uploading) return;
+    const toUpload = tasks.filter(
+      (t) => t.status === "pending" && isTaskSelected(t)
+    );
+    if (toUpload.length === 0) return;
+    const ids = new Set(toUpload.map((t) => t.id));
+    setTasks((cur) =>
+      cur.map((t) => (ids.has(t.id) ? { ...t, status: "uploading" } : t))
+    );
+    (async () => {
+      for (const t of toUpload) await uploadOne(t);
+    })();
+  }, [tasks, uploading, uploadOne]);
+
+  // 缩略图 object URL：跟随 tasks 增删同步，避免泄漏（image 任务才创建）。
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const t of tasks) {
+      // 复用已创建的（同一 File + 同一 id 不重复 createURL）
+      if (thumbUrlsRef.current[t.id]) {
+        next[t.id] = thumbUrlsRef.current[t.id];
+      } else if (t.file.type.startsWith("image/")) {
+        next[t.id] = URL.createObjectURL(t.file);
+      }
+    }
+    // 回收被移除任务的 URL
+    for (const [id, url] of Object.entries(thumbUrlsRef.current)) {
+      if (!(id in next)) URL.revokeObjectURL(url);
+    }
+    thumbUrlsRef.current = next;
+    setThumbUrls(next);
+  }, [tasks]);
+
+  // 卸载时回收全部 URL
+  useEffect(() => {
+    const cache = thumbUrlsRef.current;
+    return () => {
+      for (const url of Object.values(cache)) URL.revokeObjectURL(url);
+    };
+  }, []);
+
+  // 弹窗打开时独占粘贴监听（宿主在 dialog 开时禁用自己的监听器，避免双触）。
+  // 图片 → addFiles；有 item 但无图片 → 瞬时提示，不 preventDefault（文本放行）。
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: ClipboardEvent) => {
+      const files = extractImageFiles(event.clipboardData);
+      if (files.length > 0) {
+        event.preventDefault();
+        addFiles(normalizePastedImages(files));
+        return;
+      }
+      if ((event.clipboardData?.items?.length ?? 0) > 0) {
+        setPasteHint("粘贴仅支持图片，其他文件请点击选择或拖拽");
+        window.setTimeout(() => setPasteHint(null), 2500);
+      }
+    };
+    document.addEventListener("paste", handler);
+    return () => document.removeEventListener("paste", handler);
+  }, [open, addFiles]);
 
   // 自动重试（指数退避，最多 3 次）
   const retry = useCallback(
@@ -336,10 +497,6 @@ export function UploadDialog({
     }
   }, [tasks]);
 
-  /** 点击模式：选完文件 + 填好表单后开始上传（由按钮直接调用 startUpload） */
-
-  const selectedFiles = tasks.map((t) => t.file);
-
   /** 取消单个任务 */
   async function cancelTask(t: UploadTask) {
     if (t.chunked) {
@@ -351,6 +508,30 @@ export function UploadDialog({
   const allDone =
     tasks.length > 0 && tasks.every((t) => t.status === "done");
   const hasError = tasks.some((t) => t.status === "error");
+
+  // 暂存盘多选（仅对 pending 有意义）：派生计数 + 切换 / 全选。
+  const pendingTasks = tasks.filter((t) => t.status === "pending");
+  const selectedPendingCount = pendingTasks.filter(isTaskSelected).length;
+
+  function toggleSelected(taskId: string) {
+    setTasks((cur) =>
+      cur.map((t) =>
+        t.id === taskId && t.status === "pending"
+          ? { ...t, selected: !isTaskSelected(t) }
+          : t
+      )
+    );
+  }
+
+  function toggleSelectAllPending() {
+    if (pendingTasks.length === 0) return;
+    const allSelected = pendingTasks.every(isTaskSelected);
+    setTasks((cur) =>
+      cur.map((t) =>
+        t.status === "pending" ? { ...t, selected: !allSelected } : t
+      )
+    );
+  }
 
   /** 拖拽模式：完成时把已填描述/标签补写到已传完的素材 */
   async function finishWithMeta() {
@@ -388,6 +569,7 @@ export function UploadDialog({
   }
 
   return (
+    <>
     <Dialog
       open={open}
       onOpenChange={(v) => {
@@ -419,6 +601,9 @@ export function UploadDialog({
             {tasks.length === 0
               ? "点击选择文件（支持多选）"
               : `已选 ${tasks.length} 个文件，点击重新选择`}
+            <p className="mt-1 text-[11px] text-muted-foreground/70">
+              也可直接 {pasteShortcutLabel()} 粘贴图片到此弹窗
+            </p>
             <input
               ref={fileRef}
               type="file"
@@ -444,13 +629,81 @@ export function UploadDialog({
           </div>
         )}
 
-        {/* 文件 / 任务列表（含进度） */}
+        {/* 粘贴非图片时的瞬时提示 */}
+        {pasteHint && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            {pasteHint}
+          </p>
+        )}
+
+        {/* 文件 / 任务列表（含进度 + 暂存盘多选） */}
         {tasks.length > 0 && (
-          <div className="space-y-1.5 max-h-48 overflow-y-auto">
-            {tasks.map((t) => (
-              <div key={t.id} className="rounded-md border border-border p-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="flex-1 truncate">{t.file.name}</span>
+          <div className="space-y-1.5">
+            {/* 点击模式：暂存盘多选工具条（全选 + 计数） */}
+            {!liveMode && pendingTasks.length > 0 && (
+              <div className="flex items-center justify-between px-0.5 text-[11px] text-muted-foreground">
+                <button
+                  type="button"
+                  onClick={toggleSelectAllPending}
+                  className="inline-flex items-center gap-1 hover:text-foreground"
+                >
+                  <input
+                    type="checkbox"
+                    readOnly
+                    checked={pendingTasks.every(isTaskSelected)}
+                    className="h-3 w-3"
+                  />
+                  全选
+                </button>
+                <span>
+                  已选 {selectedPendingCount} / {pendingTasks.length}
+                </span>
+              </div>
+            )}
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {tasks.map((t) => (
+                <div key={t.id} className="rounded-md border border-border p-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    {t.status === "pending" ? (
+                      <input
+                        type="checkbox"
+                        checked={isTaskSelected(t)}
+                        onChange={() => toggleSelected(t.id)}
+                        className="h-3.5 w-3.5 shrink-0"
+                      />
+                    ) : (
+                      <span className="w-3.5 shrink-0" aria-hidden />
+                    )}
+                    {thumbUrls[t.id] ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewUrl(thumbUrls[t.id]);
+                          setPreviewName(t.file.name);
+                        }}
+                        className="shrink-0 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+                        title="点击预览放大"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={thumbUrls[t.id]}
+                          alt=""
+                          className="h-8 w-8 rounded object-cover"
+                        />
+                      </button>
+                    ) : (
+                      <div className="h-8 w-8 rounded bg-muted/60 shrink-0" />
+                    )}
+                    <span
+                      className={cn(
+                        "flex-1 truncate",
+                        t.status === "pending" &&
+                          !isTaskSelected(t) &&
+                          "text-muted-foreground/50 line-through"
+                      )}
+                    >
+                      {t.file.name}
+                    </span>
                   <span className="text-muted-foreground shrink-0">
                     {formatSize(t.file.size)}
                   </span>
@@ -516,6 +769,7 @@ export function UploadDialog({
                 )}
               </div>
             ))}
+            </div>
           </div>
         )}
 
@@ -600,19 +854,22 @@ export function UploadDialog({
               </Button>
               {!allDone && (
                 <Button
-                  onClick={() => {
-                    if (selectedFiles.length === 0 || uploading) return;
-                    // 点击模式：带上已填元数据开始上传
-                    startUpload(selectedFiles);
-                  }}
-                  disabled={selectedFiles.length === 0 || uploading}
+                  onClick={() => uploadSelectedPending()}
+                  disabled={selectedPendingCount === 0 || uploading}
+                  title={
+                    selectedPendingCount === 0
+                      ? "勾选要上传的图片"
+                      : undefined
+                  }
                 >
                   {uploading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Upload className="h-4 w-4" />
                   )}
-                  {uploading ? "上传中…" : "确认上传"}
+                  {uploading
+                    ? "上传中…"
+                    : `上传选中的 ${selectedPendingCount} 项`}
                 </Button>
               )}
             </>
@@ -620,5 +877,17 @@ export function UploadDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <ImagePreviewDialog
+      url={previewUrl}
+      name={previewName}
+      open={previewUrl !== null}
+      onOpenChange={(v) => {
+        if (!v) setPreviewUrl(null);
+      }}
+    />
+    </>
   );
 }
+);
+
+UploadDialog.displayName = "UploadDialog";

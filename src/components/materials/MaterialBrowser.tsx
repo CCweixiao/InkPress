@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   Upload,
   Copy,
   Check,
   Trash2,
-  Loader2,
   ImageIcon,
   VideoIcon,
   FileIcon,
@@ -19,6 +18,14 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AssetEditDialog } from "@/components/materials/AssetEditDialog";
+import {
+  UploadDialog,
+  type UploadDialogHandle,
+} from "@/components/materials/UploadDialog";
+import {
+  useClipboardImagePaste,
+  pasteShortcutLabel,
+} from "@/components/materials/useClipboardImagePaste";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { Asset } from "@/types/asset";
 import { parseTags } from "@/lib/asset";
@@ -51,13 +58,36 @@ export function MaterialBrowser({
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [, startTransition] = useTransition();
-  const fileInput = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  // 上传弹窗：uploadInitial=null 表示点击进入；非空表示拖拽/粘贴进入（立即上传）
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadInitial, setUploadInitial] = useState<File[] | null>(null);
+  const dialogRef = useRef<UploadDialogHandle>(null);
   // 素材编辑弹窗
   const [editing, setEditing] = useState<Asset | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const { confirm, dialog } = useConfirm();
+
+  /** 粘贴图片：弹窗开→追加；关→用文件打开弹窗（live 模式立即上传）。 */
+  const handlePastedFiles = useCallback(
+    (files: File[]) => {
+      if (uploadOpen) {
+        dialogRef.current?.addFiles(files);
+        return;
+      }
+      setUploadInitial(files);
+      setUploadOpen(true);
+    },
+    [uploadOpen]
+  );
+
+  // document-scope：整页粘贴图片都进上传弹窗。弹窗打开时禁用（弹窗内部监听器独占）。
+  useClipboardImagePaste(null, {
+    enabled: ossConfigured && !uploadOpen,
+    scope: "document",
+    onPaste: handlePastedFiles,
+  });
 
   const spaceArticles = articles.filter(
     (a) => a.spaceId === selectedSpace
@@ -114,25 +144,19 @@ export function MaterialBrowser({
     });
   }
 
-  async function handleUpload(files: FileList) {
-    setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        const fd = new FormData();
-        fd.append("file", file);
-        if (selectedArticle) fd.append("articleId", selectedArticle);
-        else if (selectedSpace) fd.append("spaceId", selectedSpace);
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          window.alert(d.error || "上传失败");
-        }
-      }
-      await loadAssets();
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = "";
+  /** 拖拽文件到素材区：打开弹窗立即上传（与粘贴同走 live 模式）。 */
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length) {
+      setUploadInitial(Array.from(e.dataTransfer.files));
+      setUploadOpen(true);
     }
+  }
+
+  function openUploadByClick() {
+    setUploadInitial(null);
+    setUploadOpen(true);
   }
 
   const scopeLabel = selectedArticle
@@ -205,28 +229,27 @@ export function MaterialBrowser({
         )}
       </div>
 
-      {/* 右：素材网格 */}
-      <div className="space-y-4">
+      {/* 右：素材网格（支持拖拽 / 粘贴上传） */}
+      <div
+        className={cn(
+          "space-y-4 rounded-lg transition-colors",
+          dragOver && "ring-2 ring-primary/40 bg-accent/30"
+        )}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+      >
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-medium">{scopeLabel}</div>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            className="hidden"
-            disabled={!ossConfigured || uploading}
-            onChange={(e) => e.target.files && handleUpload(e.target.files)}
-          />
           <Button
             size="sm"
-            disabled={!ossConfigured || uploading}
-            onClick={() => fileInput.current?.click()}
+            disabled={!ossConfigured}
+            onClick={openUploadByClick}
           >
-            {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
-            )}
+            <Upload className="h-4 w-4" />
             上传
           </Button>
         </div>
@@ -240,6 +263,11 @@ export function MaterialBrowser({
             <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
               <FolderOpen className="h-10 w-10 mb-2 opacity-40" />
               <p className="text-sm">暂无素材</p>
+              {ossConfigured && (
+                <p className="mt-1 text-[11px] text-muted-foreground/70">
+                  直接 {pasteShortcutLabel()} 粘贴图片，或拖拽 / 点击「上传」
+                </p>
+              )}
             </div>
           </Card>
         ) : (
@@ -346,6 +374,20 @@ export function MaterialBrowser({
         onOpenChange={setEditOpen}
         onSaved={(updated) => {
           setAssets((cur) => cur.map((a) => (a.id === updated.id ? updated : a)));
+        }}
+      />
+      <UploadDialog
+        ref={dialogRef}
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        articleId={selectedArticle ?? undefined}
+        spaceId={selectedArticle ? undefined : selectedSpace ?? undefined}
+        initialFiles={uploadInitial}
+        onUploaded={() => {
+          void loadAssets();
+        }}
+        onAllDone={() => {
+          void loadAssets();
         }}
       />
       {dialog}
