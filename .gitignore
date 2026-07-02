@@ -43,6 +43,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 允许提交 publish 模板（.env.publish 本体仍被忽略）
+!.env.publish.example
 
 # vercel
 .vercel
