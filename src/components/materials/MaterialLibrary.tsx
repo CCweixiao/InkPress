@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   Upload,
   Copy,
@@ -17,6 +17,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  UploadDialog,
+  type UploadDialogHandle,
+} from "@/components/materials/UploadDialog";
+import {
+  useClipboardImagePaste,
+  pasteShortcutLabel,
+} from "@/components/materials/useClipboardImagePaste";
 
 type Asset = {
   id: string;
@@ -57,12 +65,35 @@ export function MaterialLibrary({
 }) {
   const [items, setItems] = useState(assets);
   const [filter, setFilter] = useState<Filter>("all");
-  const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   /** 正在重试公众号同步的 asset id */
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  // 上传弹窗：uploadInitial=null 表示点击进入；非空表示拖拽/粘贴进入（立即上传）
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadInitial, setUploadInitial] = useState<File[] | null>(null);
+  const dialogRef = useRef<UploadDialogHandle>(null);
+
+  /** 粘贴图片：弹窗开→追加；关→用文件打开弹窗（live 模式立即上传）。 */
+  const handlePastedFiles = useCallback(
+    (files: File[]) => {
+      if (uploadOpen) {
+        dialogRef.current?.addFiles(files);
+        return;
+      }
+      setUploadInitial(files);
+      setUploadOpen(true);
+    },
+    [uploadOpen]
+  );
+
+  // document-scope：整页粘贴图片都进上传弹窗。弹窗打开时禁用（弹窗内部监听器独占）。
+  useClipboardImagePaste(null, {
+    enabled: ossConfigured && !uploadOpen,
+    scope: "document",
+    onPaste: handlePastedFiles,
+  });
 
   useEffect(() => {
     setItems(assets);
@@ -80,25 +111,19 @@ export function MaterialLibrary({
     await refresh(kind);
   }
 
-  async function handleUpload(files: FileList) {
-    setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          throw new Error(d.error || "上传失败");
-        }
-      }
-      await refresh(filter);
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "上传失败");
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = "";
+  /** 拖拽文件：打开弹窗立即上传（与粘贴同走 live 模式）。 */
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length) {
+      setUploadInitial(Array.from(e.dataTransfer.files));
+      setUploadOpen(true);
     }
+  }
+
+  function openUploadByClick() {
+    setUploadInitial(null);
+    setUploadOpen(true);
   }
 
   function copyUrl(url: string) {
@@ -148,7 +173,18 @@ export function MaterialLibrary({
   }
 
   return (
-    <div className="space-y-6">
+    <div
+      className={cn(
+        "space-y-6 rounded-lg transition-colors",
+        dragOver && "ring-2 ring-primary/40 bg-accent/30"
+      )}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={onDrop}
+    >
       {/* 工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-md bg-muted p-1">
@@ -168,24 +204,12 @@ export function MaterialLibrary({
           ))}
         </div>
 
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          className="hidden"
-          disabled={!ossConfigured || uploading}
-          onChange={(e) => e.target.files && handleUpload(e.target.files)}
-        />
         <Button
           size="sm"
-          disabled={!ossConfigured || uploading}
-          onClick={() => fileInput.current?.click()}
+          disabled={!ossConfigured}
+          onClick={openUploadByClick}
         >
-          {uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4" />
-          )}
+          <Upload className="h-4 w-4" />
           上传素材
         </Button>
       </div>
@@ -198,6 +222,11 @@ export function MaterialLibrary({
             <p className="text-muted-foreground">
               还没有素材，点击右上角上传
             </p>
+            {ossConfigured && (
+              <p className="mt-1 text-[11px] text-muted-foreground/70">
+                也可直接 {pasteShortcutLabel()} 粘贴图片，或拖拽到此处
+              </p>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -292,6 +321,19 @@ export function MaterialLibrary({
           ))}
         </div>
       )}
+
+      <UploadDialog
+        ref={dialogRef}
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        initialFiles={uploadInitial}
+        onUploaded={() => {
+          void refresh(filter);
+        }}
+        onAllDone={() => {
+          void refresh(filter);
+        }}
+      />
     </div>
   );
 }
