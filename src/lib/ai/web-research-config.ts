@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getAgentConfig } from "@/lib/ai/agent-config";
+import { decryptConfigValueForUse } from "@/lib/config-secrets";
 
 /**
  * 联网搜索一级配置（P2.5）。从 `inkpress.agent` 抽出为独立 SystemConfig key `inkpress.web-research`。
@@ -47,7 +48,9 @@ export async function getWebResearchConfig(): Promise<WebResearchConfig> {
   const row = await prisma.systemConfig.findUnique({
     where: { key: WEB_RESEARCH_CONFIG_KEY },
   });
-  const cfg = parseWebResearchConfig(row?.value);
+  const cfg = parseWebResearchConfig(
+    decryptConfigValueForUse(WEB_RESEARCH_CONFIG_KEY, row?.value)
+  );
   if (!cfg.tavilyApiKey) {
     const agent = await getAgentConfig();
     if (agent.tavilyApiKey) cfg.tavilyApiKey = agent.tavilyApiKey;

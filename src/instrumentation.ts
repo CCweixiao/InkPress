@@ -17,8 +17,30 @@ export async function register() {
       await ensureDataHome();
       log.info("数据目录初始化完成");
     } catch (e) {
-      // 初始化失败不阻塞启动，但记录错误
+      // B2 版本守卫：DB schema 比当前 app 新 → 致命，拒绝启动（exit 1）。
+      // Electron 主进程 waitForServer 会因 server 退出而快速失败，弹出错误窗口提示升级。
+      if (e instanceof Error && e.name === "DatabaseVersionError") {
+        log.fatal({ err: e }, "数据库版本不兼容，拒绝启动");
+        process.exit(1);
+      }
+      // 其它初始化失败不阻塞启动，但记录错误
       log.error({ err: e }, "数据目录初始化失败");
+    }
+
+    // B10：应用持久化的日志级别（覆盖构建/env 默认）。
+    try {
+      const { applyPersistedLogLevel } = await import("./lib/log-level");
+      await applyPersistedLogLevel();
+    } catch (e) {
+      log.warn({ err: e }, "应用持久化日志级别失败");
+    }
+
+    // B8：启动缓存 GC（立即跑一次 + 每日定时）。
+    try {
+      const { startCacheGcScheduler } = await import("./lib/cache-gc");
+      startCacheGcScheduler();
+    } catch (e) {
+      log.warn({ err: e }, "启动缓存 GC 失败");
     }
 
     // 全局异常兜底：捕获未处理的 Promise 拒绝与未捕获异常，写入日志。

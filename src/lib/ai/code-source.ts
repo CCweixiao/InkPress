@@ -10,8 +10,9 @@ import {
   AGENT_CONFIG_KEY,
   type AgentConfig,
   type AgentProjectConfig,
-  parseAgentConfig,
+  getAgentConfig,
 } from "@/lib/ai/agent-config";
+import { encryptConfigValueForStorage } from "@/lib/config-secrets";
 
 const execFileAsync = promisify(execFile);
 const LOCAL_PATH_PATTERN =
@@ -373,10 +374,7 @@ export async function approveCodeSourceGrant(input: {
 }
 
 async function addTrustedProject(name: string, root: string) {
-  const row = await prisma.systemConfig.findUnique({
-    where: { key: AGENT_CONFIG_KEY },
-  });
-  const config = parseAgentConfig(row?.value);
+  const config = await getAgentConfig();
   if (config.projects.some((project) => path.resolve(project.root) === root)) return;
   const baseId =
     path.basename(root).toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "project";
@@ -386,10 +384,14 @@ async function addTrustedProject(name: string, root: string) {
     id = `${baseId}-${suffix++}`;
   }
   const next = { ...config, projects: [...config.projects, { id, name, root }] };
+  const value = encryptConfigValueForStorage(
+    AGENT_CONFIG_KEY,
+    JSON.stringify(next, null, 2)
+  );
   await prisma.systemConfig.upsert({
     where: { key: AGENT_CONFIG_KEY },
-    update: { value: JSON.stringify(next, null, 2) },
-    create: { key: AGENT_CONFIG_KEY, value: JSON.stringify(next, null, 2) },
+    update: { value },
+    create: { key: AGENT_CONFIG_KEY, value },
   });
 }
 

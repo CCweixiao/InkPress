@@ -33,9 +33,28 @@ function isPackaged(): boolean {
   return app.isPackaged || process.env.INKPRESS_PACKAGED_TEST === "1";
 }
 
-/** 用户数据根目录：打包=~/.inkpress，开发=null（用项目目录） */
+/** 用户数据根目录：打包=平台默认数据目录，开发=null（用项目目录） */
 function dataHome(): string | null {
-  return isPackaged() ? path.join(os.homedir(), ".inkpress") : null;
+  return isPackaged() ? defaultDataHome() : null;
+}
+
+/**
+ * 默认用户数据根（按平台约定）。mac= ~/.inkpress（不破坏存量）；Windows=%APPDATA%\InkPress；
+ * Linux=$XDG_DATA_HOME/inkpress。与 src/lib/paths.ts 同构（main.ts 自包含、不依赖 src/lib）。
+ */
+function defaultDataHome(): string {
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA?.trim();
+    return path.join(
+      appdata || path.join(os.homedir(), "AppData", "Roaming"),
+      "InkPress"
+    );
+  }
+  if (process.platform === "linux") {
+    const xdg = process.env.XDG_DATA_HOME?.trim();
+    return path.join(xdg || path.join(os.homedir(), ".local", "share"), "inkpress");
+  }
+  return path.join(os.homedir(), ".inkpress");
 }
 /** SQLite db 路径：打包=~/.inkpress/database/inkpress.db，开发=项目根/dev.db */
 function dbFile(): string {
@@ -63,6 +82,26 @@ function serverFile(): string {
 
 /* ============ 首次启动初始化 ============ */
 
+/**
+ * B9：恢复出厂兑现。若用户经 /api/settings/data/reset 写入 .reset 标记，
+ * 主进程启动时（server 尚未打开 DB）清空数据目录全部内容（含标记自身），随后正常初始化。
+ * 仅打包形态执行；开发模式无主进程，需手动清理。
+ */
+function performResetIfMarked() {
+  const home = dataHome();
+  if (!home) return;
+  const marker = path.join(home, ".reset");
+  if (!fs.existsSync(marker)) return;
+  try {
+    for (const entry of fs.readdirSync(home)) {
+      fs.rmSync(path.join(home, entry), { recursive: true, force: true });
+    }
+    console.log("[electron] 已执行恢复出厂：清空用户数据目录");
+  } catch (e) {
+    console.error("[electron] 恢复出厂失败：", e);
+  }
+}
+
 /** 确保 ~/.inkpress 目录结构存在（仅打包形态） */
 function ensureDirs() {
   const home = dataHome();
@@ -89,6 +128,7 @@ function ensureDirs() {
  * 主进程不直接加载 better-sqlite3，规避 Electron Node ABI 与标准 Node ABI 的不匹配。
  */
 function bootstrapData() {
+  performResetIfMarked();
   ensureDirs();
 }
 
@@ -129,6 +169,8 @@ function startServer(port: number): ChildProcess {
     NODE_ENV: "production",
     // 以纯 Node 模式运行 Electron 内置 Node（server 进程用此 ABI 加载 better-sqlite3）
     ELECTRON_RUN_AS_NODE: "1",
+    // 构建期版本透传：server 读 APP_VERSION 而非 process.cwd()/package.json（后者在打包态依赖 cwd，脆弱）。
+    APP_VERSION: app.getVersion(),
   };
   const home = dataHome();
   if (home) {
@@ -306,7 +348,27 @@ async function bootstrap() {
     bootstrapData();
     serverPort = await pickPort(PREFERRED_PORT);
     serverProc = startServer(serverPort);
-    await waitForServer(serverPort);
+    // B2 快速失败：server 若在启动期（waitForServer 完成前）退出，立即拒绝，
+    // 不必等 30s 超时。常见于版本守卫 exit(1)（DB schema 比当前 app 新）。
+    const earlyExit = new Promise<never>((_, reject) => {
+      const onExit = (code: number | null) => {
+        reject(
+          new Error(
+            `server 子进程启动期间退出（code=${code}）。可能原因：数据库版本不兼容（请升级 InkPress）、原生模块 ABI 不匹配、端口占用。详见 ~/.inkpress/logs/inkpress.log`
+          )
+        );
+      };
+      serverProc?.once("exit", onExit);
+    });
+    try {
+      await Promise.race([waitForServer(serverPort), earlyExit]);
+    } finally {
+      // 启动成功后剥离 earlyExit 监听，避免正常运行期的 exit 触发未捕获 rejection。
+      serverProc?.removeAllListeners("exit");
+      serverProc?.on("exit", (code) =>
+        console.log(`[next] server exited code=${code}`)
+      );
+    }
     await createWindow(serverPort);
     closeSplash();
   } catch (e) {
@@ -326,14 +388,30 @@ async function bootstrap() {
   }
 }
 
-app.whenReady().then(() => {
-  void bootstrap();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0 && serverProc && !serverProc.killed) {
-      void createWindow(serverPort);
+// B1 单实例锁：避免双开两进程写同一 SQLite（last-write-wins / SQLITE_BUSY / 数据损坏风险）。
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  // 已有实例运行 → 直接退出。
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    // 二次启动：聚焦已有主窗口（而非再起一个 server）。
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
     }
   });
-});
+
+  app.whenReady().then(() => {
+    void bootstrap();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0 && serverProc && !serverProc.killed) {
+        void createWindow(serverPort);
+      }
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

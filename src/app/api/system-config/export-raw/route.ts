@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { LLM_CONFIG_KEY } from "@/lib/ai/llm-config";
+import {
+  LLM_CONFIG_KEY,
+  decryptLlmConfigValueForExport,
+} from "@/lib/ai/llm-config";
+import { decryptConfigValueForExport } from "@/lib/config-secrets";
 import { AGENT_CONFIG_KEY } from "@/lib/ai/agent-config";
 import { OSS_CONFIG_KEY } from "@/lib/oss-config";
 import { STORAGE_CONFIG_KEY } from "@/lib/storage-config";
 import { WECHAT_CONFIG_KEY } from "@/lib/wechat/config";
+import { WEB_RESEARCH_CONFIG_KEY } from "@/lib/ai/web-research-config";
 import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
@@ -24,6 +29,7 @@ const EXPORT_KEYS = [
   STORAGE_CONFIG_KEY,
   OSS_CONFIG_KEY,
   WECHAT_CONFIG_KEY,
+  WEB_RESEARCH_CONFIG_KEY,
 ];
 
 export const GET = withApiLog(
@@ -35,9 +41,21 @@ export const GET = withApiLog(
     });
     logMutation("systemConfig", "export-raw", { keys: rows.map((r) => r.key) });
     // 按 EXPORT_KEYS 顺序排列，缺的 key 跳过（未配置不导出）
-    const configs = EXPORT_KEYS.map((k) =>
-      rows.find((r) => r.key === k)
-    ).filter((r): r is { key: string; value: string } => !!r);
+    const configs = EXPORT_KEYS.map((k) => rows.find((r) => r.key === k))
+      .filter((r): r is { key: string; value: string } => !!r)
+      .map((r) => {
+        try {
+          return {
+            ...r,
+            value:
+              r.key === LLM_CONFIG_KEY
+                ? decryptLlmConfigValueForExport(r.value)
+                : decryptConfigValueForExport(r.key, r.value),
+          };
+        } catch {
+          return r;
+        }
+      });
     return NextResponse.json({ ok: true, configs });
   }
 );

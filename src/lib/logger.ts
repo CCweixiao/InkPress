@@ -111,4 +111,19 @@ export function moduleLogger(module: string) {
   return logger.child({ module });
 }
 
+/**
+ * 运行时修改日志级别（B10）。
+ * 仅改根 logger 的 level 过滤；多路输出的 stream 自身级别不变，故"完整生效"建议重启。
+ * 非法级别静默忽略。
+ */
+export function setLogLevel(level: string): void {
+  const l = level.trim().toLowerCase();
+  if (!l) return;
+  try {
+    (logger as pino.Logger).level = l;
+  } catch {
+    /* 非法级别，忽略 */
+  }
+}
+
 export { logFilePath, rotateIfNeeded };

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { decryptConfigValueForUse } from "@/lib/config-secrets";
 
 export const AGENT_CONFIG_KEY = "inkpress.agent";
 
@@ -71,5 +72,5 @@ export async function getAgentConfig(): Promise<AgentConfig> {
   const row = await prisma.systemConfig.findUnique({
     where: { key: AGENT_CONFIG_KEY },
   });
-  return parseAgentConfig(row?.value);
+  return parseAgentConfig(decryptConfigValueForUse(AGENT_CONFIG_KEY, row?.value));
 }
