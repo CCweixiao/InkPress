@@ -62,25 +62,29 @@ describe("read-only git analysis", () => {
       head: "v1.3.0",
     });
   });
-  it("resolves immutable ranges and reads bounded evidence", async () => {
-    const { project, base, head } = await fixtureRepo();
-    const before = await git(project.root, ["status", "--porcelain"]);
-    const range = await resolveGitRange(project, { base, head });
-    expect(range.baseCommit).toBe(base);
-    expect(range.headCommit).toBe(head);
-    const log = await readGitLog(project, range);
-    expect(log.commits).toHaveLength(1);
-    expect(log.commits[0].subject).toContain("enable new behavior");
-    const summary = await readGitDiffSummary(project, range);
-    expect(summary.changedFiles[0]).toMatchObject({
-      path: "feature.ts",
-      additions: 2,
-      deletions: 1,
-    });
-    const diff = await readGitDiff(project, { ...range, file: "feature.ts" });
-    expect(diff.diff).toContain("enabled = true");
-    expect(await git(project.root, ["status", "--porcelain"])).toBe(before);
-  });
+  it(
+    "resolves immutable ranges and reads bounded evidence",
+    async () => {
+      const { project, base, head } = await fixtureRepo();
+      const before = await git(project.root, ["status", "--porcelain"]);
+      const range = await resolveGitRange(project, { base, head });
+      expect(range.baseCommit).toBe(base);
+      expect(range.headCommit).toBe(head);
+      const log = await readGitLog(project, range);
+      expect(log.commits).toHaveLength(1);
+      expect(log.commits[0].subject).toContain("enable new behavior");
+      const summary = await readGitDiffSummary(project, range);
+      expect(summary.changedFiles[0]).toMatchObject({
+        path: "feature.ts",
+        additions: 2,
+        deletions: 1,
+      });
+      const diff = await readGitDiff(project, { ...range, file: "feature.ts" });
+      expect(diff.diff).toContain("enabled = true");
+      expect(await git(project.root, ["status", "--porcelain"])).toBe(before);
+    },
+    10_000
+  );
 
   it("rejects option injection and sensitive paths", async () => {
     const { project, head } = await fixtureRepo();

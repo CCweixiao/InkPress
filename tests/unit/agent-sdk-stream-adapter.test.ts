@@ -149,7 +149,7 @@ describe("createSdkToUiAdapter task events", () => {
     expect((taskParts[1].data as { status?: string }).status).toBe("completed");
   });
 
-  it("falls back to closing open subagent tasks when the turn result arrives", () => {
+  it("falls back to closing open subagent tasks when the stream is flushed", () => {
     const parts: Array<Record<string, unknown>> = [];
     const adapter = createSdkToUiAdapter({
       write: (part) => parts.push(part as unknown as Record<string, unknown>),
@@ -173,6 +173,9 @@ describe("createSdkToUiAdapter task events", () => {
       usage: {},
     } as unknown as SDKMessage);
 
+    expect(parts.filter((p) => p.type === "data-agent-step")).toHaveLength(1);
+    adapter.flush();
+
     const taskParts = parts.filter((p) => p.type === "data-agent-step");
     expect(taskParts).toHaveLength(2);
     expect((taskParts[1].data as { title?: string }).title).toBe(
@@ -180,6 +183,107 @@ describe("createSdkToUiAdapter task events", () => {
     );
     expect((taskParts[1].data as { detail?: string }).detail).toContain(
       "本轮对话已收口"
+    );
+  });
+
+  it("does not close open subagent tasks until the SDK stream is flushed", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "system",
+      subtype: "task_started",
+      task_id: "task-result-before-progress",
+      subagent_type: "research",
+      prompt: "collect facts",
+      uuid: "u1",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "done",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task-result-before-progress",
+      subagent_type: "research",
+      description: "still collecting",
+      summary: "still collecting",
+      usage: { total_tokens: 10, tool_uses: 1, duration_ms: 100 },
+      uuid: "u2",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task-result-before-progress",
+      status: "completed",
+      output_file: "out.json",
+      summary: "done",
+      uuid: "u3",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    const taskParts = parts.filter((p) => p.type === "data-agent-step");
+    expect(taskParts.map((p) => (p.data as { title?: string }).title)).toEqual([
+      "子任务启动（research）",
+      "子任务进行中（research）",
+      "子任务完成（research）",
+    ]);
+    expect(
+      taskParts.map((p) => (p.data as { status?: string }).status)
+    ).toEqual(["running", "running", "completed"]);
+  });
+
+  it("ignores progress after a task has reached a terminal status", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "system",
+      subtype: "task_started",
+      task_id: "task-terminal",
+      subagent_type: "research",
+      prompt: "collect facts",
+      uuid: "u1",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task-terminal",
+      status: "completed",
+      output_file: "out.json",
+      summary: "done",
+      uuid: "u2",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task-terminal",
+      subagent_type: "research",
+      description: "late progress",
+      summary: "late progress",
+      usage: { total_tokens: 10, tool_uses: 1, duration_ms: 100 },
+      uuid: "u3",
+      session_id: "s1",
+    } as unknown as SDKMessage);
+
+    const taskParts = parts.filter((p) => p.type === "data-agent-step");
+    expect(taskParts).toHaveLength(2);
+    expect((taskParts[1].data as { title?: string }).title).toBe(
+      "子任务完成（research）"
     );
   });
 
