@@ -33,6 +33,7 @@
     "electron:build": "node scripts/electron-build.mjs",
     "electron:build:arm64": "node scripts/electron-build.mjs --arm64",
     "electron:build:x64": "node scripts/electron-build.mjs --x64",
+    "publish:oss": "tsx scripts/publish-oss.ts",
     "docker:build": "docker build -t inkpress:latest .",
     "docker:run": "docker run --rm -p 3000:3000 -v \"$PWD/inkpress-data:/data\" inkpress:latest",
     "docker:up": "docker compose up -d",
