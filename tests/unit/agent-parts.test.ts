@@ -3,6 +3,12 @@ import {
   PART_RENDERERS,
   aggregateParts,
 } from "../../src/components/editor/WritingAssistant";
+import {
+  getEffectiveTaskStatus,
+  getStepDisplayStatus,
+  summarizeChildEvents,
+  summarizeTaskTimeline,
+} from "../../src/components/ai/SubAgentTaskBlock";
 
 /**
  * 验证 part 渲染注册表：
@@ -366,5 +372,113 @@ describe("aggregateParts", () => {
       // 首索引=1（text 占了 0），末索引=3
       expect(group.key).toBe("group-1-3");
     }
+  });
+});
+
+describe("SubAgentTaskBlock status derivation", () => {
+  it("uses the terminal task status when old running events remain after completion", () => {
+    const steps = [
+      {
+        title: "子任务启动（research）",
+        detail: "collect facts",
+        status: "running",
+        subagentType: "research",
+      },
+      {
+        title: "子任务完成（research）",
+        detail: "done",
+        status: "completed",
+        subagentType: "research",
+      },
+      {
+        title: "子任务进行中（research）",
+        detail: "late progress from old transcript",
+        status: "running",
+        subagentType: "research",
+      },
+    ];
+
+    const effective = getEffectiveTaskStatus(steps, true);
+
+    expect(effective).toBe("completed");
+    expect(getStepDisplayStatus("running", effective)).toBe("completed");
+  });
+
+  it("keeps genuinely unfinished settled tasks interrupted", () => {
+    const steps = [
+      {
+        title: "子任务启动（research）",
+        detail: "collect facts",
+        status: "running",
+        subagentType: "research",
+      },
+    ];
+
+    const effective = getEffectiveTaskStatus(steps, true);
+
+    expect(effective).toBe("running");
+    expect(getStepDisplayStatus("running", effective)).toBe("running");
+  });
+
+  it("summarizes repeated progress events into a compact timeline", () => {
+    const steps = [
+      {
+        title: "子任务启动（research）",
+        detail: "collect facts",
+        status: "running",
+        subagentType: "research",
+      },
+      ...Array.from({ length: 6 }, () => ({
+        title: "子任务进行中（research）",
+        detail: "补充社区资料与实际用法",
+        status: "running",
+        subagentType: "research",
+      })),
+      {
+        title: "子任务完成（research）",
+        detail: "done",
+        status: "completed",
+        subagentType: "research",
+      },
+    ];
+
+    const timeline = summarizeTaskTimeline(steps, "completed");
+
+    expect(timeline.map((item) => item.key)).toEqual([
+      "start",
+      "progress",
+      "terminal",
+    ]);
+    expect(timeline[1]).toMatchObject({
+      title: "过程摘要",
+      count: 6,
+      detail: "补充社区资料与实际用法",
+      status: "completed",
+    });
+  });
+
+  it("deduplicates child events and caps the visible list", () => {
+    const events = [
+      ...Array.from({ length: 3 }, () => ({
+        title: "资料线索",
+        detail: "Anthropic docs",
+        status: "completed" as const,
+      })),
+      ...Array.from({ length: 10 }, (_, index) => ({
+        title: "资料线索",
+        detail: `source ${index}`,
+        status: "completed" as const,
+      })),
+    ];
+
+    const summarized = summarizeChildEvents(events);
+
+    expect(summarized.visible[0]).toMatchObject({
+      title: "资料线索",
+      detail: "Anthropic docs",
+      count: 3,
+    });
+    expect(summarized.visible).toHaveLength(8);
+    expect(summarized.hidden).toBe(3);
   });
 });
