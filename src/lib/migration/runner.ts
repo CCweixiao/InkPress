@@ -15,6 +15,23 @@ import { moduleLogger } from "@/lib/logger";
 
 const log = moduleLogger("migration.runner");
 
+/**
+ * B2 版本守卫错误：DB 已应用的迁移版本中有当前 app 迁移目录未包含的（= DB 比当前 app 新）。
+ * 拒绝降级打开新库，避免 Prisma 读到未知列/表而静默错乱。
+ * instrumentation 据此 exit(1)，Electron 主进程快速失败提示升级。
+ */
+export class DatabaseVersionError extends Error {
+  readonly unknownVersions: string[];
+  constructor(unknownVersions: string[]) {
+    super(
+      `数据库 schema 比当前 InkPress 版本新（已应用但当前版本未包含的迁移：${unknownVersions.join(", ")}）。` +
+        `请升级 InkPress 至最新版本，而非降级打开已有数据。`
+    );
+    this.name = "DatabaseVersionError";
+    this.unknownVersions = unknownVersions;
+  }
+}
+
 /** 迁移版本目录信息 */
 interface VersionEntry {
   dir: string; // 版本目录名（时间戳_name）
@@ -54,6 +71,16 @@ export async function runMigrations(
 
     // 3. 扫描待执行版本（升序）
     const versions = scanVersions(migrationsRoot);
+
+    // B2 版本守卫：DB 已应用某版本，但当前 app 的迁移目录不含该版本 → DB 比当前 app 新（降级打开）。
+    // 继续运行可能导致 Prisma 读到未知列/表而静默错乱；拒绝启动，提示升级。
+    const known = new Set(versions.map((v) => v.dir));
+    const unknown = [...applied].filter((v) => !known.has(v)).sort();
+    if (unknown.length > 0) {
+      log.error({ unknown }, "版本守卫：拒绝降级打开新库");
+      throw new DatabaseVersionError(unknown);
+    }
+
     const pending = versions.filter((v) => !applied.has(v.dir));
 
     if (pending.length === 0) {

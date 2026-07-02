@@ -2,19 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@/generated/prisma/client";
-import { dbPath, usesDataHome } from "@/lib/paths";
+import { resolveDbPath, usesDataHome } from "@/lib/paths";
 import { moduleLogger } from "@/lib/logger";
 
 const log = moduleLogger("db");
 
 // Prisma 7：通过 driver adapter 连接 SQLite（零运维单文件）
 function createPrismaClient() {
-  const resolved = dbPath();
+  const resolved = resolveDbPath();
+  log.info({ dbPath: resolved.path, source: resolved.source }, "数据库路径");
   // 打包形态：确保父目录存在（~/.inkpress 可能尚未创建）。同步创建，避免 lazy proxy 的复杂性。
   if (usesDataHome()) {
-    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.mkdirSync(path.dirname(resolved.path), { recursive: true });
   }
-  const adapter = new PrismaBetterSqlite3({ url: resolved });
+  const adapter = new PrismaBetterSqlite3({ url: resolved.path });
 
   // 查询事件钩子始终启用（用于慢查询监控）：
   // - 慢查询(>100ms)→warn 始终输出（异常情况，值得记录）

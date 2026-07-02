@@ -2,6 +2,7 @@ import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
 import { storageDir } from "@/lib/paths";
 import { OSS_CONFIG_KEY, type OssConfig, parseOssConfig } from "@/lib/oss-config";
 import { prisma } from "@/lib/db";
+import { decryptConfigValueForUse } from "@/lib/config-secrets";
 
 export const STORAGE_CONFIG_KEY = "inkpress.storage";
 
@@ -126,13 +127,19 @@ export async function getStorageConfig(): Promise<StorageConfig> {
   const storage = await prisma.systemConfig.findUnique({
     where: { key: STORAGE_CONFIG_KEY },
   });
-  if (storage) return parseStorageConfig(storage.value);
+  if (storage) {
+    return parseStorageConfig(
+      decryptConfigValueForUse(STORAGE_CONFIG_KEY, storage.value)
+    );
+  }
 
   const legacyOss = await prisma.systemConfig.findUnique({
     where: { key: OSS_CONFIG_KEY },
   });
   if (!legacyOss) return defaultStorageConfig();
-  const oss = parseOssConfig(legacyOss.value);
+  const oss = parseOssConfig(
+    decryptConfigValueForUse(OSS_CONFIG_KEY, legacyOss.value) ?? legacyOss.value
+  );
   return {
     defaultProvider: "aliyun-oss",
     providers: {

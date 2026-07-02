@@ -27,6 +27,7 @@ const KEY_LABELS: Record<string, string> = {
   "inkpress.storage": "存储配置",
   "inkpress.oss": "OSS 存储",
   "inkpress.wechat": "微信公众号",
+  "inkpress.web-research": "联网搜索",
 };
 
 /** 配置类型标题前缀 */
@@ -82,6 +83,9 @@ function summarize(key: string, parsed: unknown): string {
     if (key === "inkpress.agent") {
       const projects = Array.isArray(obj.projects) ? obj.projects.length : 0;
       return `maxSteps: ${obj.maxSteps ?? "-"}，projects: ${projects}`;
+    }
+    if (key === "inkpress.web-research") {
+      return `autoApprove: ${obj.autoApprove === true ? "开启" : "关闭"}`;
     }
     return JSON.stringify(Object.keys(obj));
   }

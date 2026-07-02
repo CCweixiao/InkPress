@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { LLM_CONFIG_KEY, parseLlmConfigs } from "@/lib/ai/llm-config";
+import {
+  LLM_CONFIG_KEY,
+  parseLlmConfigs,
+} from "@/lib/ai/llm-config";
 import { OSS_CONFIG_KEY, parseOssConfig } from "@/lib/oss-config";
 import {
   STORAGE_CONFIG_KEY,
@@ -19,6 +22,7 @@ import { APPEARANCE_CONFIG_KEY, parseAppearanceConfig } from "@/lib/appearance-c
 import { UI_PREFERENCES_KEY, parseUiPreferences } from "@/lib/ui-preferences";
 import { I18N_CONFIG_KEY, parseI18nConfig } from "@/lib/i18n-config";
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
+import { encryptConfigValueForStorage, hasConfigSecrets } from "@/lib/config-secrets";
 import { prisma } from "@/lib/db";
 import { withApiLog, logMutation } from "@/lib/api-log";
 
@@ -44,6 +48,21 @@ function validateConfigValue(key: string, value: string) {
   else if (key === UI_PREFERENCES_KEY) parseUiPreferences(value);
   else if (key === I18N_CONFIG_KEY) parseI18nConfig(value);
   else parseJsonObjectOrArrayConfig(value);
+}
+
+/**
+ * B7：校验通过后、落库前，按 key 做敏感值加密转换。
+ * LLM_CONFIG_KEY → 加密每个 provider 的 apiKey（幂等）。
+ */
+function prepareValueForStorage(key: string, value: string): string {
+  if (hasConfigSecrets(key)) {
+    try {
+      return encryptConfigValueForStorage(key, value);
+    } catch {
+      return value; // 加密失败不阻断（校验已过），保留原值
+    }
+  }
+  return value;
 }
 
 /** 返回脱敏的配置列表（API Key 仅返回是否已填，不回传明文） */
@@ -186,7 +205,10 @@ export const POST = withApiLog("POST /api/system-config", async (req: Request) =
       { status: 400 }
     );
   }
-  const item = await prisma.systemConfig.create({ data: parsed.data });
+  const storedValue = prepareValueForStorage(parsed.data.key, parsed.data.value);
+  const item = await prisma.systemConfig.create({
+    data: { key: parsed.data.key, value: storedValue },
+  });
   logMutation("systemConfig", "create", { key: parsed.data.key });
   return NextResponse.json({ ok: true, item: maskConfigs([item])[0] });
 });
@@ -204,6 +226,7 @@ export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => 
     parsed.data.key === STORAGE_CONFIG_KEY ||
     parsed.data.key === OSS_CONFIG_KEY ||
     parsed.data.key === AGENT_CONFIG_KEY ||
+    parsed.data.key === WEB_RESEARCH_CONFIG_KEY ||
     parsed.data.key === WECHAT_CONFIG_KEY
   ) {
     const existing = await prisma.systemConfig.findUnique({
@@ -221,10 +244,11 @@ export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => 
     );
   }
 
+  const storedValue = prepareValueForStorage(parsed.data.key, value);
   const item = await prisma.systemConfig.upsert({
     where: { key: parsed.data.key },
-    update: { value },
-    create: { key: parsed.data.key, value },
+    update: { value: storedValue },
+    create: { key: parsed.data.key, value: storedValue },
   });
   logMutation("systemConfig", "update", { key: parsed.data.key });
   return NextResponse.json({ ok: true, item: maskConfigs([item])[0] });

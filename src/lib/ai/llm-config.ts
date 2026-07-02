@@ -4,6 +4,11 @@ import {
   type JsonObject,
 } from "@/lib/system-config";
 import { moduleLogger } from "@/lib/logger";
+import { decryptSecret, encryptSecret } from "@/lib/crypto/secret-store";
+import {
+  decryptConfigValueForExport,
+  encryptConfigValueForStorage,
+} from "@/lib/config-secrets";
 
 const log = moduleLogger("ai.llm-config");
 
@@ -209,7 +214,11 @@ export async function getLlmConfigs(): Promise<LlmConfig[]> {
   });
   if (item) {
     try {
-      return parseLlmConfigs(item.value);
+      // B7：存储为加密信封 → 读出时解密为明文 apiKey（非 v1: 旧明文直通，惰性迁移）。
+      return parseLlmConfigs(item.value).map((c) => ({
+        ...c,
+        apiKey: decryptSecret(c.apiKey),
+      }));
     } catch (e) {
       log.warn({ err: e }, "inkpress.llm 解析失败，尝试 claude-agent 回落");
     }
@@ -217,6 +226,21 @@ export async function getLlmConfigs(): Promise<LlmConfig[]> {
   // 读时回落：inkpress.llm 为空/不存在/解析失败时，尝试旧 claude-agent 配置
   const fallback = await tryClaudeAgentFallback();
   return fallback ? [fallback] : [];
+}
+
+/**
+ * B7：存储前把每个 provider 的 apiKey 加密（幂等：已加密直通，空串保留）。
+ * 保持 array/object 原始形态。调用方需先校验 JSON 合法性。
+ */
+export function encryptLlmConfigValueForStorage(value: string): string {
+  return encryptConfigValueForStorage(LLM_CONFIG_KEY, value);
+}
+
+/**
+ * B7：配置明文导出专用。保持原始 JSON 形态，仅把已加密的 provider apiKey 解开。
+ */
+export function decryptLlmConfigValueForExport(value: string): string {
+  return decryptConfigValueForExport(LLM_CONFIG_KEY, value);
 }
 
 export async function getPublicLlmProviders(): Promise<PublicLlmProvider[]> {
@@ -390,7 +414,12 @@ export async function migrateClaudeAgentConfig(): Promise<void> {
     }
   }
 
-  const value = JSON.stringify(newConfigs, null, 2);
+  // B7：迁移落库前加密 apiKey（来源是旧 claude-agent 明文）。
+  const forStorage = newConfigs.map((c) => ({
+    ...c,
+    apiKey: encryptSecret(c.apiKey),
+  }));
+  const value = JSON.stringify(forStorage, null, 2);
   await prisma.systemConfig.upsert({
     where: { key: LLM_CONFIG_KEY },
     update: { value },
