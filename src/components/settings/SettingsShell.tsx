@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { SystemConfigManager, type ConfigTab } from "./SystemConfigManager";
 import { LogsViewer } from "./LogsViewer";
 import { UsageDashboard } from "./UsageDashboard";
+import { ThemeManager, type ThemeItem } from "@/components/themes/ThemeManager";
 import {
   SETTINGS_NAV,
   findNavNode,
@@ -95,7 +96,7 @@ function GroupNav({
   );
 }
 
-export function SettingsShell() {
+export function SettingsShell({ themes }: { themes: ThemeItem[] }) {
   const [activeKey, setActiveKey] = useState<SettingsKey>("agent");
   const currentNode = findNavNode(activeKey);
 
@@ -146,6 +147,9 @@ export function SettingsShell() {
         </div>
         <div className={activeKey === "usage" ? "block" : "hidden"}>
           <UsageDashboard />
+        </div>
+        <div className={activeKey === "theme" ? "block" : "hidden"}>
+          <ThemeManager themes={themes} />
         </div>
         <div className={isConfigTab(activeKey) ? "block" : "hidden"}>
           <SystemConfigManager activeTab={isConfigTab(activeKey) ? activeKey : "agent"} />

@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Boxes, FileCode2, FolderOpen, Palette, Settings, Sparkles, Trash2 } from "lucide-react";
+import Image from "next/image";
+import { Boxes, FileCode2, FolderOpen, Settings, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getUiPreferences } from "@/lib/ui-preferences";
 import { previewSnippetAt } from "@/lib/content-store";
@@ -74,7 +75,14 @@ export default async function HomePage() {
       <header className="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-40">
         <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 shrink-0">
-            <Sparkles className="h-5 w-5 text-primary" />
+            <Image
+              src="/inkpress-logo-transparent.png"
+              alt="InkPress"
+              width={28}
+              height={28}
+              className="h-7 w-7"
+              priority
+            />
             <span className="font-semibold text-lg">InkPress</span>
             <span className="text-xs text-muted-foreground ml-1 hidden sm:inline">
               数字文刊工坊
@@ -89,12 +97,6 @@ export default async function HomePage() {
               <Link href="/technical-documents">
                 <FileCode2 className="h-4 w-4" />
                 技术文档
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/themes">
-                <Palette className="h-4 w-4" />
-                主题
               </Link>
             </Button>
             <Button asChild variant="ghost" size="sm">

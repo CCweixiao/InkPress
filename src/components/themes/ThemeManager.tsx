@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Save, Trash2, Settings, Check, Loader2, CheckCircle2 } from "lucide-react";
+import { Plus, Save, Trash2, Settings, Check, Loader2, CheckCircle2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -124,6 +124,8 @@ export function ThemeManager({ themes }: { themes: ThemeItem[] }) {
   // 设置面板（每行设置图标）
   const [settingsFor, setSettingsFor] = useState<ThemeItem | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
+  // 全屏预览抽屉：按需打开，避免常驻预览挤占编辑区宽度
+  const [previewOpen, setPreviewOpen] = useState(false);
   const { confirm, dialog } = useConfirm();
 
   function showFeedback(type: "success" | "error", message: string) {
@@ -269,7 +271,7 @@ export function ThemeManager({ themes }: { themes: ThemeItem[] }) {
   const nameTooLong = selected ? selected.name.length > NAME_MAX : false;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_380px] gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6">
       {/* 左：主题列表 */}
       <div className="space-y-2">
         <Button
@@ -434,19 +436,29 @@ export function ThemeManager({ themes }: { themes: ThemeItem[] }) {
                 内置主题可直接编辑保存
               </span>
             )}
-            <Button
-              size="sm"
-              onClick={() => saveTheme(selected.id)}
-              disabled={saving || validationError !== null}
-              title={validationError ?? undefined}
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              保存
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPreviewOpen(true)}
+              >
+                <Eye className="h-4 w-4" />
+                预览
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => saveTheme(selected.id)}
+                disabled={saving || validationError !== null}
+                title={validationError ?? undefined}
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                保存
+              </Button>
+            </div>
           </div>
         </div>
       ) : (
@@ -455,14 +467,22 @@ export function ThemeManager({ themes }: { themes: ThemeItem[] }) {
         </div>
       )}
 
-      {/* 右：实时预览 */}
-      <div className="border-l border-border pl-6 -mr-6 pr-6 bg-muted/20 -my-8 py-8">
-        <WeChatPreview
-          markdown={SAMPLE_MD}
-          title={selected?.name ?? "主题预览"}
-          theme={selected}
-        />
-      </div>
+      {/* 全屏预览抽屉：边改边看，按需打开，避免常驻预览挤占编辑区宽度 */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>主题预览{selected ? `：${selected.name}` : ""}</DialogTitle>
+            <DialogDescription>
+              示例文本在当前主题下的渲染效果，关闭后继续编辑。
+            </DialogDescription>
+          </DialogHeader>
+          <WeChatPreview
+            markdown={SAMPLE_MD}
+            title={selected?.name ?? "主题预览"}
+            theme={selected}
+          />
+        </DialogContent>
+      </Dialog>
 
       {/* 设置面板（每行设置图标触发） */}
       <Dialog
