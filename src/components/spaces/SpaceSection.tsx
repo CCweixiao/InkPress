@@ -7,6 +7,7 @@ import { Pencil, Trash2, ChevronRight, FolderOpen, Plus, ChevronDown } from "luc
 import { Button } from "@/components/ui/button";
 import { ArticleCard, type ArticleListItem } from "@/components/articles/ArticleCard";
 import { NewArticleButton } from "@/components/articles/NewArticleButton";
+import { ImportArticleButton } from "@/components/articles/ImportArticleButton";
 import { SpaceDialog, type SpaceForm } from "./SpaceDialog";
 import type { ViewMode } from "@/components/common/ViewToggle";
 import { cn } from "@/lib/utils";
@@ -87,6 +88,8 @@ export function SpaceSection({
         <div className="flex items-center gap-1 shrink-0">
           {/* 新建文章：归属到当前空间（位于编辑按钮前） */}
           <NewArticleButton spaceId={space.id} variant="ghost" size="sm" />
+          {/* 从 ZIP 导入文章到当前空间 */}
+          <ImportArticleButton spaceId={space.id} variant="ghost" size="sm" />
           {/* 默认空间不可编辑/删除 */}
           {!space.isDefault && (
             <>
