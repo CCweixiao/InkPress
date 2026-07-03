@@ -37,6 +37,7 @@
     "docker:build": "docker build -t inkpress:latest .",
     "docker:run": "docker run --rm -p 3000:3000 -v \"$PWD/inkpress-data:/data\" inkpress:latest",
     "docker:up": "docker compose up -d",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "docker:down": "docker compose down"
   },
   "dependencies": {
