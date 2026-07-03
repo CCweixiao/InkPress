@@ -46,28 +46,71 @@ const CODE_THEMES = [
 
 const NAME_MAX = 20;
 
-const SAMPLE_MD = `# 欢迎使用 InkPress
+const SAMPLE_MD = `# AI 产品发布复盘：从想法到多渠道分发
 
-这是一段**示例文字**，用于预览主题效果。
+> 摘要：这是一篇用于主题预览的长文样稿，覆盖**摘要文字**、段落、列表、表格、数学表达式、脚注、代码片段与流程图。它的目标不是解释功能，而是让你快速判断主题在真实文章里的阅读节奏。
 
-## 二级标题
+好的排版不只是换一组颜色。它需要在段落间距、章节分割线、行间距、字体大小、引用块、表格密度与代码块细节之间保持稳定秩序。比如正文里的 \`conversionRate()\` 应该被轻轻托住，而不是抢走标题的注意力。
 
-### 核心能力：稳定、清晰、可扩展
+## 1. 关键结论
 
-- 列表项一
-- 列表项二
+### 为什么要看复杂样稿
 
-> 引用块：这里是一段引用文字。
+- **段落节奏**：连续三段正文时，行距要松，段距要稳。
+- **章节层级**：一级标题负责定调，二级标题负责切换场景，三级标题负责落点。
+- **信息组件**：表格、代码、公式、流程图不能像临时贴片。
 
-正文中的 \`inlineCode()\` 会使用更轻量的行内代码样式。
+任务清单也常出现在技术文章和项目复盘中：
 
-\`\`\`js
-function hello(name) {
-  return "Hello, " + name;
+- [x] 支持多渠道 HTML 导出
+- [x] 保留公众号草稿箱发布链路
+- [ ] 继续补充更多平台的真实粘贴验证
+
+## 2. 数据与判断
+
+一段简单的增长模型可以写作行内公式 $CTR = clicks / impressions$，也可以写成独立公式：
+
+$$
+score = \\frac{quality \\times reach}{latency + 1}
+$$
+
+| 模块 | 指标 | 当前表现 | 下一步 |
+|---|---:|---:|---|
+| 编辑器 | 首屏可读性 | 92% | 优化空态 |
+| 主题 | 复杂元素覆盖 | 78% | 补充公式/表格 |
+| 发布 | 渠道适配 | 85% | 增加粘贴测试 |
+
+## 3. 实现片段
+
+\`\`\`ts
+type PublishChannel = "wechat" | "zhihu" | "juejin" | "generic";
+
+function conversionRate(clicks: number, impressions: number) {
+  if (impressions === 0) return 0;
+  return Number((clicks / impressions).toFixed(4));
 }
 \`\`\`
 
-[这是一个链接](https://example.com)`;
+## 4. 流程图
+
+\`\`\`mermaid
+flowchart TD
+  A[Markdown 原文] --> B[主题 CSS]
+  B --> C[Juice 内联]
+  C --> D{发布渠道}
+  D --> E[公众号草稿箱]
+  D --> F[可粘贴 HTML]
+\`\`\`
+
+## 5. 延伸阅读
+
+引用块适合放判断边界：
+
+> 如果主题只能在短段落里好看，它还不算成熟。真正高级的样式，需要让长文、表格、代码与注释共同存在时仍然安静、有序。
+
+最后是一条脚注示例：主题灵感可以来自开源文档系统，但最终需要服务当前产品的发布场景。[^theme]
+
+[^theme]: 预览样稿会随渲染能力持续扩展。`;
 
 export function ThemeManager({ themes }: { themes: ThemeItem[] }) {
   const [list, setList] = useState<ThemeItem[]>(themes);
