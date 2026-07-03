@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
   Send,
@@ -8,6 +8,13 @@ import {
   ArrowLeft,
   PanelRightClose,
   PanelRightOpen,
+  Check,
+  Copy,
+  MoreHorizontal,
+  AlertTriangle,
+  CheckCircle2,
+  LocateFixed,
+  Wand2,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -19,6 +26,11 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { TiptapEditor } from "./TiptapEditor";
 import { AIPanel, type AIPanelMode } from "./AIPanel";
 import { WeChatPreview } from "@/components/preview/WeChatPreview";
@@ -48,6 +60,14 @@ export type ArticleData = {
   profileId?: string | null;
 };
 
+type ArticleCheck = {
+  id: string;
+  message: string;
+  line: number;
+  fixLabel?: string;
+  fix?: (markdown: string) => string;
+};
+
 export function EditorWorkspace({
   article,
   themes,
@@ -74,6 +94,9 @@ export function EditorWorkspace({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
     "idle"
   );
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const [articleActionsOpen, setArticleActionsOpen] = useState(false);
+  const articleChecks = useMemo(() => buildArticleChecks(markdown), [markdown]);
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   const previewScrollRef = useRef<HTMLElement | null>(null);
   const scrollSyncFrame = useRef<number | null>(null);
@@ -131,6 +154,29 @@ export function EditorWorkspace({
     }
     setSaveState("saved");
     setTimeout(() => setSaveState("idle"), 1500);
+  };
+
+  const copyMarkdown = async () => {
+    if (!markdown.trim()) return;
+    await navigator.clipboard.writeText(markdown);
+    setCopyState("copied");
+    window.setTimeout(() => setCopyState("idle"), 1200);
+  };
+
+  const locateCheck = (line: number) => {
+    const scroller = editorScrollRef.current;
+    if (!scroller) return;
+    const totalLines = Math.max(1, markdown.split(/\r?\n/).length);
+    const ratio = Math.max(0, Math.min(1, (line - 1) / totalLines));
+    scroller.scrollTo({
+      top: ratio * (scroller.scrollHeight - scroller.clientHeight),
+      behavior: "smooth",
+    });
+  };
+
+  const applyCheckFix = (check: ArticleCheck) => {
+    if (!check.fix) return;
+    setMarkdown(check.fix(markdown));
   };
 
   useEffect(() => {
@@ -325,7 +371,7 @@ export function EditorWorkspace({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="文章标题"
-            className="h-8 text-base font-medium border-transparent focus-visible:border-border"
+            className="h-8 min-w-0 flex-1 text-base font-medium border-transparent focus-visible:border-border"
           />
           <span className="text-xs text-muted-foreground w-16 shrink-0">
             {saveState === "saving"
@@ -334,11 +380,100 @@ export function EditorWorkspace({
               ? "已保存"
               : ""}
           </span>
-          <ExportArticleButton
-            articleId={article.id}
-            markdown={markdown}
-            title={title}
-          />
+          <Popover open={articleActionsOpen} onOpenChange={setArticleActionsOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                title="更多文章操作"
+                aria-label="更多文章操作"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+                <span className="hidden xl:inline">更多</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-3">
+              <div className="space-y-3">
+                <div>
+                  <div className="text-sm font-medium">文章操作</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    导出和复制类操作默认收起，减少标题栏占用
+                  </div>
+                </div>
+                <ExportArticleButton
+                  articleId={article.id}
+                  markdown={markdown}
+                  title={title}
+                  className="w-full justify-between"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={copyMarkdown}
+                  disabled={!markdown.trim()}
+                  title="复制 Markdown 源文"
+                  aria-label="复制 Markdown 源文"
+                  className="w-full justify-start"
+                >
+                  {copyState === "copied" ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                  {copyState === "copied" ? "已复制" : "复制 Markdown"}
+                </Button>
+                <div className="rounded-lg border border-border bg-muted/30 p-2.5">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    {articleChecks.length > 0 ? (
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    )}
+                    排版检查
+                    {articleChecks.length > 0 && (
+                      <span className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                        {articleChecks.length}
+                      </span>
+                    )}
+                  </div>
+                  {articleChecks.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {articleChecks.slice(0, 5).map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-md bg-background/70 p-2 text-xs text-muted-foreground"
+                        >
+                          <div className="leading-5">{item.message}</div>
+                          <div className="mt-1 flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => locateCheck(item.line)}
+                              className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-accent-foreground"
+                            >
+                              <LocateFixed className="h-3 w-3" />
+                              定位
+                            </button>
+                            {item.fix && (
+                              <button
+                                type="button"
+                                onClick={() => applyCheckFix(item)}
+                                className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-accent-foreground"
+                              >
+                                <Wand2 className="h-3 w-3" />
+                                {item.fixLabel ?? "修复"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">暂无明显问题</p>
+                  )}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
           <Button size="sm" onClick={() => setPublishOpen(true)}>
             <Send className="h-4 w-4" />
             发布
@@ -394,4 +529,101 @@ export function EditorWorkspace({
       </div>
     </div>
   );
+}
+
+function buildArticleChecks(markdown: string): ArticleCheck[] {
+  const checks: ArticleCheck[] = [];
+  const lines = markdown.split(/\r?\n/);
+  let maxHeadingLevel = 0;
+
+  for (const [lineIndex, line] of lines.entries()) {
+    const heading = /^(#{1,6})\s+/.exec(line);
+    if (!heading) continue;
+    const level = heading[1].length;
+    if (maxHeadingLevel > 0 && level > maxHeadingLevel + 1) {
+      checks.push({
+        id: "heading-jump",
+        message: `标题层级从 H${maxHeadingLevel} 跳到 H${level}`,
+        line: lineIndex + 1,
+        fixLabel: "拉平层级",
+        fix: normalizeHeadingLevels,
+      });
+      break;
+    }
+    maxHeadingLevel = Math.max(maxHeadingLevel, level);
+  }
+
+  const emptyLinkLine = lines.findIndex((line) => /\[[^\]]+\]\(\s*\)/.test(line));
+  if (emptyLinkLine >= 0) {
+    checks.push({
+      id: "empty-link",
+      message: "存在空链接",
+      line: emptyLinkLine + 1,
+      fixLabel: "移除空链接",
+      fix: (md) => md.replace(/\[([^\]]+)\]\(\s*\)/g, "$1"),
+    });
+  }
+  const emptyImageAltLine = lines.findIndex((line) => /!\[\s*\]\([^)]+\)/.test(line));
+  if (emptyImageAltLine >= 0) {
+    checks.push({
+      id: "image-alt",
+      message: "存在缺少说明文字的图片",
+      line: emptyImageAltLine + 1,
+      fixLabel: "补说明",
+      fix: (md) => md.replace(/!\[\s*\]\(([^)]+)\)/g, "![图片]($1)"),
+    });
+  }
+  const wideTableLine = lines.findIndex(
+    (line) => line.trim().startsWith("|") && line.split("|").length > 8
+  );
+  if (wideTableLine >= 0) {
+    checks.push({
+      id: "wide-table",
+      message: "存在列数偏多的表格，移动端可能较难阅读",
+      line: wideTableLine + 1,
+    });
+  }
+  const longParagraph = findLongParagraph(markdown);
+  if (longParagraph) {
+    checks.push({
+      id: "long-paragraph",
+      message: "存在较长段落，可考虑拆分",
+      line: longParagraph.line,
+      fixLabel: "自动拆段",
+      fix: splitLongParagraphs,
+    });
+  }
+
+  return checks;
+}
+
+function normalizeHeadingLevels(markdown: string): string {
+  let maxLevel = 0;
+  return markdown.replace(/^(#{1,6})(\s+)/gm, (full, hashes: string, space: string) => {
+    const level = hashes.length;
+    const nextLevel = maxLevel > 0 && level > maxLevel + 1 ? maxLevel + 1 : level;
+    maxLevel = Math.max(maxLevel, nextLevel);
+    return `${"#".repeat(nextLevel)}${space}`;
+  });
+}
+
+function findLongParagraph(markdown: string): { line: number } | null {
+  let line = 1;
+  for (const paragraph of markdown.split(/\n{2,}/)) {
+    if (paragraph.replace(/\s+/g, "").length > 500) return { line };
+    line += paragraph.split(/\r?\n/).length + 1;
+  }
+  return null;
+}
+
+function splitLongParagraphs(markdown: string): string {
+  return markdown
+    .split(/(\n{2,})/)
+    .map((part) => {
+      if (/^\n{2,}$/.test(part) || part.replace(/\s+/g, "").length <= 500) {
+        return part;
+      }
+      return part.replace(/([。！？.!?])(?=\S)/g, "$1\n\n");
+    })
+    .join("");
 }
