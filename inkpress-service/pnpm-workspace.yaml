@@ -1,0 +1,9 @@
+# 本项目为独立项目（PDC：不与 InkPress 主项目共享依赖安装/运行时）。
+# pnpm 11+ 构建脚本白名单：放行 Prisma 引擎 / better-sqlite3 / argon2 / esbuild，sharp 暂不需要。
+allowBuilds:
+  "@prisma/engines": true
+  better-sqlite3: true
+  "@node-rs/argon2": true
+  prisma: true
+  esbuild: true
+  sharp: false

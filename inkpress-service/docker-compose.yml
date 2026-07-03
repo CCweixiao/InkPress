@@ -1,0 +1,14 @@
+services:
+  inkpress-service:
+    build: .
+    image: inkpress-service:latest
+    ports:
+      - "3001:3000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=file:/data/inkpress-service.db
+      - NODE_ENV=production
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

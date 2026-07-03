@@ -1,0 +1,206 @@
+// InkPress 用户服务平台 — 数据模型（Phase 1：认证 / 用户 / 邀请码）
+//
+// 说明：SQLite 不支持 Prisma enum，因此所有「枚举」字段均用 String 表示，
+// 取值集合在 src/lib/validation 与 TS 联合类型中约束（语义与 PDC §6 完全一致）。
+// 字段命名与 PDC 对齐，便于 Phase 2（License）平滑扩展。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ===== 用户 =====
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  emailVerified      DateTime?
+  name               String?
+  image              String?
+  passwordHash       String? // argon2id 哈希，OAuth 用户为 null
+  role               String           @default("USER") // UserRole: USER | ADMIN
+  status             String           @default("ACTIVE") // UserStatus: ACTIVE | DISABLED | DELETED
+  mustChangePassword Boolean          @default(false) // 管理员首次初始化后强制改密
+  invitationCode     InvitationCode?
+  accounts           Account[]
+  sessions           Session[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([role])
+  @@index([status])
+}
+
+// ===== NextAuth Prisma Adapter 标准表 =====
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ===== 邮箱验证码（自定义业务表，不复用 VerificationToken） =====
+model EmailVerificationCode {
+  id          String    @id @default(cuid())
+  email       String
+  purpose     String    @default("REGISTER") // EmailCodePurpose: REGISTER | RESET_PASSWORD | CHANGE_EMAIL
+  codeHash    String // 仅存哈希，明文只出现在邮件
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdIp   String?
+  createdUa   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([email, purpose, expiresAt])
+  @@index([createdAt])
+}
+
+// ===== 邀请码（每用户唯一） =====
+model InvitationCode {
+  id        String   @id @default(cuid())
+  code      String   @unique // 6 位大小写敏感字母数字
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    String   @default("ACTIVE") // InvitationStatus: ACTIVE | DISABLED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ===== License Key（Phase 2） =====
+model LicenseKey {
+  id                 String             @id @default(cuid())
+  keyHash            String             @unique // peppered SHA-256，精确匹配；明文不入库
+  keyFingerprint     String             @unique // 明文短指纹，用于日志/展示/排障
+  displayKeySuffix   String // 仅末 4-6 位，避免列表泄露完整 key
+  durationKind       String // LicenseDurationKind: YEAR_1 | YEAR_3 | YEAR_5 | CUSTOM_YEARS | CUSTOM_DAYS | PERMANENT
+  durationYears      Int?
+  durationDays       Int?
+  effectiveExpiresAt DateTime? // 首次激活后写入，所有设备统一过期；永久=null
+  maxDevices         Int                @default(1)
+  status             String             @default("ENABLED") // LicenseKeyStatus: ENABLED | DISABLED | REVOKED
+  inviterUserId      String? // 邀请归因（创建时绑定，不在激活端绑定）
+  inviterCode        String?
+  note               String?
+  batchNo            String?
+  createdByUserId    String
+  firstActivatedAt   DateTime?
+  disabledAt         DateTime?
+  revokedAt          DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  activations        LicenseActivation[]
+
+  @@index([status])
+  @@index([inviterUserId])
+  @@index([batchNo])
+  @@index([createdAt])
+}
+
+// ===== License 激活记录（Phase 3 写入，Phase 2 管理端可查看/解绑） =====
+model LicenseActivation {
+  id                  String     @id @default(cuid())
+  licenseKeyId        String
+  licenseKey          LicenseKey @relation(fields: [licenseKeyId], references: [id], onDelete: Cascade)
+  deviceIdHash        String
+  macHash             String?
+  machineIdHash       String?
+  hostnameHash        String?
+  os                  String?
+  arch                String?
+  appVersion          String?
+  status              String     @default("ACTIVE") // ActivationStatus: ACTIVE | DEACTIVATED | REVOKED
+  activationSecretHash String? // sha256(secret) 指纹，仅日志关联，非密钥
+  activationSecretEnc String? // AES-256-GCM 密文（iv‖tag‖ciphertext），验签时解密还原
+  activatedAt         DateTime   @default(now())
+  lastValidatedAt     DateTime?
+  deactivatedAt       DateTime?
+  revokedAt           DateTime?
+  revokedReason       String?
+  ipFirst             String?
+  ipLast              String?
+  userAgentLast       String?
+  metadataJson        String     @default("{}")
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  @@unique([licenseKeyId, deviceIdHash])
+  @@index([deviceIdHash])
+  @@index([status])
+  @@index([lastValidatedAt])
+}
+
+// ===== License 校验日志（Phase 3 写入，Phase 2 管理端可查看） =====
+model LicenseValidationLog {
+  id           String   @id @default(cuid())
+  licenseKeyId String?
+  activationId String?
+  deviceIdHash String?
+  action       String // LicenseApiAction: ACTIVATE | VALIDATE | DEACTIVATE
+  result       String // LicenseApiResult: ALLOWED | DENIED | RATE_LIMITED | ERROR
+  reason       String?
+  ip           String?
+  userAgent    String?
+  appVersion   String?
+  createdAt    DateTime @default(now())
+
+  @@index([licenseKeyId, createdAt])
+  @@index([activationId, createdAt])
+  @@index([deviceIdHash, createdAt])
+  @@index([action, result, createdAt])
+}
+
+// ===== 审计日志（管理变更） =====
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actorRole   String?
+  action      String
+  targetType  String?
+  targetId    String?
+  beforeJson  String?
+  afterJson   String?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+}
