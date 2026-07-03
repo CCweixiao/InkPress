@@ -8,6 +8,7 @@ import { ViewToggle, useViewMode, type ViewMode } from "@/components/common/View
 import { SpaceSection, type SpaceItem } from "./SpaceSection";
 import { SpaceDialog } from "./SpaceDialog";
 import { ArticleCard, type ArticleListItem } from "@/components/articles/ArticleCard";
+import { ImportArticleButton } from "@/components/articles/ImportArticleButton";
 
 /** 首页未分类区块默认显示数，「显示更多」递增量 */
 const UNCLASSIFIED_PAGE_SIZE = 8;
@@ -75,6 +76,7 @@ export function HomeView({
                 <span className="text-xs text-muted-foreground">
                   {unclassified.length} 篇
                 </span>
+                <ImportArticleButton spaceId={null} variant="ghost" size="sm" />
               </div>
               <div
                 className={

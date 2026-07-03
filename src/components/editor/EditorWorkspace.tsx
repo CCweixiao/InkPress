@@ -23,6 +23,7 @@ import { TiptapEditor } from "./TiptapEditor";
 import { AIPanel, type AIPanelMode } from "./AIPanel";
 import { WeChatPreview } from "@/components/preview/WeChatPreview";
 import { PublishDialog } from "@/components/publish/PublishDialog";
+import { ExportArticleButton } from "./ExportArticleButton";
 
 export type ThemeOption = {
   id: string;
@@ -333,6 +334,11 @@ export function EditorWorkspace({
               ? "已保存"
               : ""}
           </span>
+          <ExportArticleButton
+            articleId={article.id}
+            markdown={markdown}
+            title={title}
+          />
           <Button size="sm" onClick={() => setPublishOpen(true)}>
             <Send className="h-4 w-4" />
             发布
