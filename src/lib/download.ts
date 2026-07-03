@@ -10,6 +10,13 @@ export function downloadText(
   mime = "application/json"
 ): void {
   const blob = new Blob([content], { type: mime });
+  downloadBlob(filename, blob);
+}
+
+/**
+ * 下载二进制 Blob（如服务端返回的 ZIP）。与 downloadText 同样的创建/回收流程。
+ */
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
