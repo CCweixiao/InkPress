@@ -28,6 +28,7 @@
 /build/*
 # 保留 electron-builder 打包图标源（默认 buildResources=build/）
 !/build/icon.png
+!/build/icon.svg
 # 保留 macOS 签名/公证用的权限文件
 !/build/entitlements.mac.plist
 
