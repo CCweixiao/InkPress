@@ -5,7 +5,7 @@
 > 相关设计文档：
 > - `docs/agent-engines.md`：Claude Agent 封装层设计背景，部分内容是迁移期设计，阅读时以当前代码为准。
 > - `docs/agent-runtime-pdc.md`：后续增强 PDC，包含可插拔 runtime、Article Profile、Subtask、Web Research 等未来路线。
-> - `docs/REVIEW-handoff.md`：当前未提交迁移改动的 review handoff。
+> - `docs/review/REVIEW-handoff.md`：当前未提交迁移改动的 review handoff。
 
 ---
 

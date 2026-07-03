@@ -145,8 +145,8 @@ registry.permission(allow/ask/deny)
 - `docs/agent-runtime-pdc.md` — PDC 路线图（P0-P6 设计）
 - `docs/agent-engines.md` — SDK 迁移设计（P0-P5 已完成）
 - `docs/agent-ui-redesign.md` — 前端重构设计
-- `docs/p3-p4-implementation-review.md` — P3/P4 实现 review（高风险点）
-- `docs/web-fetch-issue-review.md` — web_fetch GLM 问题 review
+- `docs/review/p3-p4-implementation-review.md` — P3/P4 实现 review（高风险点）
+- `docs/review/web-fetch-issue-review.md` — web_fetch GLM 问题 review
 - `~/.claude/projects/.../memory/claude-agent-runtime-p0.md` — 各阶段详细落地记录（最全）
 
 ### 6.4 接手第一步建议

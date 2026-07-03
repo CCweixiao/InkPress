@@ -1,11 +1,6 @@
 import matter from "front-matter";
-import juice from "juice";
 import { JSDOM } from "jsdom";
-import { renderMarkdown } from "@/lib/markdown/renderer";
-import {
-  resolveCssVariables,
-  readCodeThemeCss,
-} from "@/lib/themes/loader";
+import { renderInlineHtml } from "./render-inline";
 import { moduleLogger } from "@/lib/logger";
 
 const log = moduleLogger("convert.wechat");
@@ -34,15 +29,13 @@ export type ImageUploader = (
 ) => Promise<string | null>;
 
 /**
- * Markdown → 公众号 inline HTML 全流水线（8 步）
+ * Markdown → 公众号 inline HTML 全流水线
  *
- * 1. 剥离 front-matter
- * 2. 图片 URL 预处理（外链 → wx_src）
- * 3. markdown-it 渲染（含 hljs/katex/footnote/task-lists）
- * 4. 拼装：<div id="nice"> + 4 段 <style>（基础/主题/代码/字体）
- * 5. 解析 CSS 变量 var(--md-*)
- * 6. juice 内联全部 CSS 到 style 属性
- * 7. 微信专项清洗（script/style 残留、锚点链接、列表兼容、img 尺寸、首尾空 p）
+ * 1-2.  剥 front-matter + 图片 URL 预处理（外链 → wx_src）
+ * 3-6.  renderInlineHtml 通用前置：markdown-it 渲染 + 拼装 <div id="nice">
+ *       + 4 段 <style> + 解析 CSS 变量 + juice 全内联（见 render-inline.ts）
+ * 7.    微信专项 finalize（finalizeForWeChat）：删 <style> 残留、锚点清理、
+ *       列表 section 化、img 尺寸内联、首尾空 p 占位
  */
 export async function convertToWeChat(
   markdown: string,
@@ -63,33 +56,12 @@ export async function convertToWeChat(
     failedImages = r.failed;
   }
 
-  // 3. markdown-it 渲染
-  const innerHtml = renderMarkdown(processedMd);
+  // 3-6. 通用渲染（renderInlineHtml 内部会再剥一次 front-matter；
+  //      processedMd 已无 fm 故为 no-op；返回的 title 为空，沿用上面 fmTitle）
+  const { html: inlined } = await renderInlineHtml(processedMd, theme);
 
-  // 4. 拼装 + 5. 解析变量
-  const themeCss = resolveCssVariables(theme.cssContent, theme.primaryColor);
-  const codeCss = await readCodeThemeCss(theme.codeTheme);
-  const fontCss = `*{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}`;
-
-  const wrappedHtml = `
-    <div id="nice">
-      <style id="basic-theme">${BASE_CSS}</style>
-      <style id="markdown-theme">${themeCss}</style>
-      <style id="code-theme">${codeCss}</style>
-      <style id="font-theme">${fontCss}</style>
-      ${innerHtml}
-    </div>
-  `;
-
-  // 6. juice 内联
-  const inlined = juice(wrappedHtml, {
-    inlinePseudoElements: true,
-    preserveImportant: true,
-    resolveCSSVariables: false,
-  });
-
-  // 7. 微信专项清洗（基于 jsdom）
-  const cleaned = cleanForWeChat(inlined, theme.primaryColor);
+  // 7. 微信专项 finalize（基于 jsdom）
+  const cleaned = finalizeForWeChat(inlined, theme.primaryColor);
 
   return { html: cleaned, title: fmTitle, failedImages };
 }
@@ -160,36 +132,8 @@ async function replaceImageUrls(
   return { md: replaced, failed };
 }
 
-/** 微信公众号基础排版下限样式（与 doocs base 类似） */
-const BASE_CSS = `
-#nice{font-size:16px;color:#2b2f36;line-height:1.82;letter-spacing:0.035em;word-break:break-word;text-align:left;}
-#nice p{margin:0.75em 0;}
-#nice a{color:#576b95;text-decoration:none;border-bottom:1px solid #576b95;}
-#nice strong{font-weight:bold;}
-#nice hr{border:none;border-top:1px solid #e5e7eb;margin:1.5em 0;}
-#nice ul,#nice ol{padding-left:1.4em;margin:0.6em 0;}
-#nice li{margin:0.26em 0;line-height:1.75;}
-#nice li>p{margin:0.1em 0;}
-#nice blockquote{margin:1em 0;padding:0.9em 1.1em;border-left:4px solid #d1d5db;color:#606875;background:#f8fafc;}
-#nice table{border-collapse:separate;border-spacing:0;width:100%;margin:1.05em 0;display:table;overflow:hidden;}
-#nice th,#nice td{border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:0.65em 0.8em;text-align:left;}
-#nice th{background:#f6f8fa;font-weight:600;}
-#nice img{display:block;max-width:100%;height:auto;margin:1.05em auto;}
-#nice .code-block{display:block;margin:1.05em 0;border-radius:10px;overflow:hidden;background:#0d1117;box-shadow:0 8px 24px rgba(15,23,42,.14);}
-#nice .code__header{display:flex;align-items:center;justify-content:space-between;height:34px;padding:0 14px;background:#161b22;border-bottom:1px solid rgba(255,255,255,.08);}
-#nice .code__dots{display:inline-block;line-height:0;}
-#nice .code__dots i{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%;background:#ff5f57;}
-#nice .code__dots i:nth-child(2){background:#febc2e;}
-#nice .code__dots i:nth-child(3){background:#28c840;}
-#nice .code__lang{font-size:10px;line-height:1;color:#8b949e;letter-spacing:.12em;font-weight:600;}
-#nice pre{margin:0;padding:1.05em 1.2em 1.2em;border-radius:0;overflow-x:auto;font-size:13px;line-height:1.72;letter-spacing:0;}
-#nice code{font-family:Menlo,Monaco,Consolas,monospace;}
-#nice pre code{background:none;padding:0;}
-#nice .codespan{padding:.15em .42em;border-radius:4px;font-size:.88em;letter-spacing:0;word-break:break-all;}
-`;
-
-/** 微信专项清洗 */
-function cleanForWeChat(html: string, primaryColor: string): string {
+/** 微信专项 finalize（基于 jsdom）。导出供电台注册表 wechat 渠道复用。 */
+export function finalizeForWeChat(html: string, primaryColor: string): string {
   const dom = new JSDOM(html);
   const doc = dom.window.document;
   const root = doc.getElementById("nice") ?? doc.body;
