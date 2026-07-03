@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { downloadBlob } from "@/lib/download";
+import { cn } from "@/lib/utils";
 
 function filenameFromContentDisposition(header: string | null): string | null {
   if (!header) return null;
@@ -31,12 +32,14 @@ export function ExportArticleButton({
   title,
   variant = "outline",
   size = "sm",
+  className,
 }: {
   articleId: string;
   markdown: string;
   title: string;
   variant?: "default" | "outline" | "ghost" | "secondary";
   size?: "default" | "sm" | "lg" | "icon";
+  className?: string;
 }) {
   const [exporting, setExporting] = useState(false);
   const [includeAssets, setIncludeAssets] = useState(true);
@@ -69,7 +72,7 @@ export function ExportArticleButton({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className={cn("flex items-center gap-2", className)}>
       <label className="flex h-8 items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
         <input
           type="checkbox"

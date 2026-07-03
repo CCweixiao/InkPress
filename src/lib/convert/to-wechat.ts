@@ -165,6 +165,7 @@ export function finalizeForWeChat(html: string, primaryColor: string): string {
   });
 
   normalizeImageRowsForWeChat(root);
+  normalizeHorizontalRulesForWeChat(root);
 
   // 微信会重写 ul / ol / li，原生 marker 在嵌套列表、松散列表中很容易变成
   // 独立空圆点。发布前改为纯 section + 文本 marker，不再依赖平台列表样式。
@@ -177,6 +178,19 @@ export function finalizeForWeChat(html: string, primaryColor: string): string {
   const placeholder =
     '<p style="font-size:0;line-height:0;margin:0;visibility:hidden;">&nbsp;</p>';
   return placeholder + cleaned + placeholder;
+}
+
+function normalizeHorizontalRulesForWeChat(root: Element): void {
+  root.querySelectorAll("hr").forEach((hr: Element) => {
+    hr.setAttribute(
+      "style",
+      mergeInlineStyle(hr.getAttribute("style"), [
+        "width:33.333%",
+        "margin-left:auto",
+        "margin-right:auto",
+      ])
+    );
+  });
 }
 
 function normalizeImageRowsForWeChat(root: Element): void {

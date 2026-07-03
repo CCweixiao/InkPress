@@ -321,7 +321,7 @@ body {
   margin: 0;
 }
 .tiptap hr {
-  width: 32%;
+  width: 33.333%;
   margin: 1.85em auto;
   border: 0;
   border-top: 1px solid var(--editor-hr);
@@ -398,6 +398,23 @@ body {
 .tiptap-table td > p,
 .tiptap-table th > p {
   margin: 0;
+}
+.tiptap .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--primary);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.tiptap.resize-cursor,
+.tiptap .resize-cursor {
+  cursor: col-resize;
+}
+.tiptap table:hover .column-resize-handle {
+  opacity: 0.9;
 }
 
 /* 滚动条 */
@@ -980,6 +997,11 @@ body {
 }
 .dark .wechat-article-content hr {
   border-top-color: #3a3a3a !important;
+}
+.wechat-article-content hr {
+  width: 33.333% !important;
+  margin-right: auto !important;
+  margin-left: auto !important;
 }
 .dark .wechat-article-content table th {
   background: #242424 !important;
