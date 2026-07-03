@@ -4,8 +4,8 @@
 
 h1 {
   display: block;
-  margin: 1.55em 0 0.9em;
-  padding: 0.8em 0.4em 0.72em;
+  margin: 1.68em 0 0.96em;
+  padding: 0.86em 0.42em 0.78em;
   border-top: 1px solid var(--md-primary-color-light);
   border-bottom: 1px solid var(--md-primary-color-light);
   color: #2c2926;
@@ -18,7 +18,7 @@ h1 {
 
 h2 {
   display: table;
-  margin: 1.85em auto 0.8em;
+  margin: 2em auto 0.86em;
   padding: 0.38em 1.15em;
   border-radius: 999px;
   color: #fff;
@@ -32,7 +32,7 @@ h2 {
 }
 
 h3 {
-  margin: 1.35em 0 0.65em;
+  margin: 1.5em 0 0.68em;
   padding-left: 0.8em;
   border-left: 3px solid var(--md-primary-color);
   color: #35312e;
@@ -50,9 +50,9 @@ h4, h5, h6 {
 }
 
 p {
-  margin: 0.8em 0;
+  margin: 0.88em 0;
   color: #403c38;
-  line-height: 1.92;
+  line-height: 1.96;
   letter-spacing: 0.06em;
 }
 
@@ -97,7 +97,7 @@ li {
 hr {
   width: 68%;
   height: 1px;
-  margin: 1.8em auto;
+  margin: 2.08em auto;
   border: 0;
   background: #e5ddd6;
 }
@@ -124,6 +124,7 @@ img {
 }
 
 table {
+  margin: 1.18em 0 1.32em;
   border: 1px solid #e8e0da;
   border-radius: 10px;
   box-shadow: 0 8px 22px rgba(58, 46, 38, 0.06);

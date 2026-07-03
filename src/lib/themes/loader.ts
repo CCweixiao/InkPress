@@ -33,6 +33,24 @@ export const BUILTIN_THEMES = [
     primaryColor: "#f2622e",
     codeTheme: "github",
   },
+  {
+    name: "开源文档主题",
+    file: "github-pro.css",
+    primaryColor: "#0969da",
+    codeTheme: "github",
+  },
+  {
+    name: "研报纸面主题",
+    file: "research-paper.css",
+    primaryColor: "#475569",
+    codeTheme: "xcode",
+  },
+  {
+    name: "编辑专栏主题",
+    file: "editorial-column.css",
+    primaryColor: "#8b5e3c",
+    codeTheme: "atom-one-dark",
+  },
 ] as const;
 
 /** 可用的代码高亮主题 */
