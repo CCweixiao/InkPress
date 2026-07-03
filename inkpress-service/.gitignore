@@ -1,0 +1,42 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next
+/.next/
+/out/
+next-env.d.ts
+
+# build
+/build
+/dist
+
+# prisma generated client
+/src/generated
+
+# env
+.env
+.env.local
+.env.*.local
+
+# data
+/data
+*.db
+*.db-journal
+dev.db
+/backups
+
+# logs
+/logs
+*.log
+
+# os
+.DS_Store
+
+# editor
+.vscode/
+.idea/
+
+# tsbuildinfo
+*.tsbuildinfo
