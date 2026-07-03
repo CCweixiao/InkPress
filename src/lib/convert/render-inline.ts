@@ -34,7 +34,7 @@ export const BASE_CSS = `
 #nice a{color:#576b95;text-decoration:none;border-bottom:1px solid #576b95;}
 #nice strong{font-weight:bold;}
 #nice em{color:#606875;}
-#nice hr{border:none;border-top:1px solid #e5e7eb;margin:1.9em 0;}
+#nice hr{width:33.333%;border:none;border-top:1px solid #e5e7eb;margin:1.9em auto;}
 #nice ul,#nice ol{padding-left:1.45em;margin:0.72em 0 0.9em;}
 #nice li{margin:0.32em 0;line-height:1.78;}
 #nice li>p{margin:0.1em 0;}
