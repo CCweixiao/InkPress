@@ -12,59 +12,112 @@ const electronDir = path.join(root, "electron");
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="164" y1="90" x2="870" y2="936" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FF7559"/>
-      <stop offset="0.53" stop-color="#F7942F"/>
-      <stop offset="1" stop-color="#FFD36B"/>
-    </linearGradient>
-    <linearGradient id="paper" x1="298" y1="176" x2="708" y2="812" gradientUnits="userSpaceOnUse">
+    <linearGradient id="card" x1="168" y1="106" x2="852" y2="922" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#FFF6E7"/>
+      <stop offset="0.58" stop-color="#F7F8FF"/>
+      <stop offset="1" stop-color="#EEF2FF"/>
     </linearGradient>
-    <filter id="cardShadow" x="18" y="28" width="988" height="990" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#4A210D" flood-opacity="0.22"/>
+    <radialGradient id="cardGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(520 292) rotate(90) scale(584 560)">
+      <stop offset="0" stop-color="#C7D7FF" stop-opacity="0.75"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="338" y1="250" x2="682" y2="774" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B8A6FF"/>
+      <stop offset="0.42" stop-color="#6678FF"/>
+      <stop offset="1" stop-color="#244CFF"/>
+    </linearGradient>
+    <linearGradient id="markShade" x1="510" y1="300" x2="510" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.3"/>
+      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#07144F" stop-opacity="0.16"/>
+    </linearGradient>
+    <filter id="cardShadow" x="42" y="48" width="940" height="934" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#1E2435" flood-opacity="0.18"/>
     </filter>
-    <filter id="paperShadow" x="212" y="136" width="622" height="746" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#7B3316" flood-opacity="0.23"/>
+    <filter id="markShadow" x="208" y="214" width="616" height="610" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="26" stdDeviation="22" flood-color="#244CFF" flood-opacity="0.26"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0F1C7A" flood-opacity="0.18"/>
     </filter>
-    <clipPath id="iconClip">
-      <rect x="64" y="64" width="896" height="896" rx="212"/>
+    <clipPath id="cardClip">
+      <rect x="88" y="88" width="848" height="848" rx="198"/>
     </clipPath>
   </defs>
 
   <g filter="url(#cardShadow)">
-    <rect x="64" y="64" width="896" height="896" rx="212" fill="url(#bg)"/>
+    <rect x="88" y="88" width="848" height="848" rx="198" fill="url(#card)"/>
+    <rect x="89.5" y="89.5" width="845" height="845" rx="196.5" stroke="#E4E7F1" stroke-width="3"/>
   </g>
-  <g clip-path="url(#iconClip)">
-    <circle cx="230" cy="194" r="150" fill="#FFFFFF" opacity="0.14"/>
-    <circle cx="826" cy="806" r="220" fill="#FFFFFF" opacity="0.12"/>
-    <path d="M142 730C294 785 480 766 634 693C752 637 856 632 960 682V960H142V730Z" fill="#D95C25" opacity="0.18"/>
-  </g>
-
-  <g filter="url(#paperShadow)">
-    <path d="M310 184H660L760 284V760C760 809.7 719.7 850 670 850H354C304.3 850 264 809.7 264 760V230C264 204.6 284.6 184 310 184Z" fill="url(#paper)"/>
-    <path d="M660 184V265C660 286 677 303 698 303H760L660 184Z" fill="#FFE3AD"/>
+  <g clip-path="url(#cardClip)">
+    <rect x="88" y="88" width="848" height="848" fill="url(#cardGlow)"/>
+    <circle cx="294" cy="270" r="150" fill="#FFFFFF" opacity="0.62"/>
+    <circle cx="788" cy="742" r="196" fill="#D9E4FF" opacity="0.34"/>
   </g>
 
-  <rect x="344" y="300" width="90" height="432" rx="45" fill="#202833"/>
-  <circle cx="389" cy="238" r="34" fill="#202833"/>
-  <circle cx="389" cy="238" r="17" fill="#FFF6E7" opacity="0.9"/>
+  <g filter="url(#markShadow)">
+    <path d="M324 238H602C631 238 659 250 680 271L766 357C787 378 799 406 799 435V696C799 746 758 786 708 786H324C274 786 233 746 233 696V328C233 278 274 238 324 238Z" fill="url(#mark)"/>
+    <path d="M324 238H602C631 238 659 250 680 271L766 357C787 378 799 406 799 435V696C799 746 758 786 708 786H324C274 786 233 746 233 696V328C233 278 274 238 324 238Z" fill="url(#markShade)"/>
+    <path d="M646 265V370C646 398 668 420 696 420H794C789 396 777 374 759 357L680 278C670 268 659 263 646 265Z" fill="#DDE6FF" opacity="0.42"/>
+    <path d="M294 318C294 300 309 285 327 285H596C627 285 656 297 678 319L739 380C753 394 762 412 765 432C685 395 615 382 531 397C446 412 373 405 294 381V318Z" fill="#FFFFFF" opacity="0.16"/>
+  </g>
 
-  <path d="M486 302H612C712.5 302 780 368.7 780 462C780 556.5 712.5 624 612 624H554V728C554 750.1 536.1 768 514 768H486V302Z" fill="#202833"/>
-  <path d="M556 388H614C664 388 696 418.2 696 462C696 506.8 664 538 614 538H556V388Z" fill="#FFF6E7"/>
-  <path d="M556 624H614L556 682V624Z" fill="#202833"/>
+  <circle cx="390" cy="414" r="33" fill="#FFFFFF" opacity="0.96"/>
+  <rect x="348" y="472" width="84" height="218" rx="42" fill="#FFFFFF" opacity="0.96"/>
+  <path d="M512 428H620C694 428 744 475 744 539C744 604 694 650 620 650H568V704" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round" opacity="0.96"/>
+  <path d="M568 512H620C644 512 662 523 662 540C662 558 644 568 620 568H568V512Z" fill="#5E74FF" opacity="0.5"/>
+  <path d="M572 618L526 665V618H572Z" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M588 498H638" stroke="#DDE6FF" stroke-width="18" stroke-linecap="round" opacity="0.95"/>
+  <path d="M588 540H672" stroke="#DDE6FF" stroke-width="18" stroke-linecap="round" opacity="0.95"/>
+  <path d="M588 582H638" stroke="#DDE6FF" stroke-width="18" stroke-linecap="round" opacity="0.95"/>
+</svg>
+`;
 
-  <path d="M594 426H642" stroke="#F7942F" stroke-width="20" stroke-linecap="round"/>
-  <path d="M594 462H664" stroke="#F7942F" stroke-width="20" stroke-linecap="round"/>
-  <path d="M594 498H642" stroke="#F7942F" stroke-width="20" stroke-linecap="round"/>
-  <circle cx="684" cy="426" r="15" fill="#FFF6E7" stroke="#F7942F" stroke-width="12"/>
-  <circle cx="704" cy="462" r="15" fill="#FFF6E7" stroke="#F7942F" stroke-width="12"/>
-  <circle cx="684" cy="498" r="15" fill="#FFF6E7" stroke="#F7942F" stroke-width="12"/>
+const transparentLogoSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mark" x1="322" y1="220" x2="706" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B8A6FF"/>
+      <stop offset="0.42" stop-color="#6678FF"/>
+      <stop offset="1" stop-color="#244CFF"/>
+    </linearGradient>
+    <linearGradient id="markShade" x1="512" y1="278" x2="512" y2="786" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.3"/>
+      <stop offset="0.48" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#07144F" stop-opacity="0.16"/>
+    </linearGradient>
+    <filter id="markShadow" x="160" y="178" width="704" height="704" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#244CFF" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#0F1C7A" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#markShadow)">
+    <path d="M305 218H606C637 218 667 231 689 253L782 346C804 368 817 398 817 429V711C817 765 773 808 719 808H305C251 808 207 765 207 711V316C207 262 251 218 305 218Z" fill="url(#mark)"/>
+    <path d="M305 218H606C637 218 667 231 689 253L782 346C804 368 817 398 817 429V711C817 765 773 808 719 808H305C251 808 207 765 207 711V316C207 262 251 218 305 218Z" fill="url(#markShade)"/>
+    <path d="M653 246V366C653 396 677 420 707 420H813C808 392 795 367 775 347L689 261C679 251 666 246 653 246Z" fill="#DDE6FF" opacity="0.42"/>
+    <path d="M272 306C272 286 288 270 308 270H598C632 270 663 283 687 307L753 373C768 388 778 408 781 430C695 390 619 376 528 392C436 408 357 400 272 374V306Z" fill="#FFFFFF" opacity="0.16"/>
+  </g>
+
+  <circle cx="377" cy="410" r="36" fill="#FFFFFF" opacity="0.96"/>
+  <rect x="332" y="472" width="90" height="236" rx="45" fill="#FFFFFF" opacity="0.96"/>
+  <path d="M506 424H623C703 424 757 475 757 544C757 614 703 664 623 664H567V723" stroke="#FFFFFF" stroke-width="56" stroke-linecap="round" stroke-linejoin="round" opacity="0.96"/>
+  <path d="M567 516H623C649 516 668 528 668 546C668 565 649 576 623 576H567V516Z" fill="#5E74FF" opacity="0.5"/>
+  <path d="M572 630L522 681V630H572Z" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M588 500H642" stroke="#DDE6FF" stroke-width="19" stroke-linecap="round" opacity="0.95"/>
+  <path d="M588 545H679" stroke="#DDE6FF" stroke-width="19" stroke-linecap="round" opacity="0.95"/>
+  <path d="M588 590H642" stroke="#DDE6FF" stroke-width="19" stroke-linecap="round" opacity="0.95"/>
 </svg>
 `;
 
 function renderPng(size) {
   return new Resvg(svg, {
+    fitTo: { mode: "width", value: size },
+    background: "rgba(0, 0, 0, 0)",
+  }).render().asPng();
+}
+
+function renderTransparentLogoPng(size) {
+  return new Resvg(transparentLogoSvg, {
     fitTo: { mode: "width", value: size },
     background: "rgba(0, 0, 0, 0)",
   }).render().asPng();
@@ -102,6 +155,8 @@ fs.mkdirSync(electronDir, { recursive: true });
 fs.writeFileSync(path.join(buildDir, "icon.svg"), svg);
 fs.writeFileSync(path.join(buildDir, "icon.png"), renderPng(1024));
 fs.writeFileSync(path.join(publicDir, "InkPressLogo.png"), renderPng(512));
+fs.writeFileSync(path.join(publicDir, "inkpress-logo.png"), renderPng(512));
+fs.writeFileSync(path.join(publicDir, "inkpress-logo-transparent.png"), renderTransparentLogoPng(512));
 
 const faviconEntries = [16, 32, 48, 64].map((size) => ({ size, png: renderPng(size) }));
 fs.writeFileSync(path.join(appDir, "favicon.ico"), makeIco(faviconEntries));
@@ -117,5 +172,7 @@ console.log("Generated InkPress icons:");
 console.log("  build/icon.svg");
 console.log("  build/icon.png (1024x1024)");
 console.log("  public/InkPressLogo.png (512x512)");
+console.log("  public/inkpress-logo.png (512x512)");
+console.log("  public/inkpress-logo-transparent.png (512x512)");
 console.log("  src/app/favicon.ico (16/32/48/64)");
 console.log("  electron/splash-logo.ts (256x256 data URL)");
