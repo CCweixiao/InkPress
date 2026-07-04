@@ -166,6 +166,28 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 
+echo "    校验 CSP nonce 注入..."
+if ! ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_HOST" bash -s <<'REMOTE_HEALTH'; then
+set -euo pipefail
+headers="$(mktemp)"
+html="$(curl -fsS -D "$headers" http://127.0.0.1:9527/login)"
+csp="$(tr -d "\r" < "$headers" | awk 'BEGIN{IGNORECASE=1} /^content-security-policy:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }')"
+rm -f "$headers"
+nonce="$(printf "%s" "$csp" | sed -n "s/.*nonce-\([^'; ]*\).*/\1/p")"
+if [ -z "$nonce" ]; then
+  echo "missing CSP nonce"
+  exit 1
+fi
+if ! printf "%s" "$html" | grep -q "nonce=\"$nonce\""; then
+  echo "HTML scripts missing CSP nonce"
+  exit 1
+fi
+REMOTE_HEALTH
+  echo "❌ CSP nonce 校验失败：/login 响应头已有 nonce，但 HTML 脚本未注入同一 nonce"
+  exit 1
+fi
+echo "    ✅ CSP nonce 正常"
+
 # 清理本地 release
 rm -rf release
 
