@@ -7,6 +7,7 @@ import { addDraft, updateDraft } from "@/lib/wechat/draft";
 import { readContentAt } from "@/lib/content-store";
 import { moduleLogger } from "@/lib/logger";
 import { withApiLog } from "@/lib/api-log";
+import { requireLicenseForApi } from "@/lib/license/guard";
 
 const log = moduleLogger("wechat.draft.api");
 
@@ -26,6 +27,8 @@ const schema = z.object({
  * 5. 写回 wxMediaId + status=pushed
  */
 export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest) => {
+  const licenseBlocked = await requireLicenseForApi();
+  if (licenseBlocked) return licenseBlocked;
   const body = await req.json().catch(() => ({}));
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

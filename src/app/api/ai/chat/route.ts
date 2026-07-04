@@ -48,6 +48,7 @@ import {
 } from "@/lib/ai/code-source";
 import { moduleLogger } from "@/lib/logger";
 import { withApiLog } from "@/lib/api-log";
+import { requireLicenseForApi } from "@/lib/license/guard";
 
 const log = moduleLogger("ai.chat");
 
@@ -311,6 +312,8 @@ export async function GET(req: NextRequest) {
 }
 
 export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => {
+  const licenseBlocked = await requireLicenseForApi();
+  if (licenseBlocked) return licenseBlocked;
   const parsed = postSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "Agent 请求参数无效。" }, { status: 400 });
