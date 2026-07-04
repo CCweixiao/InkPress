@@ -1,11 +1,18 @@
+# 本地发布模式 docker-compose
+#
+# 与 CI/CD 模式不同：使用本地构建的镜像 inkpress-service:latest，
+# 而非 GHCR 拉取。
+#
+# 当前阶段（无 Caddy 反代）：端口直接绑公网，便于 http://<IP>:9527 验证。
+# 后续绑定域名 + Caddy 时，把 ports 改回 "127.0.0.1:9527:3000"。
 services:
   inkpress-service:
-    build: .
     image: inkpress-service:latest
+    container_name: inkpress-service
     ports:
-      - "3001:3000"
+      - "9527:3000"
     env_file:
-      - .env
+      - .env.production
     environment:
       - DATABASE_URL=file:/data/inkpress-service.db
       - NODE_ENV=production
