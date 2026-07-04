@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 interface AdminActionProps {
   label: string;
   href: string;
-  method?: "POST" | "PATCH";
+  method?: "POST" | "PATCH" | "DELETE";
   body?: unknown;
   confirmText?: string;
   variant?: React.ComponentProps<typeof Button>["variant"];

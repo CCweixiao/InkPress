@@ -106,9 +106,10 @@ model InvitationCode {
 // ===== License Key（Phase 2） =====
 model LicenseKey {
   id                 String             @id @default(cuid())
-  keyHash            String             @unique // peppered SHA-256，精确匹配；明文不入库
+  keyHash            String             @unique // peppered SHA-256，精确匹配
   keyFingerprint     String             @unique // 明文短指纹，用于日志/展示/排障
   displayKeySuffix   String // 仅末 4-6 位，避免列表泄露完整 key
+  keyCiphertext      String? // AES-256-GCM 加密后的明文 key，仅管理员输查看密码后解密展示
   durationKind       String // LicenseDurationKind: YEAR_1 | YEAR_3 | YEAR_5 | CUSTOM_YEARS | CUSTOM_DAYS | PERMANENT
   durationYears      Int?
   durationDays       Int?

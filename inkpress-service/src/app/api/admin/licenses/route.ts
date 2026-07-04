@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin-guard";
-import { createLicense, listLicenses } from "@/lib/license/admin-service";
-import { createLicenseSchema, paginationSchema } from "@/lib/validation/schemas";
+import { createLicensesBatch, listLicenses } from "@/lib/license/admin-service";
+import {
+  createLicenseSchema,
+  paginationSchema,
+  LicenseLifecycleSchema,
+} from "@/lib/validation/schemas";
 import { getClientIp, truncateUa } from "@/lib/http";
 import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
 import { AppError, ErrorCode } from "@/lib/errors";
@@ -19,7 +23,24 @@ export async function GET(req: NextRequest) {
     const status = params.get("status") ?? undefined;
     const search = params.get("search") ?? undefined;
     const batchNo = params.get("batchNo") ?? undefined;
-    const result = await listLicenses({ page, pageSize, status, search, batchNo });
+    const rawLifecycle = params.get("lifecycle") ?? undefined;
+    const lifecycleParse = rawLifecycle
+      ? LicenseLifecycleSchema.safeParse(rawLifecycle)
+      : undefined;
+    if (lifecycleParse && !lifecycleParse.success) {
+      return fail(ErrorCode.VALIDATION_ERROR, {
+        message: lifecycleParse.error.issues[0]?.message ?? "lifecycle 参数错误",
+        requestId,
+      });
+    }
+    const result = await listLicenses({
+      page,
+      pageSize,
+      status,
+      search,
+      batchNo,
+      lifecycle: lifecycleParse?.success ? lifecycleParse.data : undefined,
+    });
     return ok(result, { requestId });
   } catch (err) {
     return failFromError(err, requestId);
@@ -45,7 +66,7 @@ export async function POST(req: NextRequest) {
         requestId,
       });
     }
-    const result = await createLicense({
+    const result = await createLicensesBatch({
       input: parsed.data,
       createdByUserId: session.user.id,
       ip: getClientIp(req.headers),

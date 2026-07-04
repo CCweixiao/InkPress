@@ -69,6 +69,8 @@ export const LicenseDurationKindSchema = z.enum([
 export type LicenseDurationKind = z.infer<typeof LicenseDurationKindSchema>;
 
 export const LicenseKeyStatusSchema = z.enum(["ENABLED", "DISABLED", "REVOKED"]);
+export const LicenseLifecycleSchema = z.enum(["PENDING", "ACTIVATED", "EXPIRED"]);
+export type LicenseLifecycle = z.infer<typeof LicenseLifecycleSchema>;
 export const ActivationStatusSchema = z.enum(["ACTIVE", "DEACTIVATED", "REVOKED"]);
 export const LicenseApiActionSchema = z.enum(["ACTIVATE", "VALIDATE", "DEACTIVATE"]);
 export const LicenseApiResultSchema = z.enum([
@@ -88,6 +90,7 @@ export const createLicenseSchema = z
     inviterCode: z.string().trim().min(1).max(16).optional(),
     note: z.string().trim().max(500).optional(),
     batchNo: z.string().trim().max(64).optional(),
+    count: z.number().int().min(1).max(100).default(1),
   })
   .refine(
     (v) => v.durationKind !== "CUSTOM_YEARS" || (v.durationYears ?? 0) >= 1,
@@ -98,15 +101,19 @@ export const createLicenseSchema = z
     { message: "CUSTOM_DAYS 需提供 durationDays（≥1）", path: ["durationDays"] }
   );
 
-/** 更新 License 状态/备注 */
+/** 更新 License 状态/备注/续期 */
 export const updateLicenseSchema = z
   .object({
     status: LicenseKeyStatusSchema.optional(),
     note: z.string().trim().max(500).optional(),
+    extendDays: z.number().int().min(1).max(3650).optional(),
   })
-  .refine((v) => v.status !== undefined || v.note !== undefined, {
-    message: "至少提供 status 或 note 之一",
-  });
+  .refine(
+    (v) => v.status !== undefined || v.note !== undefined || v.extendDays !== undefined,
+    {
+      message: "至少提供 status、note 或 extendDays 之一",
+    }
+  );
 
 /** 管理员修改用户 */
 export const patchUserSchema = z

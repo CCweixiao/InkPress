@@ -2,8 +2,12 @@ import Link from "next/link";
 import { getLicenseDetail } from "@/lib/license/admin-service";
 import { durationLabel } from "@/lib/license/key";
 import { AdminAction } from "@/components/admin/admin-action";
+import { ExtendLicenseDialog } from "@/components/admin/extend-license-dialog";
+import { RevealLicenseKeyDialog } from "@/components/admin/reveal-license-key-dialog";
+import { DeleteLicenseDialog } from "@/components/admin/delete-license-dialog";
 import {
   LicenseStatusBadge,
+  LicenseLifecycleBadge,
   ActivationStatusBadge,
 } from "@/components/admin/status-badge";
 import { formatDate } from "@/lib/utils";
@@ -35,7 +39,10 @@ export default async function LicenseDetailPage({
       <section className="rounded-lg border p-5">
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-lg font-semibold">License 详情</h1>
-          <LicenseStatusBadge status={license.status} />
+          <div className="flex items-center gap-2">
+            <LicenseStatusBadge status={license.status} />
+            <LicenseLifecycleBadge lifecycle={license.lifecycle} />
+          </div>
         </div>
         <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm md:grid-cols-3">
           <Field label="指纹" value={<code className="font-mono">{license.keyFingerprint}</code>} />
@@ -43,6 +50,7 @@ export default async function LicenseDetailPage({
           <Field label="有效期模板" value={durationLabel(license.durationKind, license.durationYears, license.durationDays)} />
           <Field label="设备上限" value={String(license.maxDevices)} />
           <Field label="活跃设备" value={`${activeDevices}`} />
+          <Field label="激活状态" value={<LicenseLifecycleBadge lifecycle={license.lifecycle} />} />
           <Field label="实际到期" value={expiresLabel(license.effectiveExpiresAt, license.durationKind)} />
           <Field label="归因邀请码" value={license.inviterCode ?? "—"} />
           <Field label="批次号" value={license.batchNo ?? "—"} />
@@ -58,8 +66,13 @@ export default async function LicenseDetailPage({
           </div>
         )}
 
-        {license.status !== "REVOKED" && (
-          <div className="mt-5 flex gap-2">
+        <div className="mt-5 flex gap-2">
+          <RevealLicenseKeyDialog
+            licenseId={id}
+            disabled={!license.hasStoredKey}
+          />
+          {license.status !== "REVOKED" && (
+            <>
             {license.status === "ENABLED" && (
               <AdminAction
                 label="禁用"
@@ -84,8 +97,26 @@ export default async function LicenseDetailPage({
               confirmText="撤销不可恢复，确认继续？"
               variant="destructive"
             />
-          </div>
-        )}
+            {license.status === "ENABLED" &&
+              license.durationKind !== "PERMANENT" &&
+              license.firstActivatedAt && (
+                <ExtendLicenseDialog
+                  licenseId={id}
+                  currentExpiresAt={license.effectiveExpiresAt}
+                />
+              )}
+            </>
+          )}
+          {(license.lifecycle === "PENDING" ||
+            license.lifecycle === "EXPIRED") && (
+            <DeleteLicenseDialog
+              licenseId={id}
+              keyFingerprint={license.keyFingerprint}
+              displayKeySuffix={license.displayKeySuffix}
+              lifecycle={license.lifecycle}
+            />
+          )}
+        </div>
       </section>
 
       <section>

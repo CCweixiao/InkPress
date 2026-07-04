@@ -20,6 +20,17 @@ const USER: Record<string, [Variant, string]> = {
   DELETED: ["destructive", "已删除"],
 };
 
+/**
+ * License 激活生命周期（PENDING/ACTIVATED/EXPIRED）。
+ * 与 LicenseStatusBadge（管理态 ENABLED/DISABLED/REVOKED）正交，
+ * 命名独立以避免与 ActivationStatusBadge（设备激活态 ACTIVE/DEACTIVATED/REVOKED）混淆。
+ */
+const LICENSE_LIFECYCLE: Record<string, [Variant, string]> = {
+  PENDING: ["secondary", "待激活"],
+  ACTIVATED: ["success", "已激活"],
+  EXPIRED: ["warning", "已过期"],
+};
+
 export function LicenseStatusBadge({ status }: { status: string }) {
   const [v, l] = LICENSE[status] ?? (["secondary", status] as [Variant, string]);
   return <Badge variant={v}>{l}</Badge>;
@@ -32,5 +43,11 @@ export function ActivationStatusBadge({ status }: { status: string }) {
 
 export function UserStatusBadge({ status }: { status: string }) {
   const [v, l] = USER[status] ?? (["secondary", status] as [Variant, string]);
+  return <Badge variant={v}>{l}</Badge>;
+}
+
+export function LicenseLifecycleBadge({ lifecycle }: { lifecycle: string }) {
+  const [v, l] = LICENSE_LIFECYCLE[lifecycle] ??
+    (["secondary", lifecycle] as [Variant, string]);
   return <Badge variant={v}>{l}</Badge>;
 }
