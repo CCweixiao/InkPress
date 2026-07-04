@@ -27,6 +27,7 @@ const eslintConfig = defineConfig([
     "themes/**",
     "resources/**",
     "docs/**",
+    "inkpress-service/**",
     "**/*.config.{js,mjs,ts}",
   ]),
 
