@@ -94,18 +94,16 @@ fi
 SQLITE_VER=$(sqlite3 --version 2>&1 | head -1)
 echo "    ✅ sqlite3: $SQLITE_VER"
 
-# ossutil（阿里云 OSS CLI，单二进制）
+# ossutil v1（阿里云 OSS CLI，单二进制；v2 是 zip 包且语法不同，暂用 v1.7.13）
 OSSUTIL=/usr/local/bin/ossutil
 if [ ! -x "$OSSUTIL" ]; then
-  echo "    安装 ossutil v1.7.19..."
+  echo "    安装 ossutil v1.7.13..."
   curl -fsSL -o /tmp/ossutil64 \
-    "https://gosspublic.alicdn.com/ossutil/v1/1.7.19/ossutil64" \
-    || curl -fsSL -o /tmp/ossutil64 \
-    "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil64"
+    "https://gosspublic.alicdn.com/ossutil/1.7.13/ossutil64"
   install -m 755 /tmp/ossutil64 "$OSSUTIL"
   rm -f /tmp/ossutil64
 fi
-OSSUTIL_VER=$("$OSSUTIL" version 2>&1 | head -1)
+OSSUTIL_VER=$("$OSSUTIL" --version 2>&1 | head -1)
 echo "    ✅ ossutil: $OSSUTIL_VER"
 INSTALL_DEPS
 

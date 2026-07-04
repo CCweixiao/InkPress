@@ -85,7 +85,7 @@ log "  ✓ 压缩完成（$ARCHIVE_SIZE）"
 OSS_PATH="oss://$OSS_BUCKET/$OSS_PREFIX/$BACKUP_NAME.tar.gz"
 log ">>> 上传到 $OSS_PATH"
 if ! "$OSSUTIL" cp "$ARCHIVE" "$OSS_PATH" \
-    -e "$OSS_ENDPOINT" --retry-timeout 60 >>"$LOG_FILE" 2>&1; then
+    -e "$OSS_ENDPOINT" >>"$LOG_FILE" 2>&1; then
   log "✗ OSS 上传失败（endpoint=$OSS_ENDPOINT）"
   rm -f "$ARCHIVE"
   exit 1
