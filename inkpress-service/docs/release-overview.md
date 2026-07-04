@@ -214,6 +214,7 @@ pnpm gen-token-key
 | `server-purchasing-guide.md` | VPS 选购指南：供应商对比、CN2 GIA/CMIN2 线路、支付宝支付 |
 | `domain-and-dns-guide.md` | 域名注册与 DNS：海外注册商、TLD 选择、Cloudflare DNS 配置 |
 | `wechat-scan-login-design.md` | 微信扫码关注公众号登录：技术设计（待实施，需认证服务号） |
+| `alipay-payment-design.md` | 支付宝当面付接入：套餐下单 → 扫码支付 → License 自动发放（待实施） |
 
 ---
 
