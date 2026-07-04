@@ -5,7 +5,7 @@ import { ResendMailAdapter } from "./resend";
 import type { MailAdapter, MailMessage } from "./types";
 
 export type { MailAdapter, MailMessage } from "./types";
-export { renderRegisterCodeEmail } from "./template";
+export { renderRegisterCodeEmail, renderResetPasswordEmail } from "./template";
 
 const log = moduleLogger("mail");
 

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { moduleLogger } from "@/lib/logger";
-import { sendMail, renderRegisterCodeEmail } from "@/lib/email";
+import { sendMail, renderRegisterCodeEmail, renderResetPasswordEmail } from "@/lib/email";
 import { generateNumericCode, sha256Hex, safeEqual } from "@/lib/security/random";
 import { AppError, ErrorCode } from "@/lib/errors";
 import type { EmailCodePurpose } from "@/lib/validation/schemas";
@@ -43,11 +43,14 @@ export async function issueEmailCode(input: SendCodeInput): Promise<void> {
     },
   });
 
-  // Phase 1 仅 REGISTER 有模板；其他用途预留
-  if (purpose !== "REGISTER") {
+  // 按用途选择模板；CHANGE_EMAIL 等其他用途后续扩展
+  if (purpose === "REGISTER") {
+    await sendMail(renderRegisterCodeEmail(email, code, CODE_TTL_MS / 60_000));
+  } else if (purpose === "RESET_PASSWORD") {
+    await sendMail(renderResetPasswordEmail(email, code, CODE_TTL_MS / 60_000));
+  } else {
     throw new AppError(ErrorCode.VALIDATION_ERROR, "暂不支持的验证码用途");
   }
-  await sendMail(renderRegisterCodeEmail(email, code, CODE_TTL_MS / 60_000));
   log.info({ email, purpose }, "验证码已发送");
 }
 
