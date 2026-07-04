@@ -19,6 +19,7 @@ next-env.d.ts
 .env
 .env.local
 .env.*.local
+.env.production
 
 # data
 /data
@@ -33,6 +34,9 @@ dev.db
 
 # os
 .DS_Store
+
+# ssh keys
+*.pem
 
 # editor
 .vscode/
