@@ -10,9 +10,11 @@ dev.db-journal
 .env
 .env.local
 .env.*.local
+.env.production
 README.md
 docs
 .vscode
 .idea
 .DS_Store
 src/generated
+*.pem
