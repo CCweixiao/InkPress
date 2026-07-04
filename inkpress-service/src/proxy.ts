@@ -28,13 +28,15 @@ function createNonce(): string {
 function buildCsp(nonce: string): string {
   const devScript = process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : "";
   const devConnect = process.env.NODE_ENV !== "production" ? " ws: wss:" : "";
+  // OSS 私有 Bucket 签名 URL（工单图片渲染需要）
+  const ossImgSrc = buildOssImgSrc();
   return [
     "default-src 'self'",
     // 'strict-dynamic' 允许带 nonce 的脚本动态加载子资源（Next.js chunk loading 必需）
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${devScript}`,
     "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    `img-src 'self' data:${ossImgSrc}`,
     "font-src 'self'",
     `connect-src 'self'${devConnect}`,
     "object-src 'none'",
@@ -43,6 +45,16 @@ function buildCsp(nonce: string): string {
     "base-uri 'self'",
     "form-action 'self'",
   ].join("; ");
+}
+
+/** 从 OSS_PUBLISH_REGION/BUCKET 构造 img-src 白名单条目 */
+function buildOssImgSrc(): string {
+  const regionRaw = process.env.OSS_PUBLISH_REGION?.trim();
+  const bucket = process.env.OSS_PUBLISH_BUCKET?.trim();
+  if (!regionRaw || !bucket) return "";
+  let r = regionRaw.replace(/^oss-/, "");
+  if (!r.includes("-")) r = `cn-${r}`;
+  return ` https://${bucket}.oss-${r}.aliyuncs.com`;
 }
 
 export default auth((req) => {

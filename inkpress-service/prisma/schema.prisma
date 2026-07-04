@@ -28,6 +28,7 @@ model User {
   accounts           Account[]
   sessions           Session[]
   orders             Order[]
+  tickets            Ticket[]
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -257,4 +258,36 @@ model Order {
   @@index([userId, status])
   @@index([status, createdAt])
   @@index([outTradeNo])
+}
+
+// ===== 工单系统 =====
+model Ticket {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String // TicketType: PAYMENT | LICENSE | ACCOUNT | USAGE | HELP | BUG | FEATURE | OTHER
+  subject     String // 4-80 字
+  description String // ≤5000 字
+  status      String         @default("OPEN") // TicketStatus: OPEN | ANSWERED | RESOLVED | CLOSED
+  priority    String         @default("NORMAL") // TicketPriority: LOW | NORMAL | HIGH
+  attachments String         @default("[]") // JSON: [{key,name,size,contentType}]
+  replies     TicketReply[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model TicketReply {
+  id          String   @id @default(cuid())
+  ticketId    String
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId    String // 发布者 userId（用户本人或管理员）
+  authorRole  String // USER | ADMIN
+  content     String // ≤5000 字
+  attachments String   @default("[]") // JSON: [{key,name,size,contentType}]
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId, createdAt])
 }

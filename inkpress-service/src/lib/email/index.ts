@@ -6,6 +6,13 @@ import type { MailAdapter, MailMessage } from "./types";
 
 export type { MailAdapter, MailMessage } from "./types";
 export { renderRegisterCodeEmail, renderResetPasswordEmail } from "./template";
+export {
+  renderNewTicketAdminEmail,
+  renderTicketRepliedUserEmail,
+  renderTicketRepliedAdminEmail,
+  renderTicketClosedUserEmail,
+} from "./templates/ticket-emails";
+export type { TicketEmailData, TicketReplyEmailData } from "./templates/ticket-emails";
 
 const log = moduleLogger("mail");
 

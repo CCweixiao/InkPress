@@ -1,6 +1,23 @@
 import { auth } from "@/auth";
 import { listPublicPlans } from "@/lib/plan/plan-service";
 import { HomePage } from "@/components/home/home-page";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "InkPress · AI 公众号写作排版、Markdown 编辑与 License 授权",
+  description:
+    "InkPress 为公众号创作者和内容团队提供 AI 写作、Markdown 排版、素材管理、草稿发布、订阅购买和 License 授权管理。",
+  keywords: [
+    "公众号写作工具",
+    "公众号排版",
+    "AI 写作",
+    "Markdown 排版",
+    "微信图文编辑器",
+    "InkPress License",
+    "内容创作者工具",
+  ],
+  alternates: { canonical: "/" },
+};
 
 /**
  * 首页：公开访问，无需登录。

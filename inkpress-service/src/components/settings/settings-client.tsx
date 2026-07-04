@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { ServiceHeader } from "@/components/navigation/service-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,36 +26,21 @@ export function SettingsClient({ user }: { user: SettingsUser }) {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-3">
-            <span className="text-base font-semibold">InkPress</span>
-            <Badge variant={user.role === "ADMIN" ? "default" : "secondary"}>
-              {user.role === "ADMIN" ? "管理员" : "用户"}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <span>{user.email}</span>
-            <Link href="/dashboard" className="text-primary hover:underline">
-              仪表盘
-            </Link>
-            {user.role === "ADMIN" && (
-              <Link href="/admin" className="text-primary hover:underline">
-                管理后台
-              </Link>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => signOut({ callbackUrl: "/login" })}
-            >
-              退出
-            </Button>
-          </div>
-        </div>
-      </header>
+      <ServiceHeader isLoggedIn email={user.email} role={user.role} />
 
       <main className="mx-auto max-w-4xl space-y-6 px-6 py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold">个人设置</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              管理账号资料与密码安全。
+            </p>
+          </div>
+          <Badge variant={user.role === "ADMIN" ? "default" : "secondary"}>
+            {user.role === "ADMIN" ? "管理员" : "用户"}
+          </Badge>
+        </div>
+
         {user.mustChangePassword && (
           <div className="rounded-md border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
             当前使用初始密码，建议尽快修改。

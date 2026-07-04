@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { ServiceHeader } from "@/components/navigation/service-header";
 import { OrderStatusBadge } from "@/components/payment/order-status-badge";
 import { formatDate } from "@/lib/utils";
 import { formatYuan as durationYuan } from "@/lib/payment/format";
@@ -51,21 +52,19 @@ export default async function MyOrdersPage({
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/dashboard"
-              className="text-sm text-muted-foreground hover:underline"
-            >
-              ← Dashboard
-            </Link>
-            <span className="text-base font-semibold">我的订单</span>
-          </div>
-        </div>
-      </header>
+      <ServiceHeader
+        isLoggedIn
+        email={session.user.email ?? null}
+        role={session.user.role ?? null}
+      />
 
       <main className="mx-auto max-w-4xl space-y-4 px-6 py-8">
+        <div>
+          <h1 className="text-2xl font-bold">我的订单</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            查看套餐、支付状态、订单号和 License 归属。
+          </p>
+        </div>
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
