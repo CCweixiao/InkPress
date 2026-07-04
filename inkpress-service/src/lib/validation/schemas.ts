@@ -268,6 +268,21 @@ export const signedHeadersSchema = z.object({
   signature: z.string().regex(/^[0-9a-fA-F]{8,256}$/, "签名格式错误"),
 });
 
+// ===== 试用登记（Phase 3.5） =====
+
+/** 试用登记请求：设备指纹 + 应用元信息（与 activate 同级威胁模型，无共享密钥） */
+export const trialRegisterSchema = z.object({
+  device: deviceSchema,
+  app: appMetaSchema,
+});
+export type TrialRegisterInput = z.infer<typeof trialRegisterSchema>;
+
+/** 试用状态探测请求：仅 deviceIdHash（轻量，每小时一次） */
+export const trialStatusSchema = z.object({
+  deviceIdHash: fingerprintHashSchema,
+});
+export type TrialStatusInput = z.infer<typeof trialStatusSchema>;
+
 // ===== 订单 / 支付 =====
 export const OrderStatusSchema = z.enum(["PENDING", "PAID", "CLOSED", "REFUNDED"]);
 export type OrderStatus = z.infer<typeof OrderStatusSchema>;

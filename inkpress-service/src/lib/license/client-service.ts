@@ -320,6 +320,7 @@ type ValidateStatus =
 export interface ValidateResult {
   status: ValidateStatus;
   effectiveExpiresAt: string | null;
+  activatedAt?: string;
   licenseToken?: string;
   nextCheckAt?: string;
   offlineGraceSeconds?: number;
@@ -327,7 +328,7 @@ export interface ValidateResult {
   message?: string;
 }
 
-const OFFLINE_GRACE_SECONDS = 72 * 60 * 60;
+const OFFLINE_GRACE_SECONDS = 30 * 24 * 60 * 60; // 30 天滚动宽限
 
 /** 校验激活状态：业务态以 200+status 返回（不抛），仅 ACTIVE 刷新并重签 token。 */
 export async function validateLicense(opts: {
@@ -430,6 +431,7 @@ export async function validateLicense(opts: {
         effectiveExpiresAt: license.effectiveExpiresAt
           ? license.effectiveExpiresAt.toISOString()
           : null,
+        activatedAt: activation.activatedAt.toISOString(),
         licenseToken,
         nextCheckAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
         offlineGraceSeconds: OFFLINE_GRACE_SECONDS,

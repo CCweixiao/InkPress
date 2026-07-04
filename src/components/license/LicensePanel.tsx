@@ -1,50 +1,57 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, KeyRound, RefreshCw, ShieldAlert, Unlink } from "lucide-react";
+import { CheckCircle2, ExternalLink, KeyRound, RefreshCw, ShieldAlert, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-type Status = {
-  required: boolean;
-  allowed: boolean;
-  mode: "active" | "offline-grace" | "inactive" | "invalid" | "not-required";
-  defaultServiceBaseUrl?: string;
-  message?: string;
-  state: null | {
-    serviceBaseUrl: string;
-    licenseFingerprint: string;
-    status: string;
-    effectiveExpiresAt: string | null;
-    maxDevices: number;
-    activatedDevices?: number;
-    lastValidatedAt: string;
-    offlineGraceExpiresAt: string;
-  };
-};
+import { getPurchaseLinks, useLicenseStatus, type LicenseStatus } from "@/components/license/LicenseStatusSync";
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "永久";
   return new Date(value).toLocaleString();
 }
 
+function formatRemainingDays(expiresAt: string | null | undefined): string {
+  if (!expiresAt) return "永久";
+  const remainingMs = new Date(expiresAt).getTime() - Date.now();
+  if (remainingMs <= 0) return "已过期";
+  const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+  return `剩余 ${days} 天`;
+}
+
+function formatTrialRemaining(remainingMs: number | undefined): string {
+  if (remainingMs === undefined || remainingMs <= 0) return "已结束";
+  const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+  const hours = Math.ceil(remainingMs / (60 * 60 * 1000));
+  if (days >= 1) return `剩余 ${days} 天`;
+  return `剩余 ${hours} 小时`;
+}
+
 export function LicensePanel() {
-  const [status, setStatus] = useState<Status | null>(null);
+  const { status: syncedStatus, refresh } = useLicenseStatus();
+  const [status, setStatus] = useState<LicenseStatus | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
   const [serviceBaseUrl, setServiceBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const purchaseLinks = getPurchaseLinks();
+
+  // 优先用全局同步状态，回退到本地加载
+  useEffect(() => {
+    if (syncedStatus) {
+      setStatus(syncedStatus);
+      setServiceBaseUrl((current) => current || syncedStatus.state?.serviceBaseUrl || syncedStatus.defaultServiceBaseUrl || "");
+    }
+  }, [syncedStatus]);
 
   async function load() {
-    const res = await fetch("/api/license/status", { cache: "no-store" });
-    const data = (await res.json()) as Status;
-    setStatus(data);
-    setServiceBaseUrl((current) => current || data.state?.serviceBaseUrl || data.defaultServiceBaseUrl || "");
+    await refresh();
   }
 
   useEffect(() => {
-    void load();
+    if (!status) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function activate(e: React.FormEvent) {
@@ -63,7 +70,8 @@ export function LicensePanel() {
         return;
       }
       setLicenseKey("");
-      setStatus(data as Status);
+      setStatus(data as LicenseStatus);
+      await refresh();
     } catch {
       setError("网络错误，激活失败");
     } finally {
@@ -71,14 +79,15 @@ export function LicensePanel() {
     }
   }
 
-  async function refresh() {
+  async function manualRefresh() {
     setBusy(true);
     setError(null);
     try {
       const res = await fetch("/api/license/validate", { method: "POST" });
       const data = await res.json();
       if (!res.ok) setError(data.message ?? data.error ?? "License 校验失败");
-      setStatus(data as Status);
+      setStatus(data as LicenseStatus);
+      await refresh();
     } catch {
       setError("网络错误，刷新失败");
     } finally {
@@ -97,7 +106,8 @@ export function LicensePanel() {
         setError(data.error ?? "释放失败");
         return;
       }
-      setStatus(data as Status);
+      setStatus(data as LicenseStatus);
+      await refresh();
     } catch {
       setError("网络错误，释放失败");
     } finally {
@@ -106,6 +116,7 @@ export function LicensePanel() {
   }
 
   const active = status?.allowed;
+  const isTrial = status?.mode === "trial";
 
   return (
     <div className="space-y-5">
@@ -117,36 +128,66 @@ export function LicensePanel() {
             <ShieldAlert className="h-5 w-5 text-amber-600" />
           )}
           <div className="font-medium">
-            {active ? "License 已生效" : "License 未生效"}
+            {active
+              ? isTrial
+                ? "试用中"
+                : "License 已生效"
+              : "License 未生效"}
           </div>
         </div>
         <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
           <Info label="运行模式" value={status?.mode ?? "加载中"} />
-          <Info label="服务端判定" value={status?.state?.status ?? "—"} />
-          <Info label="License 指纹" value={status?.state?.licenseFingerprint ?? "—"} />
-          <Info label="实际到期" value={formatDate(status?.state?.effectiveExpiresAt)} />
-          <Info
-            label="设备占用"
-            value={
-              status?.state
-                ? `${status.state.activatedDevices ?? "—"} / ${status.state.maxDevices}`
-                : "—"
-            }
-          />
-          <Info label="最近校验" value={status?.state ? formatDate(status.state.lastValidatedAt) : "—"} />
-          <Info label="离线宽限至" value={status?.state ? formatDate(status.state.offlineGraceExpiresAt) : "—"} />
+          <Info label="服务端判定" value={status?.state?.status ?? (isTrial ? "TRIAL" : "—")} />
+          {!isTrial && <Info label="License 指纹" value={status?.state?.licenseFingerprint ?? "—"} />}
+          {!isTrial && <Info label="激活时间" value={status?.state?.activatedAt ? formatDate(status.state.activatedAt) : "—"} />}
+          {!isTrial && (
+            <Info
+              label="剩余天数"
+              value={status?.state ? formatRemainingDays(status.state.effectiveExpiresAt) : "—"}
+            />
+          )}
+          {!isTrial && <Info label="实际到期" value={formatDate(status?.state?.effectiveExpiresAt)} />}
+          {isTrial && (
+            <Info
+              label="试用剩余"
+              value={formatTrialRemaining(status?.trial?.remainingMs)}
+            />
+          )}
+          {isTrial && <Info label="试用到期" value={formatDate(status?.trial?.trialExpiresAt)} />}
+          {!isTrial && (
+            <Info
+              label="设备占用"
+              value={
+                status?.state
+                  ? `${status.state.activatedDevices ?? "—"} / ${status.state.maxDevices}`
+                  : "—"
+              }
+            />
+          )}
+          {!isTrial && <Info label="最近校验" value={status?.state ? formatDate(status.state.lastValidatedAt) : "—"} />}
+          {!isTrial && <Info label="离线宽限至" value={status?.state ? formatDate(status.state.offlineGraceExpiresAt) : "—"} />}
           <Info label="服务地址" value={(status?.state?.serviceBaseUrl ?? serviceBaseUrl) || "—"} />
         </div>
         {status?.message && <p className="mt-3 text-sm text-muted-foreground">{status.message}</p>}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-        <div className="mt-4 flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy || !status?.state}>
-            <RefreshCw className="h-4 w-4" />
-            手动刷新
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void deactivate()} disabled={busy || !status?.state}>
-            <Unlink className="h-4 w-4" />
-            释放本机
+        <div className="mt-4 flex flex-wrap gap-2">
+          {!isTrial && (
+            <Button variant="outline" size="sm" onClick={() => void manualRefresh()} disabled={busy || !status?.state}>
+              <RefreshCw className="h-4 w-4" />
+              手动刷新
+            </Button>
+          )}
+          {!isTrial && (
+            <Button variant="outline" size="sm" onClick={() => void deactivate()} disabled={busy || !status?.state}>
+              <Unlink className="h-4 w-4" />
+              释放本机
+            </Button>
+          )}
+          <Button variant="outline" size="sm" asChild>
+            <a href={purchaseLinks.primary} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              前往购买 Key
+            </a>
           </Button>
         </div>
       </div>
@@ -173,7 +214,7 @@ export function LicensePanel() {
               id="license-service"
               value={serviceBaseUrl}
               onChange={(e) => setServiceBaseUrl(e.target.value)}
-              placeholder="https://license.example.com"
+              placeholder="https://www.longoflow.com"
             />
           </div>
         </div>

@@ -191,6 +191,29 @@ model LicenseValidationLog {
   @@index([action, result, createdAt])
 }
 
+// ===== 设备试用登记（7 天免费试用，服务端权威） =====
+model DeviceTrial {
+  id             String   @id @default(cuid())
+  deviceIdHash   String   @unique
+  machineIdHash  String?
+  macHash        String?
+  hostnameHash   String?
+  os             String?
+  arch           String?
+  appVersion     String?
+  trialStartedAt DateTime // 服务端权威试用起点
+  trialExpiresAt DateTime // = trialStartedAt + 7d
+  status         String   @default("TRIAL") // TrialStatus: TRIAL | EXPIRED | CONVERTED
+  ipFirst        String?
+  ipLast         String?
+  userAgentLast  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status])
+  @@index([trialExpiresAt])
+}
+
 // ===== 审计日志（管理变更） =====
 model AuditLog {
   id          String   @id @default(cuid())
