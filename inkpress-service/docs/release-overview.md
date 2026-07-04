@@ -117,6 +117,33 @@ ssh -i inkpress-service.pem root@<IP> \
 
 详细见 `local-release-guide.md` §6。
 
+### 2.5 运维加固（自动化备份）
+
+```bash
+bash scripts/setup-ops.sh
+```
+
+一次性配置，自动完成：
+
+| 项目 | 说明 |
+|---|---|
+| SQLite 在线备份 | 每天 00:00，`sqlite3 .backup`（不锁库、不停服） |
+| OSS 上传 | gzip 压缩后传到 `oss://<bucket>/inkpress-service/backups/` |
+| 保留策略 | 本地 7 份 + OSS 7 天，过期自动清理 |
+| Docker 日志轮转 | 单文件 50MB / 最多 3 份（docker-compose.yml logging 块） |
+| 备份日志 | `/var/log/inkpress-backup.log` |
+
+前置条件：`.env.production` 已配置 `OSS_PUBLISH_*`（Region / Bucket / AccessKey）。OSS 凭证建议用仅具备该 Bucket 读写权限的 RAM 子账号。
+
+手动触发备份或查看日志：
+
+```bash
+ssh -i inkpress-service.pem root@<IP> \
+  '/opt/inkpress-service/backup-to-oss.sh'
+ssh -i inkpress-service.pem root@<IP> \
+  'tail -50 /var/log/inkpress-backup.log'
+```
+
 ---
 
 ## 3. 密钥管理清单（最重要）
@@ -205,9 +232,13 @@ inkpress-service/
 ├── scripts/
 │   ├── init-server.sh            服务器首次初始化
 │   ├── release-local.sh          本地发布主入口（5 阶段）
+│   ├── setup-https.sh            Caddy + Let's Encrypt HTTPS 配置
+│   ├── setup-ops.sh              运维加固（OSS 备份 + cron + 日志轮转）
+│   ├── backup-to-oss.sh          备份脚本（部署到服务器，由 cron 调用）
 │   ├── gen-token-key.ts          生成 Ed25519 密钥对
 │   ├── init-admin.ts             幂等初始化管理员
-│   └── backup-db.ts              SQLite 在线备份
+│   ├── backup-db.ts              SQLite 在线备份（本地，pnpm db:backup）
+│   └── test-email.ts             邮件配置测试
 └── docs/
     ├── release-overview.md       ← 本文
     ├── local-release-guide.md
