@@ -1,8 +1,12 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin-guard";
 import { revokeActivation } from "@/lib/license/admin-service";
-import { getClientIp, truncateUa } from "@/lib/http";
-import { ok, failFromError, getRequestId } from "@/lib/api-response";
+import { checkRateLimits, type RateLimitRule } from "@/lib/rate-limit";
+import { getClientIp, readOptionalJsonBody, truncateUa } from "@/lib/http";
+import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
+import { ErrorCode } from "@/lib/errors";
+
+const ADMIN_WRITE_RULE = { windowSec: 60, max: 60 } as RateLimitRule;
 
 /**
  * POST /api/admin/licenses/:id/activations/:activationId/revoke
@@ -17,20 +21,33 @@ export async function POST(
   }
 ) {
   const requestId = getRequestId(req.headers);
+  const ip = getClientIp(req.headers);
   try {
     const session = await requireAdmin();
-    const { id, activationId } = await params;
-    let reason: string | undefined;
-    try {
-      const body = await req.json();
-      reason =
-        typeof body?.reason === "string" ? body.reason.slice(0, 200) : undefined;
-    } catch {
-      /* 允许空 body */
+    const decision = checkRateLimits([
+      { key: `admin:activation-revoke:ip:1m:${ip}`, rule: ADMIN_WRITE_RULE },
+    ]);
+    if (!decision.allowed) {
+      return fail(ErrorCode.RATE_LIMITED, {
+        message: `请求过于频繁，请 ${decision.retryAfterSec}s 后重试`,
+        requestId,
+        headers: { "Retry-After": String(decision.retryAfterSec) },
+      });
     }
+
+    const { id, activationId } = await params;
+    const body = await readOptionalJsonBody(req, { limitBytes: 8 * 1024 });
+    const bodyObj =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? (body as { reason?: unknown })
+        : undefined;
+    const reason =
+      typeof bodyObj?.reason === "string"
+        ? bodyObj.reason.slice(0, 200)
+        : undefined;
     const result = await revokeActivation(id, activationId, reason, {
       id: session.user.id,
-      ip: getClientIp(req.headers),
+      ip,
       ua: truncateUa(req.headers.get("user-agent")),
     });
     return ok(result, { requestId });
@@ -38,4 +55,3 @@ export async function POST(
     return failFromError(err, requestId);
   }
 }
-

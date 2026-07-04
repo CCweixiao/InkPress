@@ -52,6 +52,7 @@ export default async function LicenseDetailPage({
           <Field label="活跃设备" value={`${activeDevices}`} />
           <Field label="激活状态" value={<LicenseLifecycleBadge lifecycle={license.lifecycle} />} />
           <Field label="实际到期" value={expiresLabel(license.effectiveExpiresAt, license.durationKind)} />
+          <Field label="归属用户" value={license.ownerEmail ?? "—"} />
           <Field label="归因邀请码" value={license.inviterCode ?? "—"} />
           <Field label="批次号" value={license.batchNo ?? "—"} />
           <Field label="首次激活" value={license.firstActivatedAt ? formatDate(license.firstActivatedAt) : "—"} />

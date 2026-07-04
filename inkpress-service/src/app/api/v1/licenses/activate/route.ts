@@ -4,7 +4,7 @@ import { activateLicense } from "@/lib/license/client-service";
 import { writeValidationLog } from "@/lib/license/validation-log";
 import { checkRateLimits } from "@/lib/rate-limit";
 import { isIpBlocked, recordSignal } from "@/lib/risk/anomaly";
-import { getClientIp, truncateUa } from "@/lib/http";
+import { getClientIp, readJsonBody, truncateUa } from "@/lib/http";
 import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
 import { AppError, ErrorCode } from "@/lib/errors";
 import type { RateLimitRule } from "@/lib/rate-limit";
@@ -59,9 +59,9 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return fail(ErrorCode.VALIDATION_ERROR, { message: "请求体非法", requestId });
+    body = await readJsonBody(req, { limitBytes: 32 * 1024 });
+  } catch (err) {
+    return failFromError(err, requestId);
   }
   const parsed = activateLicenseSchema.safeParse(body);
   if (!parsed.success) {
