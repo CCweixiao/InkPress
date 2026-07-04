@@ -35,14 +35,13 @@ export const sendEmailCodeSchema = z.object({
   purpose: EmailCodePurposeSchema.default("REGISTER"),
 });
 
-/** 注册：邮箱 + 密码 + 6 位验证码 */
+/** 注册：邮箱 + 密码 + 6 位验证码（从简设计，不采集昵称） */
 export const registerSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
   code: z
     .string()
     .regex(/^\d{6}$/, "验证码为 6 位数字"),
-  name: z.string().trim().max(64).optional(),
 });
 
 /** 登录（Credentials，提交给 NextAuth 的 credentials 形态较松，这里用于直接登录态校验） */
@@ -54,6 +53,13 @@ export const loginSchema = z.object({
 /** 修改密码 */
 export const changePasswordSchema = z.object({
   oldPassword: z.string().min(1).max(128),
+  newPassword: passwordSchema,
+});
+
+/** 找回密码：邮箱 + 验证码 + 新密码 */
+export const resetPasswordSchema = z.object({
+  email: emailSchema,
+  code: z.string().regex(/^\d{6}$/, "验证码为 6 位数字"),
   newPassword: passwordSchema,
 });
 
@@ -87,6 +93,7 @@ export const createLicenseSchema = z
     durationYears: z.number().int().min(1).max(100).optional(),
     durationDays: z.number().int().min(1).max(36500).optional(),
     maxDevices: z.number().int().min(1).max(100),
+    ownerEmail: emailSchema,
     inviterCode: z.string().trim().min(1).max(16).optional(),
     note: z.string().trim().max(500).optional(),
     batchNo: z.string().trim().max(64).optional(),
@@ -130,6 +137,71 @@ export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+// ===== 订阅计划 =====
+export const PlanDurationKindSchema = z.enum([
+  "YEAR_1",
+  "YEAR_3",
+  "YEAR_5",
+  "PERMANENT",
+]);
+export type PlanDurationKind = z.infer<typeof PlanDurationKindSchema>;
+
+export const PlanHighlightSchema = z.enum(["popular", "best_value"]);
+export const PlanStatusSchema = z.enum(["ACTIVE", "INACTIVE"]);
+
+/** 价格（分）：1 分 ~ 1000 万元 */
+const priceCentsField = z.number().int().min(1).max(1_000_000_00);
+
+/** 创建订阅计划 */
+export const createPlanSchema = z
+  .object({
+    slug: z
+      .string()
+      .trim()
+      .min(2)
+      .max(32)
+      .regex(/^[a-z0-9][a-z0-9_]*$/, "slug 只能包含小写字母、数字、下划线"),
+    name: z.string().trim().min(1).max(64),
+    tagline: z.string().trim().max(100).optional(),
+    durationKind: PlanDurationKindSchema,
+    durationYears: z.number().int().min(1).max(100).optional(),
+    maxDevices: z.number().int().min(1).max(100),
+    priceCents: priceCentsField,
+    discountPriceCents: priceCentsField.nullable().optional(),
+    features: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    highlight: PlanHighlightSchema.nullable().optional(),
+    sortOrder: z.number().int().min(0).max(9999).default(0),
+    status: PlanStatusSchema.default("ACTIVE"),
+  })
+  .refine((v) => v.discountPriceCents === null || v.discountPriceCents === undefined || v.discountPriceCents < v.priceCents, {
+    message: "折扣价必须低于原价",
+    path: ["discountPriceCents"],
+  });
+
+/** 更新订阅计划（全量替换式 PATCH，字段全部可选） */
+export const updatePlanSchema = z
+  .object({
+    name: z.string().trim().min(1).max(64).optional(),
+    tagline: z.string().trim().max(100).nullable().optional(),
+    durationKind: PlanDurationKindSchema.optional(),
+    durationYears: z.number().int().min(1).max(100).nullable().optional(),
+    maxDevices: z.number().int().min(1).max(100).optional(),
+    priceCents: priceCentsField.optional(),
+    discountPriceCents: priceCentsField.nullable().optional(),
+    features: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+    highlight: PlanHighlightSchema.nullable().optional(),
+    sortOrder: z.number().int().min(0).max(9999).optional(),
+    status: PlanStatusSchema.optional(),
+  })
+  .refine(
+    (v) =>
+      v.discountPriceCents === null ||
+      v.discountPriceCents === undefined ||
+      v.priceCents === undefined ||
+      v.discountPriceCents < v.priceCents,
+    { message: "折扣价必须低于原价", path: ["discountPriceCents"] }
+  );
 
 // ===== License 客户端 API（Phase 3，PDC §7） =====
 
@@ -193,6 +265,20 @@ export const signedHeadersSchema = z.object({
   timestamp: z.coerce.number().int().positive(),
   nonce: z.string().trim().min(8).max(128),
   signature: z.string().regex(/^[0-9a-fA-F]{8,256}$/, "签名格式错误"),
+});
+
+// ===== 订单 / 支付 =====
+export const OrderStatusSchema = z.enum(["PENDING", "PAID", "CLOSED", "REFUNDED"]);
+export type OrderStatus = z.infer<typeof OrderStatusSchema>;
+
+/** 创建订单：planSlug 与 SubscriptionPlan.slug 同规则 */
+export const createOrderSchema = z.object({
+  planSlug: z
+    .string()
+    .trim()
+    .min(2)
+    .max(32)
+    .regex(/^[a-z0-9][a-z0-9_]*$/, "slug 只能包含小写字母、数字、下划线"),
 });
 
 

@@ -27,6 +27,26 @@ const store = new Map<string, number[]>();
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const SWEEP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_KEYS = Math.max(1000, Number(process.env.RATE_LIMIT_MAX_KEYS) || 50_000);
+
+function trimStoreIfNeeded(now: number): void {
+  if (store.size <= MAX_KEYS) return;
+  const cutoff = now - SWEEP_MAX_AGE_MS;
+  for (const [k, arr] of store) {
+    const fresh = arr.filter((t) => t > cutoff);
+    if (fresh.length === 0) store.delete(k);
+    else store.set(k, fresh);
+    if (store.size <= MAX_KEYS) return;
+  }
+  const overflow = store.size - MAX_KEYS;
+  let deleted = 0;
+  for (const key of store.keys()) {
+    store.delete(key);
+    deleted += 1;
+    if (deleted >= overflow) break;
+  }
+  log.warn({ maxKeys: MAX_KEYS, deleted }, "限流存储超过上限，已清理旧 key");
+}
 
 /** 周期性清理完全过期 key，避免长期运行内存累积 */
 if (process.env.NEXT_RUNTIME === "nodejs") {
@@ -50,6 +70,7 @@ export function rateLimit(
   rule: RateLimitRule,
   now = Date.now()
 ): RateLimitDecision {
+  trimStoreIfNeeded(now);
   const windowMs = rule.windowSec * 1000;
   const cutoff = now - windowMs;
   const arr = (store.get(key) ?? []).filter((t) => t > cutoff);
