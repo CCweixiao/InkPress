@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { sendEmailCodeSchema } from "@/lib/validation/schemas";
 import { issueEmailCode } from "@/lib/email-code-service";
 import { checkRateLimits } from "@/lib/rate-limit";
-import { getClientIp, truncateUa } from "@/lib/http";
+import { getClientIp, readJsonBody, truncateUa } from "@/lib/http";
 import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
 import { AppError, ErrorCode } from "@/lib/errors";
 import type { RateLimitRule } from "@/lib/rate-limit";
@@ -23,9 +23,9 @@ export async function POST(req: NextRequest) {
   // 限流先行（按邮箱与 IP 多维度）
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return fail(ErrorCode.VALIDATION_ERROR, { message: "请求体非法", requestId });
+    body = await readJsonBody(req, { limitBytes: 16 * 1024 });
+  } catch (err) {
+    return failFromError(err, requestId);
   }
 
   const parsed = sendEmailCodeSchema.safeParse(body);
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   }
   const { email, purpose } = parsed.data;
 
-  if (purpose !== "REGISTER") {
+  if (purpose !== "REGISTER" && purpose !== "RESET_PASSWORD") {
     return fail(ErrorCode.VALIDATION_ERROR, {
       message: "暂不支持的验证码用途",
       requestId,
@@ -59,14 +59,22 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // REGISTER 用途：邮箱已注册则不再发送
+  // 按用途做邮箱存在性校验，提前阻断并给出明确提示：
+  // - REGISTER：邮箱已注册 → 不再发送
+  // - RESET_PASSWORD：邮箱不存在 → 不再发送（避免向未知邮箱发信，同时提示用户先注册）
   const existed = await prisma.user.findUnique({
     where: { email },
     select: { id: true },
   });
-  if (existed) {
+  if (purpose === "REGISTER" && existed) {
     return fail(ErrorCode.EMAIL_ALREADY_REGISTERED, {
       message: "该邮箱已注册，请直接登录",
+      requestId,
+    });
+  }
+  if (purpose === "RESET_PASSWORD" && !existed) {
+    return fail(ErrorCode.NOT_FOUND, {
+      message: "该邮箱未注册，请先注册账号",
       requestId,
     });
   }
