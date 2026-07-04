@@ -1,13 +1,8 @@
 import { listAuditLogs } from "@/lib/admin/audit-service";
 import { Pager } from "@/components/admin/pager";
-import { formatDate } from "@/lib/utils";
+import { AuditLogTable } from "@/components/admin/audit-log-table";
 
-const PAGE_SIZE = 30;
-
-function shortJson(s: string | null): string {
-  if (!s) return "—";
-  return s.length > 80 ? s.slice(0, 80) + "…" : s;
-}
+const PAGE_SIZE = 10;
 
 export default async function AuditLogsPage({
   searchParams,
@@ -43,51 +38,13 @@ export default async function AuditLogsPage({
           <option value="LicenseKey">License</option>
           <option value="LicenseActivation">激活设备</option>
           <option value="User">用户</option>
+          <option value="Plan">订阅计划</option>
+          <option value="Order">订单</option>
         </select>
         <button className="h-9 rounded-md bg-primary px-4 text-primary-foreground">筛选</button>
       </form>
 
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2">时间</th>
-              <th className="px-3 py-2">操作者</th>
-              <th className="px-3 py-2">动作</th>
-              <th className="px-3 py-2">对象</th>
-              <th className="px-3 py-2">变更后</th>
-              <th className="px-3 py-2">IP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                  暂无日志
-                </td>
-              </tr>
-            )}
-            {items.map((l) => (
-              <tr key={l.id} className="border-t align-top">
-                <td className="px-3 py-2 text-xs">{formatDate(l.createdAt)}</td>
-                <td className="px-3 py-2 text-xs">
-                  <div className="font-mono">{l.actorUserId?.slice(0, 8) ?? "system"}</div>
-                  <div className="text-muted-foreground">{l.actorRole ?? "—"}</div>
-                </td>
-                <td className="px-3 py-2 font-mono text-xs">{l.action}</td>
-                <td className="px-3 py-2 text-xs">
-                  {l.targetType ?? "—"}
-                  {l.targetId && (
-                    <div className="font-mono text-muted-foreground">{l.targetId.slice(0, 8)}</div>
-                  )}
-                </td>
-                <td className="px-3 py-2 font-mono text-xs">{shortJson(l.afterJson)}</td>
-                <td className="px-3 py-2 text-xs">{l.ip ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <AuditLogTable items={items} />
 
       <Pager
         page={page}
