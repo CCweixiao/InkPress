@@ -1,0 +1,5 @@
+# 文档目录走 LLM 语义抽取，code-only 模式下跳过避免噪音
+/docs/
+
+# graphify 自身产物（避免递归扫描）
+/graphify-out/
