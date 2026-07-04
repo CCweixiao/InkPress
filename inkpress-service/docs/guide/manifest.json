@@ -6,12 +6,12 @@
         {
           "slug": "getting-started",
           "title": "快速上手",
-          "description": "从注册、购买到激活 InkPress 桌面端。"
+          "description": "了解 InkPress 能做什么，以及如何开始第一篇文章。"
         },
         {
-          "slug": "license-activation",
-          "title": "License 激活",
-          "description": "理解授权设备、有效期、解绑与换机流程。"
+          "slug": "product-workflow",
+          "title": "创作工作流",
+          "description": "熟悉写作、排版、素材、预览和发布前检查。"
         }
       ]
     },
@@ -20,23 +20,13 @@
       "items": [
         {
           "slug": "dashboard",
-          "title": "控制台与订单",
-          "description": "查看订单、License、邀请码与个人资料。"
+          "title": "用户中心与订单",
+          "description": "查看订单、个人资料、账号安全和服务记录。"
         },
         {
           "slug": "support-tickets",
-          "title": "工单支持",
-          "description": "提交问题、补充截图并跟进处理状态。"
-        }
-      ]
-    },
-    {
-      "title": "管理员",
-      "items": [
-        {
-          "slug": "admin-console",
-          "title": "管理后台",
-          "description": "管理计划、订单、用户、License 与审计日志。"
+          "title": "问题反馈",
+          "description": "提交问题、补充截图并跟进回复状态。"
         }
       ]
     }

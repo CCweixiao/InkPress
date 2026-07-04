@@ -5,7 +5,10 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://inkpress.app";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const manifest = await getGuideManifest();
-  const guideItems = flattenGuideItems(manifest);
+  const defaultSlug = manifest.sections[0]?.items[0]?.slug;
+  const guideItems = flattenGuideItems(manifest).filter(
+    (item) => item.slug !== defaultSlug
+  );
 
   return [
     {

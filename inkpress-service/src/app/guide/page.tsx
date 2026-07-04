@@ -6,9 +6,9 @@ import { getGuideDocument } from "@/lib/guide";
 import { renderGuideMarkdown } from "@/lib/guide-markdown";
 
 export const metadata: Metadata = {
-  title: "InkPress 使用指引 · 账号、License、控制台与工单手册",
+  title: "InkPress 使用指引 · 产品上手、用户中心与问题反馈",
   description:
-    "InkPress Service 使用指引，包含账号注册、订阅购买、License 激活、用户控制台、订单、工单和管理后台说明。",
+    "InkPress 使用指引，包含产品上手、创作工作区、用户中心、订单查看、账号设置和问题反馈说明。",
   alternates: { canonical: "/guide" },
 };
 

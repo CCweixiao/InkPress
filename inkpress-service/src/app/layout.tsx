@@ -8,11 +8,11 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://inkpress.app";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "InkPress · AI 公众号写作排版与 License 授权服务",
+    default: "InkPress · AI 公众号写作排版与内容发布工具",
     template: "%s · InkPress",
   },
   description:
-    "InkPress 是面向内容创作者和团队的公众号写作、Markdown 排版、素材管理、AI 辅助创作与多端授权服务。",
+    "InkPress 是面向内容创作者和团队的公众号写作、Markdown 排版、素材管理、AI 辅助创作、文章预览与内容发布工具。",
   keywords: [
     "InkPress",
     "公众号排版工具",
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     "Markdown 编辑器",
     "微信文章排版",
     "内容发布工具",
-    "License 授权管理",
+    "用户中心",
     "创作者工具",
   ],
   authors: [{ name: "InkPress" }],
@@ -32,9 +32,9 @@ export const metadata: Metadata = {
     locale: "zh_CN",
     url: siteUrl,
     siteName: "InkPress",
-    title: "InkPress · AI 公众号写作排版与授权服务",
+    title: "InkPress · AI 公众号写作排版与内容发布工具",
     description:
-      "从写作、排版、素材管理到公众号发布与 License 授权，InkPress 帮助创作者建立专业内容生产工作流。",
+      "从写作、排版、素材管理到公众号发布，InkPress 帮助创作者建立专业内容生产工作流。",
     images: [
       {
         url: "/assets/inkpress-hero-workflow.png",
@@ -46,9 +46,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "InkPress · AI 公众号写作排版与授权服务",
+    title: "InkPress · AI 公众号写作排版与内容发布工具",
     description:
-      "面向内容创作者的写作、排版、素材管理、多端发布和 License 授权服务。",
+      "面向内容创作者的写作、排版、素材管理、文章预览和内容发布工具。",
     images: ["/assets/inkpress-hero-workflow.png"],
   },
   robots: {
