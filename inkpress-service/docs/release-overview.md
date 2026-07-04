@@ -213,6 +213,7 @@ pnpm gen-token-key
 | `deployment-production.md` | 生产部署方案：服务器/线路/域名选型、Caddy + HTTPS、GitHub OAuth 回调、上线验证清单 |
 | `server-purchasing-guide.md` | VPS 选购指南：供应商对比、CN2 GIA/CMIN2 线路、支付宝支付 |
 | `domain-and-dns-guide.md` | 域名注册与 DNS：海外注册商、TLD 选择、Cloudflare DNS 配置 |
+| `wechat-scan-login-design.md` | 微信扫码关注公众号登录：技术设计（待实施，需认证服务号） |
 
 ---
 
