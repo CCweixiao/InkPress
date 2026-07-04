@@ -81,7 +81,7 @@ if [[ "$RESOLVED_IP" != "$SERVER_IP" ]]; then
   echo "       Let's Encrypt 校验会失败。请检查 DNS 配置或等待传播"
   exit 1
 fi
-echo "    ✅ $DOMAIN → $SERVER_IP（服务器侧解析正确）"
+echo "    ✅ $DOMAIN → ${SERVER_IP}（服务器侧解析正确）"
 
 # ===== Step 3: 安装 Caddy =====
 echo ">>> Step 3/9: 远程安装 Caddy..."
@@ -89,7 +89,7 @@ ssh "${SSH_OPTS[@]}" "$SSH_HOST" 'bash -s' << 'REMOTE_INSTALL'
 set -euo pipefail
 if command -v caddy &> /dev/null; then
   echo "    ✅ Caddy 已安装: $(caddy version 2>&1 | head -1)"
-else
+elif command -v apt-get &> /dev/null; then
   echo "    安装 Caddy（添加官方 apt 源）..."
   apt-get update -qq
   apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null
@@ -100,6 +100,21 @@ else
   apt-get update -qq
   apt-get install -y -qq caddy >/dev/null
   echo "    ✅ Caddy 已安装: $(caddy version 2>&1 | head -1)"
+elif command -v dnf &> /dev/null; then
+  echo "    安装 Caddy（添加 COPR 源）..."
+  dnf install -y -q dnf-plugins-core >/dev/null
+  dnf copr enable -y @caddy/caddy >/dev/null || dnf copr enable -y @caddy/caddy epel-8-x86_64 >/dev/null
+  dnf install -y -q caddy >/dev/null
+  echo "    ✅ Caddy 已安装: $(caddy version 2>&1 | head -1)"
+elif command -v yum &> /dev/null; then
+  echo "    安装 Caddy（添加 COPR 源）..."
+  yum install -y -q yum-plugin-copr >/dev/null || yum install -y -q dnf-plugins-core >/dev/null
+  yum copr enable -y @caddy/caddy >/dev/null || yum copr enable -y @caddy/caddy epel-8-x86_64 >/dev/null
+  yum install -y -q caddy >/dev/null
+  echo "    ✅ Caddy 已安装: $(caddy version 2>&1 | head -1)"
+else
+  echo "    ❌ 未找到支持的包管理器（apt-get / dnf / yum），请手动安装 Caddy"
+  exit 1
 fi
 REMOTE_INSTALL
 
@@ -114,9 +129,9 @@ cd "$REMOTE_DIR"
 
 cp docker-compose.yml "docker-compose.yml.bak.$(date +%Y%m%d-%H%M%S)"
 
-if grep -q '"127.0.0.1:9527:3000"' docker-compose.yml; then
+if grep -Eq '^[[:space:]]*-[[:space:]]*"127\.0\.0\.1:9527:3000"' docker-compose.yml; then
   echo "    ✅ 端口已是 127.0.0.1:9527:3000，跳过"
-elif grep -q '"9527:3000"' docker-compose.yml; then
+elif grep -Eq '^[[:space:]]*-[[:space:]]*"9527:3000"' docker-compose.yml; then
   sed -i 's|"9527:3000"|"127.0.0.1:9527:3000"|g' docker-compose.yml
   echo "    ✅ 端口绑定改为 127.0.0.1:9527:3000（仅本机访问）"
 else
@@ -181,11 +196,18 @@ DOMAIN="$1"
 
 [ -f /etc/caddy/Caddyfile ] && cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)"
 mkdir -p /var/log/caddy
+if id caddy >/dev/null 2>&1; then
+  chown -R caddy:caddy /var/log/caddy
+fi
 
 cat > /etc/caddy/Caddyfile << CADDYFILE
 # InkPress Service 反向代理 + 自动 HTTPS
 # 由 setup-https.sh 生成于 $(date +%Y-%m-%d)
 # 证书由 Caddy 自动向 Let's Encrypt 申请并续期
+
+http://$DOMAIN {
+    redir https://$DOMAIN{uri} 301
+}
 
 $DOMAIN {
     encode zstd gzip
@@ -279,7 +301,7 @@ echo "  https://$DOMAIN/login → HTTP $HTTPS_CODE"
 if [[ "$HTTP_CODE" == "301" ]]; then
   echo "  http://$DOMAIN → 301 重定向到 HTTPS ✅"
 else
-  echo "  http://$DOMAIN → HTTP $HTTP_CODE（期望 301）"
+  echo "  http://$DOMAIN → HTTP ${HTTP_CODE}（期望 301）"
 fi
 echo ""
 echo "  证书由 Let's Encrypt 自动签发，Caddy 自动续期（无需 cron）"
