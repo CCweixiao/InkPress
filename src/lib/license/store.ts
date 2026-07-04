@@ -15,6 +15,7 @@ export type LocalLicenseState = {
   activationSecret: string;
   status: string;
   effectiveExpiresAt: string | null;
+  activatedAt?: string;
   maxDevices: number;
   activatedDevices?: number;
   nextCheckAt?: string;
@@ -32,11 +33,16 @@ export function normalizeServiceBaseUrl(value: string): string {
 }
 
 export function defaultLicenseServiceUrl(): string {
-  return (
+  const fromEnv = (
     process.env.INKPRESS_LICENSE_SERVICE_URL ??
     process.env.NEXT_PUBLIC_INKPRESS_LICENSE_SERVICE_URL ??
     ""
   ).trim();
+  if (fromEnv) return fromEnv;
+  // 运行时默认：开发=localhost:3001 / 生产=longoflow.com
+  return process.env.NODE_ENV === "production"
+    ? "https://www.longoflow.com"
+    : "http://localhost:3001";
 }
 
 export function isLicenseRequired(): boolean {

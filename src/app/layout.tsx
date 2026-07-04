@@ -10,6 +10,8 @@ import {
   themeModeToHtmlClass,
   THEME_STORAGE_KEY,
 } from "@/lib/theme-mode";
+import { LicenseStatusSyncProvider } from "@/components/license/LicenseStatusSync";
+import { LicenseGateDialog } from "@/components/license/LicenseGateDialog";
 
 export const metadata: Metadata = {
   title: "InkPress · 数字文刊工坊",
@@ -39,7 +41,12 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <LicenseStatusSyncProvider>
+            {children}
+            <LicenseGateDialog />
+          </LicenseStatusSyncProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

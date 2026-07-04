@@ -22,7 +22,7 @@ const log = moduleLogger("license:token");
 
 export const TOKEN_TTL_SEC = 24 * 60 * 60; // token 自身有效期
 export const NEXT_CHECK_SEC = 60 * 60; // 建议下次校验间隔
-export const OFFLINE_GRACE_SEC = 72 * 60 * 60; // 离线宽限期（PDC §4.5 建议 72h）
+export const OFFLINE_GRACE_SEC = 30 * 24 * 60 * 60; // 离线宽限期（30 天滚动）
 
 export interface LicenseTokenPayload {
   iss: "inkpress-service";

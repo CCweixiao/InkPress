@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { APP_VERSION } from "@/lib/site";
 import { collectLicenseDevice } from "@/lib/license/device";
 import { bodyHashOf, signRequest } from "@/lib/license/request-signature";
+import { markTrialConverted } from "@/lib/license/trial";
 import {
   clearLocalLicenseState,
   defaultLicenseServiceUrl,
@@ -27,11 +28,13 @@ type ActivateResponse = {
   nextCheckAt: string;
   offlineGraceSeconds?: number;
   metadata?: Record<string, unknown>;
+  inviterCode?: string;
 };
 
 type ValidateResponse = {
   status: "ACTIVE" | "EXPIRED" | "DISABLED" | "REVOKED" | "DEVICE_MISMATCH";
   effectiveExpiresAt: string | null;
+  activatedAt?: string;
   licenseToken?: string;
   nextCheckAt?: string;
   offlineGraceSeconds?: number;
@@ -42,13 +45,30 @@ type ValidateResponse = {
 export type LicenseRuntimeStatus = {
   required: boolean;
   allowed: boolean;
-  mode: "active" | "offline-grace" | "inactive" | "invalid" | "not-required";
+  mode:
+    | "active"
+    | "offline-grace"
+    | "inactive"
+    | "invalid"
+    | "not-required"
+    | "trial"
+    | "trial-expired";
   state: Omit<LocalLicenseState, "activationSecret" | "licenseToken"> | null;
+  trial?: {
+    trialExpiresAt: string;
+    remainingMs: number;
+  };
   message?: string;
 };
 
-function offlineGraceExpiresAt(seconds = 72 * 60 * 60): string {
-  return new Date(Date.now() + seconds * 1000).toISOString();
+/** 离线宽限天数（30 天，每次成功 validate 滚动）。 */
+export const OFFLINE_GRACE_DAYS = 30;
+
+function offlineGraceExpiresAt(
+  seconds = OFFLINE_GRACE_DAYS * 24 * 60 * 60,
+  fromMs = Date.now()
+): string {
+  return new Date(fromMs + seconds * 1000).toISOString();
 }
 
 function publicState(state: LocalLicenseState | null): LicenseRuntimeStatus["state"] {
@@ -102,6 +122,7 @@ export async function activateLocalLicense(input: {
     activationSecret: envelope.data.activationSecret,
     status: envelope.data.status,
     effectiveExpiresAt: envelope.data.effectiveExpiresAt,
+    activatedAt: now,
     maxDevices: envelope.data.maxDevices,
     activatedDevices: envelope.data.activatedDevices,
     nextCheckAt: envelope.data.nextCheckAt,
@@ -110,6 +131,12 @@ export async function activateLocalLicense(input: {
     metadata: envelope.data.metadata,
   };
   writeLocalLicenseState(state);
+  // 标记试用已转化为正式激活（不影响判定，仅状态标记）
+  try {
+    markTrialConverted();
+  } catch {
+    // ignore — trial 状态文件不存在时不影响流程
+  }
   return { required: true, allowed: true, mode: "active", state: publicState(state) };
 }
 
@@ -165,9 +192,11 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
       ...state,
       status: envelope.data.status,
       effectiveExpiresAt: envelope.data.effectiveExpiresAt,
+      activatedAt: envelope.data.activatedAt ?? state.activatedAt,
       licenseToken: envelope.data.licenseToken ?? state.licenseToken,
       nextCheckAt: envelope.data.nextCheckAt,
       lastValidatedAt: new Date().toISOString(),
+      // 滚动宽限：lastValidatedAt + 30d（服务端值优先）
       offlineGraceExpiresAt: offlineGraceExpiresAt(envelope.data.offlineGraceSeconds),
       metadata: envelope.data.metadata ?? state.metadata,
     };
@@ -180,7 +209,8 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
       message: envelope.data.message,
     };
   } catch (error) {
-    if (isNetworkError(error) && new Date(state.offlineGraceExpiresAt).getTime() > Date.now()) {
+    const graceMs = new Date(state.offlineGraceExpiresAt).getTime();
+    if (isNetworkError(error) && graceMs > Date.now()) {
       return {
         required: true,
         allowed: true,
@@ -194,7 +224,11 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
       allowed: false,
       mode: "invalid",
       state: publicState(state),
-      message: error instanceof Error ? error.message : "License 校验失败",
+      message: isNetworkError(error)
+        ? "已超过 30 天离线宽限，请重新激活 License。"
+        : error instanceof Error
+          ? error.message
+          : "License 校验失败",
     };
   }
 }
