@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { ServiceHeader } from "@/components/navigation/service-header";
 import { TicketStatusBadge } from "@/components/tickets/ticket-status-badge";
 import { TicketConversation, type ConversationMessage } from "@/components/tickets/ticket-conversation";
 import { TICKET_TYPE_LABELS } from "@/lib/tickets/constants";
@@ -68,18 +69,19 @@ export default async function TicketDetailPage({
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-4xl items-center gap-3 px-6 py-3">
-          <Link
-            href="/dashboard/tickets"
-            className="text-sm text-muted-foreground hover:underline"
-          >
-            ← 我的工单
-          </Link>
-        </div>
-      </header>
+      <ServiceHeader
+        isLoggedIn
+        email={session.user.email ?? null}
+        role={session.user.role ?? null}
+      />
 
       <main className="mx-auto max-w-4xl space-y-4 px-6 py-8">
+        <Link
+          href="/dashboard/tickets"
+          className="text-sm text-muted-foreground hover:underline"
+        >
+          ← 返回我的工单
+        </Link>
         {/* 工单头 */}
         <div className="rounded-lg border bg-card p-5">
           <div className="mb-2 flex items-center gap-2">
