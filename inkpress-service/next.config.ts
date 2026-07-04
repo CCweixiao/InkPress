@@ -3,12 +3,10 @@ import type { NextConfig } from "next";
 /**
  * 安全响应头（PDC §9.1）。
  *
- * 在 next.config 的 headers() 统一下发，覆盖全部路由（含 /api/v1/* 机机接口——
- * JSON 响应不受 CSP 限制，无副作用），不与 auth middleware 的 matcher 耦合。
+ * 静态安全头在 next.config 的 headers() 统一下发；CSP 需要 per-request nonce，
+ * 由 src/proxy.ts 动态设置，避免阻断 Next.js 自身的 inline bootstrap 脚本。
  *
  * - HSTS 仅在生产 HTTPS（SECURE_COOKIES=true）下启用，避免开发态 HTTP 自锁。
- * - CSP 针对本服务的小型管理 UI（Tailwind v4 + shadcn + Auth.js）调校：
- *   脚本侧严格 'self'，样式侧放开 'unsafe-inline'（Tailwind/shadcn 运行期注入内联样式）。
  * - SECURITY_HEADERS_ENABLE=false 可整体关闭，便于排障。
  */
 function buildSecurityHeaders() {
@@ -23,20 +21,6 @@ function buildSecurityHeaders() {
     {
       key: "Permissions-Policy",
       value: "camera=(), microphone=(), geolocation=()",
-    },
-    {
-      key: "Content-Security-Policy",
-      value: [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data:",
-        "font-src 'self'",
-        "connect-src 'self'",
-        "frame-ancestors 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-      ].join("; "),
     },
   ];
   if (secure) {

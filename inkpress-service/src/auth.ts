@@ -13,6 +13,47 @@ import { moduleLogger } from "@/lib/logger";
 
 const log = moduleLogger("auth");
 
+type GitHubEmail = {
+  email?: string;
+  primary?: boolean;
+  verified?: boolean;
+};
+
+async function hasVerifiedGitHubEmail(
+  accessToken: string | undefined,
+  email: string
+): Promise<boolean> {
+  if (!accessToken) return false;
+  try {
+    const response = await fetch("https://api.github.com/user/emails", {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "InkPress-Service",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    if (!response.ok) {
+      log.warn(
+        { status: response.status, email },
+        "GitHub verified email 查询失败"
+      );
+      return false;
+    }
+    const emails = (await response.json()) as GitHubEmail[];
+    const normalized = email.toLowerCase();
+    return emails.some(
+      (item) =>
+        item.verified === true &&
+        typeof item.email === "string" &&
+        item.email.toLowerCase() === normalized
+    );
+  } catch (err) {
+    log.warn({ err, email }, "GitHub verified email 查询异常");
+    return false;
+  }
+}
+
 /**
  * Auth.js v5 完整配置（Node 运行时）。
  *
@@ -95,19 +136,34 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return token;
     },
-    // 需 DB：OAuth 路径阻止已禁用用户（Credentials 在 authorize 内已拦截）
+    // 需 DB：OAuth 路径阻止已禁用/未验证邮箱用户（Credentials 在 authorize 内已拦截）
     async signIn({ user, account }) {
       if (account && account.provider !== "credentials") {
         const email = user.email;
-        if (email) {
-          const dbUser = await prisma.user.findUnique({
-            where: { email },
-            select: { status: true },
-          });
-          if (dbUser && dbUser.status !== "ACTIVE") {
-            log.warn({ email, status: dbUser.status }, "禁用用户尝试 OAuth 登录");
+        if (!email) {
+          log.warn({ provider: account.provider }, "OAuth 登录被拒：缺少邮箱");
+          return false;
+        }
+        const dbUser = await prisma.user.findUnique({
+          where: { email },
+          select: { status: true, emailVerified: true },
+        });
+        if (dbUser && dbUser.status !== "ACTIVE") {
+          log.warn({ email, status: dbUser.status }, "禁用用户尝试 OAuth 登录");
+          return false;
+        }
+        if (account.provider === "github") {
+          const verified = await hasVerifiedGitHubEmail(
+            account.access_token,
+            email
+          );
+          if (!verified) {
+            log.warn({ email, hasDbUser: Boolean(dbUser) }, "GitHub 登录被拒：邮箱未验证");
             return false;
           }
+        } else if (dbUser?.emailVerified === null) {
+          log.warn({ email, provider: account.provider }, "OAuth 登录被拒：邮箱未验证");
+          return false;
         }
       }
       return true;
