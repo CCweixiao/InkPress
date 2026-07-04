@@ -56,6 +56,7 @@ function LoginForm() {
   const params = useSearchParams();
   const callbackUrl = params.get("callbackUrl") ?? "/dashboard";
   const oauthError = params.get("error");
+  const resetDone = params.get("reset") === "1";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -128,6 +129,19 @@ function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            <div className="flex justify-end">
+              <Link
+                href="/forgot-password"
+                className="text-xs text-muted-foreground hover:text-primary hover:underline"
+              >
+                忘记密码？
+              </Link>
+            </div>
+            {resetDone && !error && (
+              <p className="text-sm text-emerald-600" role="status">
+                密码已重置，请使用新密码登录
+              </p>
+            )}
             {error && (
               <p className="text-sm text-destructive" role="alert">
                 {error}
