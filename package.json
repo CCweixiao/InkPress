@@ -113,6 +113,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "bytenode": "^1.6.0",
     "concurrently": "^10.0.3",
     "electron": "^42.4.1",
     "electron-builder": "^26.15.3",
