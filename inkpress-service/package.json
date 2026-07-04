@@ -20,7 +20,8 @@
     "db:studio": "prisma studio",
     "db:backup": "tsx scripts/backup-db.ts",
     "init-admin": "tsx scripts/init-admin.ts",
-    "gen-token-key": "tsx scripts/gen-token-key.ts"
+    "gen-token-key": "tsx scripts/gen-token-key.ts",
+    "test:email": "tsx scripts/test-email.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
