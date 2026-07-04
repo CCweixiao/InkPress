@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const params = req.nextUrl.searchParams;
     const { page, pageSize } = paginationSchema.parse({
       page: params.get("page") ?? 1,
-      pageSize: params.get("pageSize") ?? 30,
+      pageSize: params.get("pageSize") ?? 10,
     });
     const result = await listAuditLogs({
       page,
