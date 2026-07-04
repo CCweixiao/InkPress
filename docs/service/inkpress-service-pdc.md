@@ -119,7 +119,7 @@ sequenceDiagram
 - 输入设备数上限，默认 1，必须大于 0。
 - 可选绑定邀请码。绑定后记录 `inviterUserId`，后续激活归因到邀请用户。
 - 可选备注、标签、内部批次号。
-- Key 由服务端生成，类似 UUID，但建议使用带前缀和校验段的格式，例如 `INKP-<base32-random>-<check>`，展示友好且便于识别。数据库中仍保存唯一 `keyHash`，明文 key 只在创建后显示一次。
+- Key 由服务端生成，类似 UUID，但建议使用带前缀和校验段的格式，例如 `INKP-<base32-random>-<check>`，展示友好且便于识别。数据库中保存唯一 `keyHash` 用于匹配，同时以 AES-256-GCM 加密保存完整 key；管理端默认只展示后缀和指纹，详情页需输入二次查看密码才可临时解密展示完整 key。
 
 ### 4.4 License 激活
 
@@ -345,6 +345,7 @@ model LicenseKey {
   keyHash             String   @unique
   keyFingerprint      String   @unique
   displayKeySuffix    String
+  keyCiphertext       String?
   durationKind        LicenseDurationKind
   durationYears       Int?
   durationDays        Int?
@@ -390,6 +391,7 @@ enum LicenseKeyStatus {
 - `keyHash`：使用 pepper 后的 SHA-256/Argon2 哈希，用于精确匹配。
 - `keyFingerprint`：明文 key 的不可逆短指纹，用于日志、前端展示和排障。
 - `displayKeySuffix`：仅保存末 4-6 位，避免管理员列表泄露完整 key。
+- `keyCiphertext`：完整 key 的 AES-256-GCM 密文；仅管理员在详情页输入 `LICENSE_KEY_VIEW_PASSWORD` 后临时解密展示，历史未保存密文的 License 不可反推出完整 key。
 - `effectiveExpiresAt`：首次激活后写入，用于所有设备统一过期。
 
 ### 6.6 LicenseActivation
@@ -536,6 +538,7 @@ type ApiError = {
 | `GET` | `/api/admin/licenses` | License Key 列表 |
 | `GET` | `/api/admin/licenses/:id` | License 详情和激活记录 |
 | `PATCH` | `/api/admin/licenses/:id` | 禁用、启用、撤销、修改备注 |
+| `POST` | `/api/admin/licenses/:id/reveal-key` | 输入二次查看密码后返回完整 License Key |
 | `POST` | `/api/admin/licenses/:id/activations/:activationId/revoke` | 解绑/撤销某台设备 |
 | `GET` | `/api/admin/audit-logs` | 审计日志 |
 
@@ -553,7 +556,7 @@ type CreateLicenseRequest = {
 };
 ```
 
-创建 License 响应只在本次返回明文：
+创建 License 响应会返回完整 Key，并在数据库中加密留存，便于后续管理员经二次密码查看：
 
 ```ts
 type CreateLicenseResponse = {
@@ -647,15 +650,15 @@ type ValidateLicenseResponse = {
 | 注册页 | `/register` | 邮箱验证码注册 |
 | 用户首页 | `/dashboard` | 展示邮箱、邀请码、归因 License 摘要 |
 | License 管理 | `/admin/licenses` | 列表、筛选、生成、禁用 |
-| License 详情 | `/admin/licenses/[id]` | 激活设备、校验日志、归因信息 |
+| License 详情 | `/admin/licenses/[id]` | 激活设备、校验日志、归因信息、二次密码查看完整 Key |
 | 用户管理 | `/admin/users` | 用户状态、角色、邀请码 |
 | 审计日志 | `/admin/audit-logs` | 管理操作记录 |
 
 UI 要求：
 
 - 操作型后台优先密度和可扫描性，避免营销式首屏。
-- License Key 创建弹窗必须明确提示：明文 key 只显示一次。
-- 列表中默认只展示 key 后缀和 fingerprint，不展示完整 key。
+- License Key 创建弹窗展示完整 key 并支持复制；关闭后可在详情页输入二次密码再次查看。
+- 列表中默认只展示 key 后缀和 fingerprint，不展示完整 key；详情页查看完整 key 必须写入审计日志。
 - 所有危险操作二次确认：禁用 key、撤销 key、解绑设备、禁用用户。
 
 ---
@@ -680,6 +683,8 @@ UI 要求：
 | `NEXTAUTH_URL` | 服务公网地址 |
 | `GITHUB_ID` / `GITHUB_SECRET` | GitHub OAuth |
 | `LICENSE_KEY_PEPPER` | License Key 哈希 pepper |
+| `LICENSE_KEY_VIEW_PASSWORD` | 管理后台查看完整 License Key 的二次密码 |
+| `LICENSE_KEY_ENCRYPTION_SECRET` | 完整 License Key AES-256-GCM 加密密钥 |
 | `LICENSE_TOKEN_PRIVATE_KEY` | License token 签名私钥 |
 | `LICENSE_TOKEN_PUBLIC_KEY` | 可选，给客户端嵌入的公钥来源 |
 | `MAIL_PROVIDER` | `console` / `smtp` / `resend` |
@@ -688,8 +693,8 @@ UI 要求：
 
 要求：
 
-- `LICENSE_KEY_PEPPER` 和私钥一旦泄露必须轮换。
-- 日志、审计、错误响应不得输出验证码、License 明文、activationSecret、OAuth token。
+- `LICENSE_KEY_PEPPER`、`LICENSE_KEY_ENCRYPTION_SECRET`、查看密码和私钥一旦泄露必须轮换。
+- 日志、审计、错误响应不得输出验证码、License 明文、activationSecret、OAuth token；查看完整 License Key 的审计只记录指纹/后缀。
 
 ### 9.3 限流
 
@@ -864,7 +869,7 @@ License API 错误码：
 ### 14.3 E2E 测试
 
 - 普通用户注册、登录、查看邀请码。
-- 管理员登录、生成 License、查看明文一次、列表只显示后缀。
+- 管理员登录、生成 License、详情页输入二次密码查看完整 Key、列表只显示后缀。
 - InkPress 客户端模拟激活、重启校验、过期阻断。
 
 ### 14.4 验收标准
@@ -873,7 +878,7 @@ License API 错误码：
 - Docker 部署后访问公网地址可完成注册、登录和管理 License。
 - 首期 SQLite 数据持久化到 `/data`，容器重启不丢失。
 - 所有公网 API 有输入校验、限流、结构化错误和 requestId。
-- License 明文不落库、不进日志、不在列表页展示。
+- License 明文不进日志、不在列表页展示；数据库仅保存加密密文，详情页查看需二次密码并审计。
 - InkPress 客户端每次启动必须校验 License，服务端判定无效时阻断核心功能。
 
 ---

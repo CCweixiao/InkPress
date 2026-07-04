@@ -23,36 +23,37 @@
 
 ---
 
-## A. InkPress 主应用接入（PDC §12 —— 最大块，本期主线）
+## A. InkPress 主应用接入（PDC §12）
 
-这是 Phase 3 显式 defer、且是验收标准（PDC §14.4「客户端每次启动必须校验 License，服务端判定无效时阻断核心功能」）的唯一缺口。
+**2026-07-04 进展**：已落地主应用最小闭环：`/license` 激活页、设置页 License 面板、本地加密 License 状态、设备 hash 采集、`licenseGuard`、离线宽限、以及写作工作区/AI/导出/发布核心阻断点。生产默认启用，开发环境可通过 `INKPRESS_LICENSE_REQUIRED=1` 强制开启。
 
-### A.1 License 激活页
+### A.1 License 激活页 ✅
 - **目标**：用户输入 License Key，调用 `POST /api/v1/licenses/activate`，展示激活成功/失败原因（`LICENSE_INVALID` / `DEVICE_LIMIT_EXCEEDED` / `LICENSE_EXPIRED` 等）。
 - **PDC**：§4.4、§12.1。
 - **验收**：未激活设备首次进入应用 → 引导至激活页 → 激活成功后进入主界面。
 
-### A.2 启动校验 `licenseGuard`
+### A.2 启动校验 `licenseGuard` ✅
 - **目标**：应用启动调用 `validate`，根据 `status`（`ACTIVE` / `EXPIRED` / `DISABLED` / `REVOKED` / `DEVICE_MISMATCH`）决定放行或跳激活页。离线时按 `offlineGraceSeconds`（72h）宽限。
 - **PDC**：§4.5、§5.2、§12.2。
 - **约束**：`licenseGuard` 是统一入口，核心能力调用前必经；不要在多个组件各自实现校验。
 - **验收**：拔网线启动 → 72h 内可用、超期阻断；服务端撤销/禁用 → 下次校验即阻断。
 
-### A.3 本地 License Store（安全存储）
+### A.3 本地 License Store（安全存储） ◑
 - **目标**：用系统 Keychain（macOS Keychain / Windows Credential Manager / Linux libsecret）安全保存 `activationSecret` 与 `licenseToken`；**明文 secret 绝不落普通文件存储**。
 - **PDC**：§5.1、§12.3。
 - **约束**：`[[client-bundle-no-node-deps]]`——Keychain 访问在 Electron 主进程，renderer 只通过 IPC 拿明文；`[[electron-main-is-dumb-pipe]]`——主进程只做存储读写透传，业务在 Next/renderer。
+- **当前实现**：已使用安装级 AES-GCM 加密文件保存 `activationSecret`/`licenseToken`，避免明文落普通文件；系统 Keychain IPC 仍作为后续加固项。
 
-### A.4 设备指纹采集
+### A.4 设备指纹采集 ✅
 - **目标**：跨平台生成稳定 `deviceIdHash`（machineId + mac + hostname 多维哈希），上传哈希、**不上传明文 MAC**。
 - **PDC**：§12.5。
 - **约束**：指纹需稳定（重装系统/重启不变）且唯一性足够；遵从隐私（不收集可还原信息）。
 
-### A.5 设置页 License 状态
+### A.5 设置页 License 状态 ✅
 - **目标**：展示有效期、已用/最大设备数、上次校验时间、License 后缀；提供「手动刷新」（再 `validate`）与「释放本机」（`deactivate`）。
 - **PDC**：§12.6。
 
-### A.6 核心阻断点接入
+### A.6 核心阻断点接入 ✅
 - **目标**：4 个 gate 接入 `licenseGuard`：① 写作工作区入口；② AI 生成接口；③ 文章导出/发布；④ 自动化/Agent 长任务启动。
 - **PDC**：§12「核心阻断点」。
 - **验收**：未通过校验时这 4 类操作被阻断并提示，而非静默放行。
@@ -61,23 +62,28 @@
 
 ## B. 服务端补强（小而具体，可与 A 并行）
 
-### B.1 批量生成 License
-- **现状**：`batchNo` 字段 + 列表筛选已就位，但 `createLicense` 是单个。
+### B.1 批量生成 License ✅
+- **现状**：已支持 `count` 批量生成；批量创建包在事务中，避免中途失败留下半批 License。
 - **目标**：admin 创建时支持 `count`（一次建 N 个，共享 `batchNo`），明文 Key 列表一次性返回并支持导出。
 - **PDC**：§6.5（`batchNo`）、§7.2。
 
-### B.2 GitHub 强制 verified email（§16 开放问题 #2）
-- **现状**：`auth.ts` 的 GitHub signin **未校验 `emailVerified`**——真实缺口。
+### B.1.1 License Key 二次密码查看 ✅
+- **现状**：新生成的完整 License Key 已使用 AES-256-GCM 加密留存；详情页输入 `LICENSE_KEY_VIEW_PASSWORD` 后可临时查看并复制，查看成功/失败均写审计日志。
+- **目标**：避免管理员忘记已发放的 key，同时保持列表、日志和普通详情不泄露完整 key。开发环境默认查看密码为 `123456`。
+- **PDC**：§4.3、§6.5、§7.2、§8、§9.2。
+
+### B.2 GitHub 强制 verified email（§16 开放问题 #2） ✅
+- **现状**：GitHub OAuth 登录会使用 access token 查询 GitHub verified email，未验证则拒绝登录/注册。
 - **目标**：GitHub 账号 email 未 verified 时拒绝登录/注册，与邮箱验证码注册的安全语义对齐。
 - **PDC**：§16 #2（推荐必须）。
 
-### B.3 License 续期 / 延期
-- **现状**：`effectiveExpiresAt` 首激活后固定，到期无延期路径。
+### B.3 License 续期 / 延期 ✅
+- **现状**：管理端详情页已提供续期操作，写入 `license.extend` 审计；未过期从原到期日顺延，已过期从当前时间重新延长。
 - **目标**：admin 可延长有效期（改 `durationDays` / 重算 `effectiveExpiresAt`），写 AuditLog。
 - **PDC**：§6.5、§7.2。
 
-### B.4 `metadataJson` 启用
-- **现状**：`LicenseActivation.metadataJson` 字段闲置（默认 `"{}"`）。
+### B.4 `metadataJson` 启用 ✅
+- **现状**：激活时记录客户端 build/channel 元信息，`validate`/`activate` 响应会下发结构化 `metadata`。
 - **目标**：用于渠道/版本灰度/特性开关；`validate` 时下发给客户端做特性门控。
 - **PDC**：§6.6。
 
@@ -131,7 +137,7 @@
 
 - **邮件 DKIM/SPF**：域名侧 DNS 配置（非代码）。
 - **License 用量 / 风控看板**：基于 `LicenseValidationLog` 统计激活率、失败 IP、设备增长。
-- **密钥轮换流程文档**：`LICENSE_KEY_PEPPER` / `ACTIVATION_SECRET_KEK` / Ed25519 keypair 的轮换步骤（轮换需重发 key / 重激活）。
+- **密钥轮换流程文档**：`LICENSE_KEY_PEPPER` / `LICENSE_KEY_ENCRYPTION_SECRET` / `LICENSE_KEY_VIEW_PASSWORD` / `ACTIVATION_SECRET_KEK` / Ed25519 keypair 的轮换步骤（pepper 轮换需重发 key，activation KEK 轮换需重激活）。
 
 ---
 
