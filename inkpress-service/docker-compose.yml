@@ -19,3 +19,9 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+    # 日志轮转：单文件 50MB，最多 3 份（防磁盘撑爆）
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
