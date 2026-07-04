@@ -2,6 +2,10 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { ensureUserInvitationCode } from "@/lib/invite-code";
+import {
+  computeLicenseLifecycle,
+  durationLabel,
+} from "@/lib/license/key";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
 
 export default async function DashboardPage() {
@@ -13,7 +17,10 @@ export default async function DashboardPage() {
   // 安全网：补发邀请码（OAuth/早期用户）
   await ensureUserInvitationCode(session.user.id);
 
-  const [user, invite, attributedLicenses] = await Promise.all([
+  // 用户邮箱已规范化存储；为兼容历史/OAuth 用户再保险一次。
+  const ownerEmail = session.user.email?.trim().toLowerCase();
+
+  const [user, invite, attributedLicenses, ownedLicenses] = await Promise.all([
     prisma.user.findUnique({
       where: { id: session.user.id },
       select: {
@@ -47,6 +54,40 @@ export default async function DashboardPage() {
         _count: { select: { activations: { where: { status: "ACTIVE" } } } },
       },
     }),
+    ownerEmail
+      ? prisma.licenseKey.findMany({
+          where: { ownerEmail },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            keyFingerprint: true,
+            displayKeySuffix: true,
+            durationKind: true,
+            durationYears: true,
+            durationDays: true,
+            effectiveExpiresAt: true,
+            maxDevices: true,
+            status: true,
+            firstActivatedAt: true,
+            createdAt: true,
+            note: true,
+            activations: {
+              orderBy: { activatedAt: "desc" },
+              select: {
+                id: true,
+                deviceIdHash: true,
+                os: true,
+                arch: true,
+                appVersion: true,
+                status: true,
+                activatedAt: true,
+                lastValidatedAt: true,
+                deactivatedAt: true,
+              },
+            },
+          },
+        })
+      : [],
   ]);
 
   if (!user) redirect("/login");
@@ -64,6 +105,45 @@ export default async function DashboardPage() {
     createdAt: l.createdAt,
   }));
 
-  return <DashboardClient user={user} invite={invite} attributedLicenses={licenses} />;
+  const now = new Date();
+  const owned = ownedLicenses.map((l) => ({
+    id: l.id,
+    keyFingerprint: l.keyFingerprint,
+    displayKeySuffix: l.displayKeySuffix,
+    durationKind: l.durationKind,
+    durationLabel: durationLabel(l.durationKind, l.durationYears, l.durationDays),
+    maxDevices: l.maxDevices,
+    activeDevices: l.activations.filter((a) => a.status === "ACTIVE").length,
+    status: l.status,
+    lifecycle: computeLicenseLifecycle(
+      l.firstActivatedAt,
+      l.effectiveExpiresAt,
+      now
+    ),
+    firstActivatedAt: l.firstActivatedAt,
+    effectiveExpiresAt: l.effectiveExpiresAt,
+    createdAt: l.createdAt,
+    note: l.note,
+    activations: l.activations.map((a) => ({
+      id: a.id,
+      deviceIdShort: a.deviceIdHash.slice(0, 12),
+      os: a.os,
+      arch: a.arch,
+      appVersion: a.appVersion,
+      status: a.status,
+      activatedAt: a.activatedAt,
+      lastValidatedAt: a.lastValidatedAt,
+      deactivatedAt: a.deactivatedAt,
+    })),
+  }));
+
+  return (
+    <DashboardClient
+      user={user}
+      invite={invite}
+      attributedLicenses={licenses}
+      ownedLicenses={owned}
+    />
+  );
 }
 
