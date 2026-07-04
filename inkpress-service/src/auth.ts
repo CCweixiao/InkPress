@@ -10,8 +10,15 @@ import { verifyPassword } from "@/lib/security/password";
 import { ensureUserInvitationCode } from "@/lib/invite-code";
 import { loginSchema } from "@/lib/validation/schemas";
 import { moduleLogger } from "@/lib/logger";
+import { checkRateLimits, type RateLimitRule } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/http";
 
 const log = moduleLogger("auth");
+
+const LOGIN_RULES = {
+  ipPerMin: { windowSec: 60, max: 20 } as RateLimitRule,
+  emailPer10Min: { windowSec: 600, max: 8 } as RateLimitRule,
+};
 
 type GitHubEmail = {
   email?: string;
@@ -81,10 +88,30 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "邮箱", type: "email" },
         password: { label: "密码", type: "password" },
       },
-      authorize: async (credentials) => {
+      authorize: async (credentials, request) => {
+        const ip = getClientIp(request.headers);
+        const ipDecision = checkRateLimits([
+          { key: `auth:login:ip:1m:${ip}`, rule: LOGIN_RULES.ipPerMin },
+        ]);
+        if (!ipDecision.allowed) {
+          log.warn({ ip, retryAfterSec: ipDecision.retryAfterSec }, "登录 IP 限流命中");
+          return null;
+        }
+
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
         const { email, password } = parsed.data;
+        const emailDecision = checkRateLimits([
+          { key: `auth:login:email:10m:${email}`, rule: LOGIN_RULES.emailPer10Min },
+        ]);
+        if (!emailDecision.allowed) {
+          log.warn(
+            { ip, email, retryAfterSec: emailDecision.retryAfterSec },
+            "登录邮箱限流命中"
+          );
+          return null;
+        }
+
         const user = await prisma.user.findUnique({ where: { email } });
         // 统一返回 null，避免泄露「邮箱是否存在」
         if (!user || !user.passwordHash) return null;

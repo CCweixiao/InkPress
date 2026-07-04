@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/auth";
 import { changePasswordSchema } from "@/lib/validation/schemas";
 import { hashPassword, verifyPassword } from "@/lib/security/password";
-import { ok, fail, getRequestId } from "@/lib/api-response";
+import { readJsonBody } from "@/lib/http";
+import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
 import { ErrorCode } from "@/lib/errors";
 import { moduleLogger } from "@/lib/logger";
 
@@ -22,9 +23,9 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return fail(ErrorCode.VALIDATION_ERROR, { message: "请求体非法", requestId });
+    body = await readJsonBody(req, { limitBytes: 16 * 1024 });
+  } catch (err) {
+    return failFromError(err, requestId);
   }
 
   const parsed = changePasswordSchema.safeParse(body);
