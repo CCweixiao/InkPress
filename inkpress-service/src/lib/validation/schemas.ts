@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_IMAGE_BYTES } from "@/lib/tickets/constants";
 
 /**
  * Zod 校验 schema（PDC §9.4：所有 route handler 必须使用 Zod）。
@@ -279,6 +280,49 @@ export const createOrderSchema = z.object({
     .min(2)
     .max(32)
     .regex(/^[a-z0-9][a-z0-9_]*$/, "slug 只能包含小写字母、数字、下划线"),
+});
+
+// ===== 工单系统 =====
+export const TicketTypeSchema = z.enum([
+  "PAYMENT",
+  "LICENSE",
+  "ACCOUNT",
+  "USAGE",
+  "HELP",
+  "BUG",
+  "FEATURE",
+  "OTHER",
+]);
+export type TicketType = z.infer<typeof TicketTypeSchema>;
+
+export const TicketStatusSchema = z.enum(["OPEN", "ANSWERED", "RESOLVED", "CLOSED"]);
+export type TicketStatus = z.infer<typeof TicketStatusSchema>;
+
+export const TicketPrioritySchema = z.enum(["LOW", "NORMAL", "HIGH"]);
+export type TicketPriority = z.infer<typeof TicketPrioritySchema>;
+
+export const attachmentSchema = z.object({
+  key: z.string().min(1).max(512),
+  name: z.string().min(1).max(200),
+  size: z.number().int().nonnegative().max(MAX_IMAGE_BYTES),
+  contentType: z.string().regex(/^image\//, "仅支持图片"),
+});
+
+export const createTicketSchema = z.object({
+  type: TicketTypeSchema,
+  subject: z.string().trim().min(4, "标题至少 4 字").max(80),
+  description: z.string().trim().min(10, "描述至少 10 字").max(5000),
+  attachments: z.array(attachmentSchema).max(10).default([]),
+});
+
+export const createTicketReplySchema = z.object({
+  content: z.string().trim().min(1, "回复内容不能为空").max(5000),
+  attachments: z.array(attachmentSchema).max(10).default([]),
+});
+
+export const updateTicketStatusSchema = z.object({
+  status: TicketStatusSchema,
+  priority: TicketPrioritySchema.optional(),
 });
 
 

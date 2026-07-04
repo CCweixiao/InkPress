@@ -26,7 +26,6 @@ function buildSecurityHeaders() {
     { key: "Origin-Agent-Cluster", value: "?1" },
     { key: "X-DNS-Prefetch-Control", value: "off" },
     { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
-    { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
   ];
   if (secure) {
     headers.push({
@@ -49,6 +48,7 @@ const nextConfig: NextConfig = {
     "nodemailer",
     "resend",
     "pino",
+    "ali-oss",
   ],
   turbopack: {
     // 本项目为独立项目，置于 InkPress 主仓库子目录下。Turbopack 默认会把
@@ -58,10 +58,46 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     if (process.env.SECURITY_HEADERS_ENABLE === "false") return [];
+    const privateNoIndexHeader = {
+      key: "X-Robots-Tag",
+      value: "noindex, nofollow, noarchive",
+    };
     return [
       {
         source: "/:path*",
         headers: buildSecurityHeaders(),
+      },
+      {
+        source: "/admin/:path*",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/api/:path*",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/dashboard/:path*",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/settings",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/checkout/:path*",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/login",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/register",
+        headers: [privateNoIndexHeader],
+      },
+      {
+        source: "/forgot-password",
+        headers: [privateNoIndexHeader],
       },
     ];
   },

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { ServiceHeader } from "@/components/navigation/service-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,39 +90,21 @@ export function DashboardClient({
 
   return (
     <div className="min-h-screen">
-      <header className="border-b">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-3">
-            <span className="text-base font-semibold">InkPress</span>
-            <Badge variant={user.role === "ADMIN" ? "default" : "secondary"}>
-              {user.role === "ADMIN" ? "管理员" : "用户"}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <span>{user.email}</span>
-            <Link href="/dashboard/orders" className="text-primary hover:underline">
-              我的订单
-            </Link>
-            <Link href="/settings" className="text-primary hover:underline">
-              个人信息
-            </Link>
-            {user.role === "ADMIN" && (
-              <Link href="/admin" className="text-primary hover:underline">
-                管理后台
-              </Link>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => signOut({ callbackUrl: "/login" })}
-            >
-              退出
-            </Button>
-          </div>
-        </div>
-      </header>
+      <ServiceHeader isLoggedIn email={user.email} role={user.role} />
 
       <main className="mx-auto max-w-4xl space-y-6 px-6 py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold">用户控制台</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              查看 License、订单、邀请码和售后工单。
+            </p>
+          </div>
+          <Badge variant={user.role === "ADMIN" ? "default" : "secondary"}>
+            {user.role === "ADMIN" ? "管理员" : "用户"}
+          </Badge>
+        </div>
+
         {!changed && (
           <ChangePasswordCard
             onDone={() => {
