@@ -2064,66 +2064,68 @@ export function WritingAssistant({
     await sendText(text);
   }
 
-  // keydown ref：每次渲染更新为最新闭包，stableChatKeydown 通过 ref 调用。
-  chatKeydownRef.current = (event) => {
-    if (slashOpen) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setSlashIndex((i) => Math.min(slashFiltered.length - 1, i + 1));
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setSlashIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        const cmd = slashFiltered[slashIndex] ?? slashFiltered[0];
-        if (cmd) slashSelect(cmd);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setSlashForcedClosed(true);
-        return;
-      }
-    }
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void submit();
-      return;
-    }
-    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-      const el = event.currentTarget;
-      const atFirstLine =
-        el.value.slice(0, el.selectionStart).indexOf("\n") === -1;
-      const atLastLine =
-        el.value.slice(el.selectionStart).indexOf("\n") === -1;
-      if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
-        event.preventDefault();
-        const next =
-          historyIndex.current === null
-            ? inputHistory.length - 1
-            : Math.max(0, historyIndex.current - 1);
-        historyIndex.current = next;
-        setInput(inputHistory[next]);
-      } else if (
-        event.key === "ArrowDown" &&
-        atLastLine &&
-        historyIndex.current !== null
-      ) {
-        event.preventDefault();
-        if (historyIndex.current < inputHistory.length - 1) {
-          historyIndex.current += 1;
-          setInput(inputHistory[historyIndex.current]);
-        } else {
-          historyIndex.current = null;
-          setInput("");
+  // keydown ref：依赖较多，effect 中更新为最新闭包，stableChatKeydown 通过 ref 调用。
+  useEffect(() => {
+    chatKeydownRef.current = (event) => {
+      if (slashOpen) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setSlashIndex((i) => Math.min(slashFiltered.length - 1, i + 1));
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setSlashIndex((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          const cmd = slashFiltered[slashIndex] ?? slashFiltered[0];
+          if (cmd) slashSelect(cmd);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setSlashForcedClosed(true);
+          return;
         }
       }
-    }
-  };
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void submit();
+        return;
+      }
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        const el = event.currentTarget;
+        const atFirstLine =
+          el.value.slice(0, el.selectionStart).indexOf("\n") === -1;
+        const atLastLine =
+          el.value.slice(el.selectionStart).indexOf("\n") === -1;
+        if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
+          event.preventDefault();
+          const next =
+            historyIndex.current === null
+              ? inputHistory.length - 1
+              : Math.max(0, historyIndex.current - 1);
+          historyIndex.current = next;
+          setInput(inputHistory[next]);
+        } else if (
+          event.key === "ArrowDown" &&
+          atLastLine &&
+          historyIndex.current !== null
+        ) {
+          event.preventDefault();
+          if (historyIndex.current < inputHistory.length - 1) {
+            historyIndex.current += 1;
+            setInput(inputHistory[historyIndex.current]);
+          } else {
+            historyIndex.current = null;
+            setInput("");
+          }
+        }
+      }
+    };
+  });
 
   // 最新一条助手消息的索引：过程步骤（意图/代码源/Skill/素材 + 上下文计量）
   // 仅在此轮展示，历史轮次折叠掉这些过程块，避免多轮时「步骤重复、中间夹着上下文 tokens」。
