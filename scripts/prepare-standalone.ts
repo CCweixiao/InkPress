@@ -146,7 +146,7 @@ copyInto(path.join(root, "prisma", "migrations"), "migrations", "prisma/migratio
 //    Electron 42 的 Node ABI=146，与标准 Node 22 的 prebuilt ABI=127 不匹配）
 ensureNativeBindingForElectron();
 
-// 6-8. esbuild bundle + prune + slimBundle（esbuild build 异步，用 IIFE 包装）
+// 6-10. esbuild bundle + prune + slimBundle + bytecode（esbuild build 异步，用 IIFE 包装）
 void (async () => {
   // 6. esbuild bundle：把 925 MB node_modules 压成单个 server.bundle.js
   await bundleServerJs();
@@ -154,6 +154,10 @@ void (async () => {
   pruneBundledNodeModules();
   // 8. 瘦身：剔除 externals 残留的 .d.ts / .map / .md 等
   slimBundle();
+  // 9. 复制 bytenode 到 bundle/node_modules（运行时薄加载器 require('bytenode') 用）
+  ensureBytenodeInBundle();
+  // 10. server.js → server.jsc + 薄加载器（V8 字节码保护，防逆向）
+  compileBytecode();
   console.log("✓ standalone bundle 准备完成：" + path.relative(root, bundle));
 })().catch((err) => {
   console.error("✗ prepare-standalone 失败:", err);
@@ -1178,4 +1182,112 @@ function pruneBundledNodeModules(): void {
     `    ✓ 删除 ${removedPkgs} 个非 externals 包 + .pnpm（约 ${(removedBytes / 1024 / 1024).toFixed(1)} MB）`
   );
   console.log(`    ✓ externals 闭包保留：${closure.size} 个包`);
+}
+
+/* ============ Bytecode 保护：server.js → server.jsc + 薄加载器 ============ */
+
+/**
+ * 解析 Electron 二进制绝对路径。
+ *
+ * `require('electron')` 执行 electron 包的 index.js，返回当前平台 Electron 可执行文件
+ * 的绝对路径（如 node_modules/electron/dist/Electron.app/Contents/MacOS/Electron）。
+ * 回退到 node_modules/.bin/electron（cli.js 包装器）。
+ *
+ * 必须用 Electron 二进制（而非系统 Node）编译 bytecode：V8 字节码绑定 V8 版本，
+ * Electron 42 内嵌 V8 14.8.x，系统 Node 22 是 V8 12.4.x，跨版本加载 .jsc 会
+ * ERR_INVALID_BYTECODE。
+ */
+function resolveElectronBinary(): string {
+  try {
+    const projectRequire = createRequire(path.join(root, "package.json"));
+    const resolved = projectRequire("electron");
+    if (typeof resolved === "string" && fs.existsSync(resolved)) {
+      return resolved;
+    }
+  } catch {
+    /* fallthrough */
+  }
+  const fallback = path.join(root, "node_modules", ".bin", "electron");
+  if (fs.existsSync(fallback)) return fallback;
+  console.error(
+    "  ✗ 无法解析 Electron 二进制路径（require('electron') 失败，且 node_modules/.bin/electron 不存在）"
+  );
+  process.exit(1);
+}
+
+/**
+ * 把项目 node_modules/bytenode 复制到 bundle/node_modules/bytenode。
+ *
+ * bytecode 运行时的薄加载器 server.js 执行 require('bytenode') 注册 .jsc handler，
+ * 该 require 从 server.js 同级 node_modules 解析。pruneBundledNodeModules 已删除
+ * 非闭包包，bytenode 不在 externals 闭包内（仅构建期使用），因此必须显式复制。
+ *
+ * bytenode 是纯 JS 包（~5 KB 单文件，无 native 绑定，无 dependencies），直接
+ * cpSync 即可，无需依赖闭包处理。必须在 pruneBundledNodeModules / slimBundle 之后
+ * 执行，避免被清除。
+ */
+function ensureBytenodeInBundle(): void {
+  const src = path.join(root, "node_modules", "bytenode");
+  const dest = path.join(bundle, "node_modules", "bytenode");
+  if (!fs.existsSync(src)) {
+    console.error("  ✗ 项目 node_modules/bytenode 不存在，请先 pnpm add -D bytenode");
+    process.exit(1);
+  }
+  fs.cpSync(src, dest, { recursive: true, dereference: true });
+  const sizeKB = (measureSize(dest) / 1024).toFixed(1);
+  console.log(`  ✓ bytenode → node_modules/bytenode（${sizeKB} KB）`);
+}
+
+/**
+ * 用 Electron + bytenode 把 bundle/server.js 编译为 server.jsc，并覆写为薄加载器。
+ *
+ * 流程：
+ * 1. spawn(Electron, [compile-bytecode.cjs, server.js], { ELECTRON_RUN_AS_NODE: "1" })
+ * 2. 编译脚本内部：bytenode.compileFile → 写 server.jsc + server.jsc.sha256 + 薄加载器
+ * 3. 验证 server.jsc 产物存在
+ *
+ * 失败策略：
+ * - 默认 exit(1) 终止构建（bytecode 是核心保护，不应静默失败）
+ * - INKPRESS_BYTECODE_FALLBACK=1 允许回退明文 server.js（调试/紧急发布用）
+ */
+function compileBytecode(): void {
+  const compileScript = path.join(root, "scripts", "compile-bytecode.cjs");
+  const serverJs = path.join(bundle, "server.js");
+  const jscPath = path.join(bundle, "server.jsc");
+
+  if (!fs.existsSync(compileScript)) {
+    console.error(`  ✗ bytecode 编译脚本不存在: ${compileScript}`);
+    process.exit(1);
+  }
+  if (!fs.existsSync(serverJs)) {
+    console.error("  ✗ server.js 不存在，无法编译 bytecode");
+    process.exit(1);
+  }
+
+  const electronBin = resolveElectronBinary();
+  console.log(`  → 用 Electron 编译 bytecode（V8 版本一致性保证）…`);
+
+  const result = spawnSync(electronBin, [compileScript, serverJs], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+  });
+
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+
+  if (result.status !== 0 || !fs.existsSync(jscPath)) {
+    if (process.env.INKPRESS_BYTECODE_FALLBACK === "1") {
+      console.warn(
+        `  ⚠ bytecode 编译失败，INKPRESS_BYTECODE_FALLBACK=1 → 回退明文 server.js`
+      );
+      return;
+    }
+    console.error(
+      `  ✗ bytecode 编译失败（退出码 ${result.status}）。设置 INKPRESS_BYTECODE_FALLBACK=1 可回退明文 server.js`
+    );
+    process.exit(1);
+  }
+
+  console.log(`  ✓ bytecode 保护已启用：server.jsc + 薄加载器`);
 }

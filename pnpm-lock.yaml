@@ -222,6 +222,9 @@ importers:
       '@types/react-dom':
         specifier: ^19
         version: 19.2.3(@types/react@19.2.17)
+      bytenode:
+        specifier: ^1.6.0
+        version: 1.6.0
       concurrently:
         specifier: ^10.0.3
         version: 10.0.3
@@ -3050,6 +3053,10 @@ packages:
 
   builtin-status-codes@3.0.0:
     resolution: {integrity: sha512-HpGFw18DgFWlncDfjTa2rcQ4W88O1mC8e8yZ2AvQY5KDaktSTwo+KRf6nHK6FRI5FyRyb/5T6+TSxfP7QyGsmQ==}
+
+  bytenode@1.6.0:
+    resolution: {integrity: sha512-4FAoCc0ixe18UCqlQr1hJKb3o6tNN6J35e+NCu62W87sVqGkW+6lL0FEwv0hYojqDM/6SunCllc9mZOYnDhjhA==}
+    hasBin: true
 
   bytes@3.1.2:
     resolution: {integrity: sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==}
@@ -9058,6 +9065,8 @@ snapshots:
       - supports-color
 
   builtin-status-codes@3.0.0: {}
+
+  bytenode@1.6.0: {}
 
   bytes@3.1.2: {}
 
