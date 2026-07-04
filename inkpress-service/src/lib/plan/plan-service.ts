@@ -37,6 +37,8 @@ export interface PublicPlan {
   features: string[];
   highlight: string | null;
   sortOrder: number;
+  /** ACTIVE 可购买；INACTIVE 仅展示不可购买 */
+  status: string;
 }
 
 export interface AdminPlan extends PublicPlan {
@@ -60,6 +62,7 @@ function toPublicPlan(row: {
   featuresJson: string;
   highlight: string | null;
   sortOrder: number;
+  status: string;
 }): PublicPlan {
   const priceYuan = row.priceCents / 100;
   const discountCents = row.discountPriceCents ?? null;
@@ -113,6 +116,7 @@ function toPublicPlan(row: {
     features,
     highlight: row.highlight,
     sortOrder: row.sortOrder,
+    status: row.status,
   };
 }
 
@@ -156,6 +160,7 @@ const PUBLIC_SELECT = {
   featuresJson: true,
   highlight: true,
   sortOrder: true,
+  status: true,
 } as const;
 
 const ADMIN_SELECT = {
@@ -165,11 +170,20 @@ const ADMIN_SELECT = {
   updatedAt: true,
 } as const;
 
-/** 公开端点：只返回 ACTIVE，按 sortOrder 升序 */
+/**
+ * 公开端点：返回 ACTIVE 与 INACTIVE 计划。
+ * - ACTIVE：可正常购买
+ * - INACTIVE：仅展示不可购买（删除才彻底不显示）
+ * 排序：ACTIVE 优先，再按 sortOrder、createdAt。
+ */
 export async function listPublicPlans(): Promise<PublicPlan[]> {
   const rows = await prisma.subscriptionPlan.findMany({
-    where: { status: "ACTIVE" },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    where: { status: { in: ["ACTIVE", "INACTIVE"] } },
+    orderBy: [
+      { status: "asc" },
+      { sortOrder: "asc" },
+      { createdAt: "asc" },
+    ],
     select: PUBLIC_SELECT,
   });
   return rows.map(toPublicPlan);
