@@ -110,6 +110,25 @@ rsync -az --delete \
   "$SSH_HOST:$REMOTE/"
 echo "    ✅ 推送完成"
 
+# 同步本地 .env.production（如果存在）
+# 工作流：本地维护 .env.production 作为生产配置单一来源，release 时自动推送
+# .env.production 被 .gitignore 覆盖，不会进 git
+if [ -f .env.production ]; then
+  echo "    同步 .env.production..."
+  # 服务器侧备份现有 .env.production
+  ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_HOST" "
+    cd $REMOTE_DIR
+    [ -f .env.production ] && cp .env.production .env.production.bak.\$(date +%Y%m%d-%H%M%S) 2>/dev/null || true
+  " 2>/dev/null
+  # scp 推送（密钥通过 SSH 加密传输）
+  scp -i "$SSH_KEY" -P "$SSH_PORT" .env.production "$SSH_HOST:$REMOTE_DIR/.env.production" >/dev/null
+  ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_HOST" "chmod 600 $REMOTE_DIR/.env.production" 2>/dev/null
+  echo "    ✅ .env.production 已同步（权限 600，旧版本已备份）"
+else
+  echo "    ℹ️  本地无 .env.production，跳过同步（服务器现有配置不变）"
+  echo "       如需本地维护生产配置：scp -i $SSH_KEY -P $SSH_PORT $SSH_HOST:$REMOTE_DIR/.env.production .env.production"
+fi
+
 # ===== Stage 4: 服务器侧构建镜像并启动 =====
 echo ""
 echo ">>> Stage 4/5: 服务器构建镜像 + 拉起容器..."
