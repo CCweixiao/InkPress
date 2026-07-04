@@ -22,6 +22,11 @@ function buildSecurityHeaders() {
       key: "Permissions-Policy",
       value: "camera=(), microphone=(), geolocation=()",
     },
+    { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+    { key: "Origin-Agent-Cluster", value: "?1" },
+    { key: "X-DNS-Prefetch-Control", value: "off" },
+    { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
+    { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
   ];
   if (secure) {
     headers.push({

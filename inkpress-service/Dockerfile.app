@@ -32,6 +32,8 @@ COPY --chown=nextjs:nodejs .next/standalone/.next ./.next
 
 # 3) 静态资源（standalone 默认不含 .next/static）
 COPY --chown=nextjs:nodejs .next/static ./.next/static
+# public 静态资源（standalone 默认也不含 public）
+COPY --chown=nextjs:nodejs public ./public
 
 # 4) Prisma 生成代码（runtime 必需）+ migrations（migrate deploy 用）+ config
 COPY --chown=nextjs:nodejs src/generated ./src/generated
