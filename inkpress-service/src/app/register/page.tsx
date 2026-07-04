@@ -14,7 +14,7 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -55,7 +55,7 @@ export default function RegisterPage() {
         setSendHint(data?.error?.message ?? "发送失败");
         return;
       }
-      setSendHint("验证码已发送，10 分钟内有效（开发模式见控制台 / data/dev-mail.log）");
+      setSendHint("验证码已发送，10 分钟内有效，请查收邮箱");
       startCooldown();
     } catch {
       setSendHint("网络错误，请重试");
@@ -67,12 +67,16 @@ export default function RegisterPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (password !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, code, name: name || undefined }),
+        body: JSON.stringify({ email, password, code }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -149,15 +153,6 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="name">昵称（可选）</Label>
-              <Input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-1.5">
               <Label htmlFor="password">密码</Label>
               <Input
                 id="password"
@@ -168,6 +163,18 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">至少 8 位，需含字母与数字</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="confirmPassword">确认密码</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
             </div>
 
             {error && (
