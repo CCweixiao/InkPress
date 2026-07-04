@@ -31,7 +31,7 @@ export function GuideView({
             <BookOpen className="h-5 w-5 text-primary" />
             <div>
               <h1 className="text-lg font-semibold">使用指引</h1>
-              <p className="text-xs text-muted-foreground">InkPress Service 本地手册</p>
+              <p className="text-xs text-muted-foreground">InkPress 产品手册</p>
             </div>
           </div>
           <nav className="space-y-5">
