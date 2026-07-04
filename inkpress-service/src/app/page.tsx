@@ -33,6 +33,7 @@ export default async function Home() {
         features: p.features,
         highlight: p.highlight,
         sortOrder: p.sortOrder,
+        status: p.status,
       }))}
     />
   );
