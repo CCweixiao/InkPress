@@ -36,6 +36,32 @@ type LogCtx = {
   deviceIdHash?: string | null;
 };
 
+function parseMetadata(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function appMetadata(input: ActivateLicenseInput): Record<string, unknown> {
+  const app: Record<string, string> = {};
+  if (input.app.buildNumber) app.buildNumber = input.app.buildNumber;
+  if (input.app.channel) app.channel = input.app.channel;
+  return Object.keys(app).length > 0 ? { app } : {};
+}
+
+function mergeMetadata(
+  existing: string | null | undefined,
+  patch: Record<string, unknown>
+): string {
+  return JSON.stringify({ ...parseMetadata(existing), ...patch });
+}
+
 /** 用日志包裹业务：scope 显式给出 logResult（默认 ALLOWED）；AppError → DENIED，其余 → ERROR。 */
 async function withLog<T>(
   ctx: LogCtx,
@@ -87,6 +113,7 @@ export interface ActivateResult {
   licenseToken: string;
   activationSecret: string;
   nextCheckAt: string;
+  metadata: Record<string, unknown>;
   inviterCode?: string;
 }
 
@@ -179,12 +206,14 @@ export async function activateLicense(opts: {
               userAgentLast: ua,
               activationSecretEnc: enc,
               activationSecretHash: secretFingerprint(plaintext),
+              metadataJson: mergeMetadata(existing.metadataJson, appMetadata(input)),
             },
           });
           return {
             activationId: existing.id,
             secret: plaintext,
             effectiveExpiresAt: license.effectiveExpiresAt,
+            metadata: parseMetadata(mergeMetadata(existing.metadataJson, appMetadata(input))),
           };
         }
 
@@ -229,6 +258,7 @@ export async function activateLicense(opts: {
             ipLast: ip,
             userAgentLast: ua,
             lastValidatedAt: now,
+            metadataJson: JSON.stringify(appMetadata(input)),
           },
         });
 
@@ -243,6 +273,7 @@ export async function activateLicense(opts: {
           activationId: created.id,
           secret: g.plaintext,
           effectiveExpiresAt,
+          metadata: appMetadata(input),
         };
       });
 
@@ -271,6 +302,7 @@ export async function activateLicense(opts: {
         licenseToken,
         activationSecret: txResult.secret,
         nextCheckAt,
+        metadata: txResult.metadata,
       };
       if (license.inviterCode) result.inviterCode = license.inviterCode;
       return { result, log: { licenseKeyId: license.id, activationId: txResult.activationId } };
@@ -291,6 +323,7 @@ export interface ValidateResult {
   licenseToken?: string;
   nextCheckAt?: string;
   offlineGraceSeconds?: number;
+  metadata?: Record<string, unknown>;
   message?: string;
 }
 
@@ -400,6 +433,7 @@ export async function validateLicense(opts: {
         licenseToken,
         nextCheckAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
         offlineGraceSeconds: OFFLINE_GRACE_SECONDS,
+        metadata: parseMetadata(activation.metadataJson),
       };
       return { result: res, log: { licenseKeyId: license.id, activationId: activation.id } };
     }
