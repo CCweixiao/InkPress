@@ -101,6 +101,26 @@ export function computeEffectiveExpiresAt(
   return d;
 }
 
+/**
+ * License 激活生命周期状态：由 firstActivatedAt / effectiveExpiresAt 派生，
+ * 与管理态 status（ENABLED/DISABLED/REVOKED）正交。
+ *
+ * - PENDING：从未被激活（firstActivatedAt === null）
+ * - ACTIVATED：已激活且未过期（firstActivatedAt !== null && (effectiveExpiresAt === null || > now)）
+ * - EXPIRED：已激活且过期（firstActivatedAt !== null && effectiveExpiresAt <= now）
+ */
+export type LicenseLifecycle = "PENDING" | "ACTIVATED" | "EXPIRED";
+
+export function computeLicenseLifecycle(
+  firstActivatedAt: Date | null,
+  effectiveExpiresAt: Date | null,
+  now: Date = new Date()
+): LicenseLifecycle {
+  if (firstActivatedAt === null) return "PENDING";
+  if (effectiveExpiresAt === null) return "ACTIVATED";
+  return effectiveExpiresAt.getTime() <= now.getTime() ? "EXPIRED" : "ACTIVATED";
+}
+
 /** 有效期模板的人类可读标签（列表/详情展示） */
 export function durationLabel(
   kind: string,

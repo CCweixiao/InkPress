@@ -2,7 +2,10 @@ import Link from "next/link";
 import { listLicenses } from "@/lib/license/admin-service";
 import { durationLabel } from "@/lib/license/key";
 import { GenerateLicenseDialog } from "@/components/admin/generate-license-dialog";
-import { LicenseStatusBadge } from "@/components/admin/status-badge";
+import {
+  LicenseStatusBadge,
+  LicenseLifecycleBadge,
+} from "@/components/admin/status-badge";
 import { Pager } from "@/components/admin/pager";
 import { formatDate } from "@/lib/utils";
 
@@ -18,12 +21,18 @@ export default async function LicensesPage({
   const status = sp.status;
   const search = sp.search;
   const batchNo = sp.batchNo;
+  const lifecycle = sp.lifecycle as
+    | "PENDING"
+    | "ACTIVATED"
+    | "EXPIRED"
+    | undefined;
   const { items, total } = await listLicenses({
     page,
     pageSize: PAGE_SIZE,
     status,
     search,
     batchNo,
+    lifecycle,
   });
 
   return (
@@ -43,6 +52,16 @@ export default async function LicensesPage({
           <option value="ENABLED">启用</option>
           <option value="DISABLED">已禁用</option>
           <option value="REVOKED">已撤销</option>
+        </select>
+        <select
+          name="lifecycle"
+          defaultValue={lifecycle ?? ""}
+          className="h-9 rounded-md border border-input bg-background px-2"
+        >
+          <option value="">全部激活状态</option>
+          <option value="PENDING">待激活</option>
+          <option value="ACTIVATED">已激活</option>
+          <option value="EXPIRED">已过期</option>
         </select>
         <input
           name="search"
@@ -69,6 +88,7 @@ export default async function LicensesPage({
               <th className="px-3 py-2">有效期</th>
               <th className="px-3 py-2">设备</th>
               <th className="px-3 py-2">状态</th>
+              <th className="px-3 py-2">激活状态</th>
               <th className="px-3 py-2">归因</th>
               <th className="px-3 py-2">批次</th>
               <th className="px-3 py-2">创建</th>
@@ -78,7 +98,7 @@ export default async function LicensesPage({
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
                   暂无 License
                 </td>
               </tr>
@@ -97,6 +117,9 @@ export default async function LicensesPage({
                 </td>
                 <td className="px-3 py-2">
                   <LicenseStatusBadge status={it.status} />
+                </td>
+                <td className="px-3 py-2">
+                  <LicenseLifecycleBadge lifecycle={it.lifecycle} />
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {it.inviterCode ?? "—"}
@@ -124,7 +147,7 @@ export default async function LicensesPage({
         pageSize={PAGE_SIZE}
         total={total}
         basePath="/admin/licenses"
-        searchParams={{ status, search, batchNo }}
+        searchParams={{ status, search, batchNo, lifecycle }}
       />
     </div>
   );

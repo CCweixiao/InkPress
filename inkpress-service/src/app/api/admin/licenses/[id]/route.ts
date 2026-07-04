@@ -1,6 +1,10 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin-guard";
-import { getLicenseDetail, updateLicense } from "@/lib/license/admin-service";
+import {
+  getLicenseDetail,
+  updateLicense,
+  deleteLicense,
+} from "@/lib/license/admin-service";
 import { updateLicenseSchema } from "@/lib/validation/schemas";
 import { getClientIp, truncateUa } from "@/lib/http";
 import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
@@ -47,7 +51,7 @@ export async function PATCH(
     }
     const detail = await updateLicense(
       id,
-      { status: parsed.data.status, note: parsed.data.note },
+      { status: parsed.data.status, note: parsed.data.note, extendDays: parsed.data.extendDays },
       {
         id: session.user.id,
         ip: getClientIp(req.headers),
@@ -55,6 +59,29 @@ export async function PATCH(
       }
     );
     return ok(detail, { requestId });
+  } catch (err) {
+    if (err instanceof AppError) {
+      return fail(err.code, { message: err.message, requestId });
+    }
+    return failFromError(err, requestId);
+  }
+}
+
+/** DELETE /api/admin/licenses/:id — 硬删除（仅待激活/已过期） */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const requestId = getRequestId(req.headers);
+  try {
+    const session = await requireAdmin();
+    const { id } = await params;
+    const result = await deleteLicense(id, {
+      id: session.user.id,
+      ip: getClientIp(req.headers),
+      ua: truncateUa(req.headers.get("user-agent")),
+    });
+    return ok(result, { requestId });
   } catch (err) {
     if (err instanceof AppError) {
       return fail(err.code, { message: err.message, requestId });
