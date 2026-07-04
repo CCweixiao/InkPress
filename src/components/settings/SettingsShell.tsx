@@ -11,6 +11,7 @@ import { SystemConfigManager, type ConfigTab } from "./SystemConfigManager";
 import { LogsViewer } from "./LogsViewer";
 import { UsageDashboard } from "./UsageDashboard";
 import { ThemeManager, type ThemeItem } from "@/components/themes/ThemeManager";
+import { LicensePanel } from "@/components/license/LicensePanel";
 import {
   SETTINGS_NAV,
   findNavNode,
@@ -150,6 +151,9 @@ export function SettingsShell({ themes }: { themes: ThemeItem[] }) {
         </div>
         <div className={activeKey === "theme" ? "block" : "hidden"}>
           <ThemeManager themes={themes} />
+        </div>
+        <div className={activeKey === "license" ? "block" : "hidden"}>
+          <LicensePanel />
         </div>
         <div className={isConfigTab(activeKey) ? "block" : "hidden"}>
           <SystemConfigManager activeTab={isConfigTab(activeKey) ? activeKey : "agent"} />

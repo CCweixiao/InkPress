@@ -4,6 +4,7 @@ import {
   ArticleExportTooLargeError,
   exportArticleToZip,
 } from "@/lib/article-portability-service";
+import { requireLicenseForApi } from "@/lib/license/guard";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,8 @@ export const POST = withApiLog(
   "POST /api/articles/[id]/export",
   async (req: NextRequest, { params }: Params) => {
     try {
+      const licenseBlocked = await requireLicenseForApi();
+      if (licenseBlocked) return licenseBlocked;
       const { id } = await params;
       const body = await req.json().catch(() => ({}));
       const contentMd =
