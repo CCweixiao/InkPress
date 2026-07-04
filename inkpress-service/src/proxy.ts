@@ -30,11 +30,15 @@ function buildCsp(nonce: string): string {
   const devConnect = process.env.NODE_ENV !== "production" ? " ws: wss:" : "";
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'${devScript}`,
+    // 'strict-dynamic' 允许带 nonce 的脚本动态加载子资源（Next.js chunk loading 必需）
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${devScript}`,
+    "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
     `connect-src 'self'${devConnect}`,
+    "object-src 'none'",
+    "frame-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -64,7 +68,17 @@ export const config = {
     /*
      * 覆盖页面路由（含 /login /register /dashboard /admin），排除 API、Next 静态资源、
      * 图片优化和带扩展名的静态文件。API 的非 CSP 安全头仍由 next.config.ts 下发。
+     *
+     * 必须排除 prefetch 请求：prefetch 返回的是 RSC 数据不是 HTML，给它生成 nonce 会
+     * 干扰 Next.js 的 nonce 自动注入，导致实际导航时 inline script 被拦截。
+     * 参考: https://nextjs.org/docs/app/guides/content-security-policy
      */
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\..*).*)",
+    {
+      source: "/((?!api|_next/static|_next/image|favicon.ico|.*\\..*).*)",
+      missing: [
+        { type: "header", key: "next-router-prefetch" },
+        { type: "header", key: "purpose", value: "prefetch" },
+      ],
+    },
   ],
 };
