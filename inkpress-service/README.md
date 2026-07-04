@@ -53,6 +53,8 @@ pnpm dev                      # http://localhost:3001
 | `SMTP_*` / `RESEND_API_KEY` | 对应 provider 配置 |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 首次初始化管理员；仅无 ADMIN 时生效，首登强制改密 |
 | `LICENSE_KEY_PEPPER` | License Key 哈希 pepper（`openssl rand -base64 32`） |
+| `LICENSE_KEY_VIEW_PASSWORD` | 管理后台查看完整 License Key 的二次密码；开发环境默认 `123456` |
+| `LICENSE_KEY_ENCRYPTION_SECRET` | 完整 License Key AES-256-GCM 加密密钥（`openssl rand -base64 32`）；生产建议显式配置 |
 | `ACTIVATION_SECRET_KEK` | activationSecret AES-256 加密密钥（`openssl rand -base64 32`） |
 | `LICENSE_TOKEN_PRIVATE_KEY` / `LICENSE_TOKEN_PUBLIC_KEY` | licenseToken Ed25519 签名密钥（`pnpm gen-token-key`）；缺省开发态惰性生成临时密钥 |
 | `MAIL_TIMEOUT_SEC` | 发件超时秒数（SMTP/Resend，默认 10） |
@@ -98,8 +100,9 @@ docker compose up -d --build   # http://localhost:3001
 | `GET` | `/api/me/invitation-code` | 当前用户邀请码 | session |
 | `GET` | `/api/me/licenses` | 当前用户邀请归因的 License 概况 | session |
 | `POST` | `/api/me/password` | 修改密码（含首登强制改密） | session |
-| `GET` `POST` | `/api/admin/licenses` | License 列表 / 创建（明文仅返一次） | ADMIN |
+| `GET` `POST` | `/api/admin/licenses` | License 列表 / 创建（完整 Key 加密留存，创建响应返回一次） | ADMIN |
 | `GET` `PATCH` | `/api/admin/licenses/:id` | 详情（设备/校验日志）/ 禁用·启用·撤销·改备注 | ADMIN |
+| `POST` | `/api/admin/licenses/:id/reveal-key` | 输入二次密码查看完整 License Key（审计记录） | ADMIN |
 | `POST` | `/api/admin/licenses/:id/activations/:activationId/revoke` | 解绑/撤销某台设备 | ADMIN |
 | `GET` | `/api/admin/users` | 用户列表（email/status/role 查询） | ADMIN |
 | `PATCH` | `/api/admin/users/:id` | 禁用/启用/改角色 | ADMIN |
@@ -126,8 +129,8 @@ docker compose up -d --build   # http://localhost:3001
 | `/login` | 邮箱密码登录、GitHub 登录 |
 | `/register` | 邮箱验证码注册（60s 冷却 + 多维限流） |
 | `/dashboard` | 账户信息、邀请码、归因 License 概况、首登改密、管理员入口 |
-| `/admin/licenses` | License 列表/筛选/生成（明文一次性弹窗+复制） |
-| `/admin/licenses/:id` | 详情：激活设备、校验日志、归因、禁用/启用/撤销/解绑 |
+| `/admin/licenses` | License 列表/筛选/生成（创建后展示完整 Key + 复制） |
+| `/admin/licenses/:id` | 详情：激活设备、校验日志、归因、查看完整 Key、禁用/启用/撤销/解绑 |
 | `/admin/users` | 用户状态/角色/邀请码（角色下拉、禁用启用，防自锁） |
 | `/admin/audit-logs` | 管理操作审计记录 |
 
@@ -146,7 +149,7 @@ docker compose up -d --build   # http://localhost:3001
 
 ### 安全响应头（PDC §9.1）
 
-`next.config.ts` 的 `headers()` 统一下发：`Content-Security-Policy`、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy`、`Permissions-Policy`，生产 HTTPS（`SECURE_COOKIES=true`）追加 `Strict-Transport-Security`。CSP 针对本服务小型管理 UI 调校（脚本 `self`，样式放开 `unsafe-inline` 以兼容 Tailwind v4/shadcn）。排障时 `SECURITY_HEADERS_ENABLE=false` 临时关闭。
+`next.config.ts` 的 `headers()` 统一下发：`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy`、`Permissions-Policy`，生产 HTTPS（`SECURE_COOKIES=true`）追加 `Strict-Transport-Security`。`Content-Security-Policy` 由 `src/proxy.ts` 按请求生成 nonce 后动态下发，避免阻断 Next.js 自身的 inline bootstrap 脚本；样式侧保留 `unsafe-inline` 以兼容 Tailwind v4/shadcn。排障时 `SECURITY_HEADERS_ENABLE=false` 临时关闭。
 
 ### 异常风控（PDC §9.3/§9.4）
 
@@ -195,9 +198,9 @@ inkpress-service/
 
 已完成：
 - **Phase 1**：服务骨架、Prisma + Auth.js（Credentials + GitHub）、邮箱验证码注册、密码登录、用户/角色/邀请码、限流、邮件 adapter、Docker 部署、init-admin。
-- **Phase 2**：LicenseKey/LicenseActivation/LicenseValidationLog/AuditLog 模型；管理员生成（`INKP-` 格式、peppered 哈希、明文不入库/日志/列表）/禁用/撤销/解绑 License；License 列表与详情；用户管理（状态/角色，防降级最后一个管理员）；审计日志；邀请码归因（管理端 + 用户端 `/api/me/licenses` 与 Dashboard 概况）。
+- **Phase 2**：LicenseKey/LicenseActivation/LicenseValidationLog/AuditLog 模型；管理员生成（`INKP-` 格式、peppered 哈希、完整 Key 加密留存且列表/日志不展示）/二次密码查看/禁用/撤销/解绑 License；License 列表与详情；用户管理（状态/角色，防降级最后一个管理员）；审计日志；邀请码归因（管理端 + 用户端 `/api/me/licenses` 与 Dashboard 概况）。
 - **Phase 3**：客户端 License API `/api/v1/licenses/{activate,validate,deactivate}`；Ed25519 签发的 `licenseToken`；AES-256-GCM 加密存储的 `activationSecret` + HMAC 请求签名；timestamp/nonce 防重放；激活/校验/解绑限流；每次请求写 `LicenseValidationLog`；`gen-token-key` 密钥脚本；mock 端到端冒烟（`scripts/smoke/v1-license-smoke.mjs`）。
-- **Phase 4**：安全响应头（CSP/HSTS/X-Frame 等，`next.config.ts`）；SQLite 在线备份脚本（`pnpm db:backup`）；日志脱敏完善 + `maskLicenseKey`/`maskEmail`；邮件 Provider 加固（SMTP `verify()` 连接校验 + `MAIL_FROM` 校验、Resend 超时）；异常风控（失败信号模式触发 IP 临时封禁，`RISK_*` env 可调）。
+- **Phase 4**：安全响应头（nonce CSP 位于 `src/proxy.ts`，其余安全头位于 `next.config.ts`）；SQLite 在线备份脚本（`pnpm db:backup`）；日志脱敏完善 + `maskLicenseKey`/`maskEmail`；邮件 Provider 加固（SMTP `verify()` 连接校验 + `MAIL_FROM` 校验、Resend 超时）；异常风控（失败信号模式触发 IP 临时封禁，`RISK_*` env 可调）。
 
 后续：
 - InkPress 主应用接入（激活页/启动校验/`licenseGuard`/设备指纹/Keychain 本地安全存储）；客户端代码混淆、asar/签名/完整性校验、本地异常上报。
