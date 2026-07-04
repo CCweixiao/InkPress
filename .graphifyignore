@@ -1,0 +1,8 @@
+# 子项目独立构建图谱（在 inkpress-service/ 下单独跑 graphify）
+/inkpress-service/
+
+# 文档目录走 LLM 语义抽取，code-only 模式下跳过避免噪音
+/docs/
+
+# graphify 自身产物（避免递归扫描）
+/graphify-out/
