@@ -64,7 +64,12 @@ echo "    生成 Prisma Client..."
 pnpm exec prisma generate
 
 echo "    构建 Next.js（standalone 模式）..."
-pnpm build
+# build 时强制 DATABASE_URL 指向本地 dev.db：
+# Next.js build 会加载 .env.production，其中的 DATABASE_URL=file:/data/...
+# 会触发 db.ts 的 mkdirSync('/data')，Mac 本地无权限创建根目录导致 build 失败。
+# NEXT_PUBLIC_* 仍从 .env.production 读取，正常注入客户端 bundle。
+# 运行时 DATABASE_URL 由 docker compose 的 env_file(.env.production) 注入容器。
+DATABASE_URL="file:./dev.db" pnpm build
 echo "    ✅ 构建完成"
 
 # ===== Stage 2: 准备 release 目录 =====
@@ -78,6 +83,8 @@ mkdir -p release/.next release/src
 rsync -a .next/standalone/ release/.next/standalone/
 # 静态资源
 rsync -a .next/static/ release/.next/static/
+# public 静态资源（邮件 logo 等运行时 public assets）
+rsync -a public/ release/public/
 # Prisma 生成代码（runtime 必需）
 rsync -a src/generated/ release/src/generated/
 # Prisma schema 与 migrations（容器启动 migrate deploy 需要）
