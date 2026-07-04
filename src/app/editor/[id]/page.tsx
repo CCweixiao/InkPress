@@ -1,13 +1,16 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { readContentAt } from "@/lib/content-store";
 import { EditorWorkspace } from "@/components/editor/EditorWorkspace";
+import { licenseGuard } from "@/lib/license/guard";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
 export default async function EditorPage({ params }: Params) {
+  const license = await licenseGuard();
+  if (!license.allowed) redirect("/license");
   const { id } = await params;
   const article = await prisma.article.findUnique({
     where: { id },

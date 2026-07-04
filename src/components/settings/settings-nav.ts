@@ -1,11 +1,11 @@
 import type { LucideIcon } from "lucide-react";
-import { Bot, Sparkles, Cloud, Share2, MessageCircle, ScrollText, Globe2, Coins, Palette } from "lucide-react";
+import { Bot, Sparkles, Cloud, Share2, MessageCircle, ScrollText, Globe2, Coins, Palette, KeyRound } from "lucide-react";
 
 /** 配置模块 Tab 键（与 SystemConfigManager 保持同步） */
 export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat";
 
 /** 设置导航项的完整键集合：配置模块 + 主题 + 系统日志 + Token 消耗大盘 */
-export type SettingsKey = ConfigTab | "theme" | "logs" | "usage";
+export type SettingsKey = ConfigTab | "theme" | "license" | "logs" | "usage";
 
 /** 叶子节点：对应一个具体配置/视图 */
 export type NavLeaf = {
@@ -66,6 +66,13 @@ export const SETTINGS_NAV: NavNode[] = [
     label: "主题管理",
     description: "管理文章排版主题：内置主题可编辑，支持自定义 CSS、代码高亮与主题色。",
     icon: Palette,
+  },
+  {
+    kind: "leaf",
+    key: "license",
+    label: "License",
+    description: "查看激活状态、手动刷新校验，并释放本机设备席位。",
+    icon: KeyRound,
   },
   {
     kind: "group",
