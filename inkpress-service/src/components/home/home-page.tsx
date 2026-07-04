@@ -20,6 +20,12 @@ export interface HomePlan {
   features: string[];
   highlight: string | null;
   sortOrder: number;
+  status: string;
+}
+
+/** 价格格式化：整数不显示小数，非整数保留 2 位 */
+function formatYuan(n: number): string {
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
 }
 
 interface HomePageProps {
@@ -312,20 +318,23 @@ function PlanCard({
   plan: HomePlan;
   isLoggedIn: boolean;
 }) {
-  const isHighlighted = plan.highlight !== null;
+  const isInactive = plan.status !== "ACTIVE";
+  const isHighlighted = plan.highlight !== null && !isInactive;
   const checkoutHref = `/checkout?plan=${encodeURIComponent(plan.slug)}`;
   const ctaHref = isLoggedIn
     ? checkoutHref
     : `/login?callbackUrl=${encodeURIComponent(checkoutHref)}`;
-  const ringClass =
-    plan.highlight === "popular"
+  const ringClass = isInactive
+    ? "border-border opacity-60"
+    : plan.highlight === "popular"
       ? "border-primary ring-2 ring-primary/30"
       : plan.highlight === "best_value"
         ? "border-emerald-500 ring-2 ring-emerald-500/30"
         : "border-border";
 
-  const badgeLabel =
-    plan.highlight === "popular"
+  const badgeLabel = isInactive
+    ? "已下架"
+    : plan.highlight === "popular"
       ? "最受欢迎"
       : plan.highlight === "best_value"
         ? "最佳价值"
@@ -340,14 +349,18 @@ function PlanCard({
 
   return (
     <div
-      className={`relative flex flex-col rounded-xl bg-card p-6 text-card-foreground shadow-sm transition-shadow hover:shadow-md ${ringClass}`}
+      className={`relative flex flex-col rounded-xl bg-card p-6 text-card-foreground shadow-sm transition-shadow ${isInactive ? "" : "hover:shadow-md"} ${ringClass}`}
     >
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-lg font-semibold">{plan.name}</h3>
         {badgeLabel && (
           <Badge
             variant={
-              plan.highlight === "popular" ? "default" : "success"
+              isInactive
+                ? "secondary"
+                : plan.highlight === "popular"
+                  ? "default"
+                  : "success"
             }
           >
             {badgeLabel}
@@ -362,11 +375,11 @@ function PlanCard({
 
       <div className="mb-1 flex items-end gap-2">
         <span className="text-3xl font-bold tracking-tight">
-          ¥{plan.discountYuan}
+          ¥{formatYuan(plan.discountYuan)}
         </span>
         {plan.hasDiscount && (
           <span className="pb-1 text-sm text-muted-foreground line-through">
-            ¥{plan.priceYuan}
+            ¥{formatYuan(plan.priceYuan)}
           </span>
         )}
       </div>
@@ -374,13 +387,13 @@ function PlanCard({
       <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         {plan.hasDiscount && (
           <Badge variant="warning">
-            省 ¥{plan.saveYuan}（{plan.discountPct}% off）
+            省 ¥{formatYuan(plan.saveYuan)}（{plan.discountPct}% off）
           </Badge>
         )}
         <span className="text-muted-foreground">{durationLabel}</span>
         {plan.perYearYuan !== null && (
           <span className="text-muted-foreground">
-            · 折合 ¥{plan.perYearYuan}/年
+            · 折合 ¥{formatYuan(plan.perYearYuan)}/年
           </span>
         )}
       </div>
@@ -399,13 +412,23 @@ function PlanCard({
         ))}
       </ul>
 
-      <Button
-        asChild
-        className="mt-auto"
-        variant={isHighlighted ? "default" : "outline"}
-      >
-        <Link href={ctaHref}>选择{plan.name}</Link>
-      </Button>
+      {isInactive ? (
+        <Button
+          disabled
+          className="mt-auto"
+          variant="outline"
+        >
+          已下架 · 暂停售卖
+        </Button>
+      ) : (
+        <Button
+          asChild
+          className="mt-auto"
+          variant={isHighlighted ? "default" : "outline"}
+        >
+          <Link href={ctaHref}>选择{plan.name}</Link>
+        </Button>
+      )}
     </div>
   );
 }
