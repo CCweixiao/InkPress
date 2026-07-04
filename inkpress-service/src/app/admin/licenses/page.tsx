@@ -21,6 +21,7 @@ export default async function LicensesPage({
   const status = sp.status;
   const search = sp.search;
   const batchNo = sp.batchNo;
+  const ownerEmail = sp.ownerEmail;
   const lifecycle = sp.lifecycle as
     | "PENDING"
     | "ACTIVATED"
@@ -32,6 +33,7 @@ export default async function LicensesPage({
     status,
     search,
     batchNo,
+    ownerEmail,
     lifecycle,
   });
 
@@ -66,8 +68,14 @@ export default async function LicensesPage({
         <input
           name="search"
           defaultValue={search ?? ""}
-          placeholder="指纹 / 后缀 / 备注 / 批次"
+          placeholder="指纹 / 后缀 / 备注 / 批次 / 邮箱"
           className="h-9 w-64 rounded-md border border-input bg-background px-3"
+        />
+        <input
+          name="ownerEmail"
+          defaultValue={ownerEmail ?? ""}
+          placeholder="归属用户邮箱（精确）"
+          className="h-9 w-56 rounded-md border border-input bg-background px-3"
         />
         <input
           name="batchNo"
@@ -89,6 +97,7 @@ export default async function LicensesPage({
               <th className="px-3 py-2">设备</th>
               <th className="px-3 py-2">状态</th>
               <th className="px-3 py-2">激活状态</th>
+              <th className="px-3 py-2">归属用户</th>
               <th className="px-3 py-2">归因</th>
               <th className="px-3 py-2">批次</th>
               <th className="px-3 py-2">创建</th>
@@ -98,7 +107,7 @@ export default async function LicensesPage({
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
                   暂无 License
                 </td>
               </tr>
@@ -121,6 +130,7 @@ export default async function LicensesPage({
                 <td className="px-3 py-2">
                   <LicenseLifecycleBadge lifecycle={it.lifecycle} />
                 </td>
+                <td className="px-3 py-2 text-xs">{it.ownerEmail ?? "—"}</td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {it.inviterCode ?? "—"}
                 </td>
@@ -147,7 +157,7 @@ export default async function LicensesPage({
         pageSize={PAGE_SIZE}
         total={total}
         basePath="/admin/licenses"
-        searchParams={{ status, search, batchNo, lifecycle }}
+        searchParams={{ status, search, batchNo, ownerEmail, lifecycle }}
       />
     </div>
   );

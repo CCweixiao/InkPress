@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { EmailCombobox } from "@/components/admin/email-combobox";
 
 interface CreatedKey {
   id: string;
@@ -46,6 +47,7 @@ export function GenerateLicenseDialog() {
   const [durationYears, setDurationYears] = useState("1");
   const [durationDays, setDurationDays] = useState("30");
   const [maxDevices, setMaxDevices] = useState("1");
+  const [ownerEmail, setOwnerEmail] = useState("");
   const [inviterCode, setInviterCode] = useState("");
   const [note, setNote] = useState("");
   const [batchNo, setBatchNo] = useState("");
@@ -60,6 +62,7 @@ export function GenerateLicenseDialog() {
     setDurationYears("1");
     setDurationDays("30");
     setMaxDevices("1");
+    setOwnerEmail("");
     setInviterCode("");
     setNote("");
     setBatchNo("");
@@ -80,12 +83,24 @@ export function GenerateLicenseDialog() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    const email = ownerEmail.trim();
+    if (!email) {
+      setError("请选择或填写归属用户");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("归属用户邮箱格式错误");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload: Record<string, unknown> = {
         durationKind,
         maxDevices: Number(maxDevices),
         count: Number(count),
+        ownerEmail: email,
       };
       if (durationKind === "CUSTOM_YEARS") payload.durationYears = Number(durationYears);
       if (durationKind === "CUSTOM_DAYS") payload.durationDays = Number(durationDays);
@@ -148,7 +163,7 @@ export function GenerateLicenseDialog() {
             <DialogHeader>
               <DialogTitle>生成 License Key</DialogTitle>
               <DialogDescription>
-                可选绑定邀请码做归因；明文 Key 仅在创建后显示一次。
+                必填归属用户（用户登录后在「我的 License」可见），可选邀请码做归因；明文 Key 仅在创建后显示一次。
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={submit} className="grid grid-cols-2 gap-3">
@@ -185,6 +200,16 @@ export function GenerateLicenseDialog() {
                 <Label htmlFor="ct">生成数量</Label>
                 <Input id="ct" type="number" min={1} max={100} value={count} onChange={(e) => setCount(e.target.value)} />
               </div>
+              <div className="col-span-2 space-y-1.5">
+                <Label htmlFor="oe">
+                  归属用户<span className="text-destructive"> *</span>
+                </Label>
+                <EmailCombobox
+                  value={ownerEmail}
+                  onChange={setOwnerEmail}
+                  placeholder="点击可选择最近注册的用户，或输入邮箱模糊搜索"
+                />
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ic">邀请码（可选）</Label>
                 <Input id="ic" value={inviterCode} onChange={(e) => setInviterCode(e.target.value)} placeholder="归因到邀请人" />
@@ -192,6 +217,9 @@ export function GenerateLicenseDialog() {
               <div className="col-span-2 space-y-1.5">
                 <Label htmlFor="bn">批次号（可选）</Label>
                 <Input id="bn" value={batchNo} onChange={(e) => setBatchNo(e.target.value)} placeholder="留空将自动生成" />
+                <p className="text-xs text-muted-foreground">
+                  把同一次生成的多个 Key 归到一组，便于在管理列表按批次筛选、统计与导出。生成数量 &gt; 1 时共享同一批次号；留空时系统自动生成形如 <code className="font-mono">batch-&lt;8hex&gt;</code> 的值。
+                </p>
               </div>
               <div className="col-span-2 space-y-1.5">
                 <Label htmlFor="nt">备注（可选）</Label>
@@ -226,7 +254,7 @@ function ShowKey({
       <DialogHeader>
         <DialogTitle>License Key 已生成</DialogTitle>
         <DialogDescription className="text-amber-600">
-          明文 Key 仅显示这一次，关闭后无法再次查看，请立即复制保存。
+          建议立即复制保存。后续可在 License 详情页通过「查看 Key」按钮，输入查看密码再次获取明文。
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-3">
@@ -246,7 +274,7 @@ function ShowKey({
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={onCopy}>{copied ? "已复制" : "复制 Key"}</Button>
-        <Button onClick={onClose}>我已保存，关闭</Button>
+        <Button onClick={onClose}>关闭</Button>
       </DialogFooter>
     </>
   );
@@ -268,7 +296,7 @@ function ShowKeys({
       <DialogHeader>
         <DialogTitle>已批量生成 {result.count} 个 License Key</DialogTitle>
         <DialogDescription className="text-amber-600">
-          明文 Key 仅显示这一次，关闭后无法再次查看，请立即复制保存。
+          建议立即复制保存。后续可在每条 License 详情页通过「查看 Key」按钮，输入查看密码再次获取明文。
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-3">
@@ -292,7 +320,7 @@ function ShowKeys({
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={onCopy}>{copied ? "已复制" : "全部复制"}</Button>
-        <Button onClick={onClose}>我已保存，关闭</Button>
+        <Button onClick={onClose}>关闭</Button>
       </DialogFooter>
     </>
   );

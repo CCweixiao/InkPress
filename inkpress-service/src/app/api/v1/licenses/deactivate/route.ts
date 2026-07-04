@@ -5,7 +5,7 @@ import { loadActivationAndVerify } from "@/lib/license/request-guard";
 import { writeValidationLog } from "@/lib/license/validation-log";
 import { checkRateLimits } from "@/lib/rate-limit";
 import { isIpBlocked, recordSignal } from "@/lib/risk/anomaly";
-import { getClientIp, truncateUa } from "@/lib/http";
+import { getClientIp, readTextBody, truncateUa } from "@/lib/http";
 import { ok, fail, failFromError, getRequestId } from "@/lib/api-response";
 import { AppError, ErrorCode } from "@/lib/errors";
 import type { RateLimitRule } from "@/lib/rate-limit";
@@ -39,7 +39,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const raw = await req.text();
+  let raw: string;
+  try {
+    raw = await readTextBody(req, {
+      limitBytes: 32 * 1024,
+      requireJsonContentType: true,
+    });
+  } catch (err) {
+    return failFromError(err, requestId);
+  }
 
   const ipDecision = checkRateLimits([
     { key: `lic:deactivate:ip:1m:${ip}`, rule: RULES.ipPerMin },
