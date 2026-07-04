@@ -35,6 +35,7 @@ const LICENSE_PUBLIC_FIELDS = {
   effectiveExpiresAt: true,
   maxDevices: true,
   status: true,
+  ownerEmail: true,
   inviterUserId: true,
   inviterCode: true,
   note: true,
@@ -52,6 +53,7 @@ export interface CreateLicenseInput {
   durationYears?: number;
   durationDays?: number;
   maxDevices: number;
+  ownerEmail: string;
   inviterCode?: string;
   note?: string;
   batchNo?: string;
@@ -105,6 +107,7 @@ export async function createLicense(opts: {
           durationDays: input.durationDays ?? null,
           maxDevices: input.maxDevices,
           status: "ENABLED",
+          ownerEmail: input.ownerEmail,
           inviterUserId,
           inviterCode,
           note: input.note ?? null,
@@ -128,6 +131,7 @@ export async function createLicense(opts: {
             input.durationDays
           ),
           maxDevices: input.maxDevices,
+          ownerEmail: input.ownerEmail,
           inviterCode,
           batchNo: input.batchNo ?? null,
         },
@@ -223,6 +227,7 @@ export async function createLicensesBatch(opts: {
               durationDays: input.durationDays ?? null,
               maxDevices: input.maxDevices,
               status: "ENABLED",
+              ownerEmail: input.ownerEmail,
               inviterUserId,
               inviterCode,
               note: input.note ?? null,
@@ -271,6 +276,7 @@ export async function createLicensesBatch(opts: {
         input.durationDays
       ),
       maxDevices: input.maxDevices,
+      ownerEmail: input.ownerEmail,
       inviterCode,
     },
     ip,
@@ -286,11 +292,13 @@ export interface ListLicensesParams {
   status?: string;
   search?: string;
   batchNo?: string;
+  ownerEmail?: string;
   lifecycle?: LicenseLifecycle;
 }
 
 export async function listLicenses(params: ListLicensesParams) {
-  const { page, pageSize, status, search, batchNo, lifecycle } = params;
+  const { page, pageSize, status, search, batchNo, ownerEmail, lifecycle } =
+    params;
   const now = new Date();
 
   // 激活生命周期粗筛：Prisma where 不便表达「now 与字段比较」的派生条件，
@@ -300,10 +308,15 @@ export async function listLicenses(params: ListLicensesParams) {
     ? { firstActivatedAt: lifecycle === "PENDING" ? null : { not: null } }
     : {};
 
+  // ownerEmail 已在 schema 层 trim+lower 规范化，这里同样处理一次，
+  // 避免管理员输入大小写不一导致精确筛选漏数据。
+  const ownerEmailNormalized = ownerEmail?.trim().toLowerCase() || undefined;
+
   const where = {
     AND: [
       status ? { status } : {},
       batchNo ? { batchNo } : {},
+      ownerEmailNormalized ? { ownerEmail: ownerEmailNormalized } : {},
       lifecycleCoarse,
       search
         ? {
@@ -312,6 +325,7 @@ export async function listLicenses(params: ListLicensesParams) {
               { displayKeySuffix: { contains: search } },
               { note: { contains: search } },
               { batchNo: { contains: search } },
+              { ownerEmail: { contains: search } },
             ],
           }
         : {},
