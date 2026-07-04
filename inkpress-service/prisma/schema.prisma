@@ -27,6 +27,7 @@ model User {
   invitationCode     InvitationCode?
   accounts           Account[]
   sessions           Session[]
+  orders             Order[]
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -116,6 +117,7 @@ model LicenseKey {
   effectiveExpiresAt DateTime? // 首次激活后写入，所有设备统一过期；永久=null
   maxDevices         Int                @default(1)
   status             String             @default("ENABLED") // LicenseKeyStatus: ENABLED | DISABLED | REVOKED
+  ownerEmail         String? // 归属用户邮箱（创建时绑定，用户登录后可见自己的 License）
   inviterUserId      String? // 邀请归因（创建时绑定，不在激活端绑定）
   inviterCode        String?
   note               String?
@@ -129,6 +131,7 @@ model LicenseKey {
   activations        LicenseActivation[]
 
   @@index([status])
+  @@index([ownerEmail])
   @@index([inviterUserId])
   @@index([batchNo])
   @@index([createdAt])
@@ -204,4 +207,54 @@ model AuditLog {
   @@index([actorUserId, createdAt])
   @@index([targetType, targetId])
   @@index([action, createdAt])
+}
+
+// ===== 订阅计划（首页价格展示 + 后续下单引用） =====
+model SubscriptionPlan {
+  id                 String   @id @default(cuid())
+  slug               String   @unique // year_1 / year_3 / year_5 / lifetime，URL 与外部引用
+  name               String // "1年版" / "终身版" 等展示名
+  tagline            String? // 卡片副标题，例如"最适合个人创作者"
+  durationKind       String // 复用 LicenseDurationKind: YEAR_1 | YEAR_3 | YEAR_5 | PERMANENT
+  durationYears      Int? // CUSTOM_YEARS 时填，便于派生"年单价"
+  maxDevices         Int
+  priceCents         Int // 原价（分），¥99 → 9900
+  discountPriceCents Int? // 折扣价（分），null 表示当前无折扣
+  featuresJson       String   @default("[]") // JSON string[]，卡片特性列表
+  highlight          String? // "popular" | "best_value" | null，用于徽章渲染
+  sortOrder          Int      @default(0)
+  status             String   @default("ACTIVE") // ACTIVE | INACTIVE
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([status, sortOrder])
+}
+
+// ===== 订单（支付宝当面付自助购买） =====
+model Order {
+  id             String    @id @default(cuid())
+  userId         String
+  outTradeNo     String    @unique // InkPress 内部订单号，传给支付宝（≤32 字符）
+  planSlug       String // 套餐 slug（下单时快照）
+  planName       String // 套餐展示名（下单时快照，与 Plan 当前配置解耦）
+  planConfigJson String    @default("{}") // License 生成参数快照（durationKind/durationYears/maxDevices）
+  subject        String // 商品标题（传给支付宝的 subject）
+  amountCents    Int // 实付金额（分），下单时从 Plan 快照
+  status         String    @default("PENDING") // OrderStatus: PENDING | PAID | CLOSED | REFUNDED
+  tradeNo        String? // 支付宝流水号（回调写入）
+  buyerLogonId   String? // 买家支付宝账号（回调写入，便于排障）
+  licenseKeyId   String? // 支付成功后生成的 License Key ID（软引用，不建外键）
+  paidAt         DateTime?
+  closedAt       DateTime?
+  notifyCount    Int       @default(0) // 回调到达次数（幂等排障用）
+  lastNotifyAt   DateTime?
+  createdIp      String?
+  createdUa      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([outTradeNo])
 }
