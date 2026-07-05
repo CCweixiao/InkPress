@@ -154,6 +154,9 @@ export const PlanStatusSchema = z.enum(["ACTIVE", "INACTIVE"]);
 /** 价格（分）：1 分 ~ 1000 万元 */
 const priceCentsField = z.number().int().min(1).max(1_000_000_00);
 
+/** 每日库存上限：null = 不限；0 = 停售；正整数 = 上限 */
+const dailyStockLimitField = z.number().int().min(0).max(100000).nullable();
+
 /** 创建订阅计划 */
 export const createPlanSchema = z
   .object({
@@ -174,6 +177,7 @@ export const createPlanSchema = z
     highlight: PlanHighlightSchema.nullable().optional(),
     sortOrder: z.number().int().min(0).max(9999).default(0),
     status: PlanStatusSchema.default("ACTIVE"),
+    dailyStockLimit: dailyStockLimitField.optional(),
   })
   .refine((v) => v.discountPriceCents === null || v.discountPriceCents === undefined || v.discountPriceCents < v.priceCents, {
     message: "折扣价必须低于原价",
@@ -194,6 +198,7 @@ export const updatePlanSchema = z
     highlight: PlanHighlightSchema.nullable().optional(),
     sortOrder: z.number().int().min(0).max(9999).optional(),
     status: PlanStatusSchema.optional(),
+    dailyStockLimit: dailyStockLimitField.optional(),
   })
   .refine(
     (v) =>

@@ -66,7 +66,12 @@ export function CheckoutClient({
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
-          setError(data?.error?.message ?? "创建订单失败");
+          const code = data?.error?.code;
+          setError(
+            code === "PLAN_SOLD_OUT"
+              ? "今日库存已售罄，请明天 0 点后再试"
+              : (data?.error?.message ?? "创建订单失败")
+          );
           setPhase("error");
           return;
         }

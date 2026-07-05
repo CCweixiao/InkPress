@@ -60,9 +60,9 @@ export default async function PlansPage() {
               <th className="px-3 py-2">原价</th>
               <th className="px-3 py-2">折扣价</th>
               <th className="px-3 py-2">省</th>
+              <th className="px-3 py-2">今日库存</th>
               <th className="px-3 py-2">亮点</th>
               <th className="px-3 py-2">状态</th>
-              <th className="px-3 py-2">更新时间</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -78,6 +78,10 @@ export default async function PlansPage() {
               const save = it.hasDiscount
                 ? formatYuan(it.priceCents - (it.discountPriceCents ?? it.priceCents))
                 : "—";
+              const stockLabel =
+                it.dailyStockLimit === null
+                  ? "不限"
+                  : `${it.dailySoldToday}/${it.dailyStockLimit}`;
               return (
                 <tr key={it.id} className="border-t hover:bg-muted/30">
                   <td className="px-3 py-2 font-mono text-xs">{it.sortOrder}</td>
@@ -119,6 +123,21 @@ export default async function PlansPage() {
                       </span>
                     )}
                   </td>
+                  <td className="px-3 py-2 text-xs">
+                    {it.dailyStockLimit === null ? (
+                      <span className="text-muted-foreground">{stockLabel}</span>
+                    ) : it.soldOut ? (
+                      <Badge variant="destructive">售罄 {stockLabel}</Badge>
+                    ) : (
+                      <Badge
+                        variant={
+                          (it.dailyRemaining ?? 0) <= 1 ? "warning" : "secondary"
+                        }
+                      >
+                        剩 {it.dailyRemaining} · {stockLabel}
+                      </Badge>
+                    )}
+                  </td>
                   <td className="px-3 py-2">
                     <HighlightBadge highlight={it.highlight} />
                   </td>
@@ -127,12 +146,19 @@ export default async function PlansPage() {
                       {it.status === "ACTIVE" ? "上架" : "下架"}
                     </Badge>
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {formatDate(it.updatedAt)}
-                  </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap gap-1">
                       <PlanEditDialog mode="edit" plan={it} />
+                      {it.dailyStockLimit !== null && (
+                        <AdminAction
+                          label="重置库存"
+                          href={`/api/admin/plans/${it.id}/reset-stock`}
+                          method="POST"
+                          body={{}}
+                          size="sm"
+                          variant="outline"
+                        />
+                      )}
                       <AdminAction
                         label={it.status === "ACTIVE" ? "下架" : "上架"}
                         href={`/api/admin/plans/${it.id}`}

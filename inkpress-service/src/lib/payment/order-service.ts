@@ -70,6 +70,31 @@ export async function createOrder(opts: {
     throw new AppError(ErrorCode.NOT_FOUND, "套餐不存在或已下架");
   }
 
+  // 1b. 每日库存校验：dailyStockLimit=null 不限；>=0 时统计今日 PENDING+PAID 订单数
+  // 防止触发支付宝小微商户单日收款限额（默认 ≤1000 元/日）
+  if (plan.dailyStockLimit !== null) {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    // 管理员手动重置：resetAt > startOfToday 时，从此时间点起算
+    const since =
+      plan.dailyStockResetAt && plan.dailyStockResetAt > startOfToday
+        ? plan.dailyStockResetAt
+        : startOfToday;
+    const soldToday = await prisma.order.count({
+      where: {
+        planSlug,
+        status: { in: ["PENDING", "PAID"] },
+        createdAt: { gte: since },
+      },
+    });
+    if (soldToday >= plan.dailyStockLimit) {
+      throw new AppError(
+        ErrorCode.PLAN_SOLD_OUT,
+        "今日库存已售罄，请明天再来或联系客服"
+      );
+    }
+  }
+
   // 2. 防止未支付订单堆积
   const pendingCount = await prisma.order.count({
     where: { userId, status: "PENDING" },
