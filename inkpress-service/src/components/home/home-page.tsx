@@ -100,7 +100,7 @@ function HeroSection({
             面向数字媒体创作者的 AI 内容系统
           </div>
           <h1 className="text-balance text-5xl font-bold leading-[1.02] tracking-normal md:text-7xl">
-            InkPress
+            InkPress <span className="text-slate-100">·</span> 数字文刊工坊
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-8 text-slate-200 md:text-xl">
             让创作者把注意力留给判断、观点与表达，把检索、工具调用、写作、排版和交付收束进同一个创作系统。
@@ -481,7 +481,7 @@ function SiteFooter() {
       <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 text-sm text-muted-foreground sm:px-6 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">
           <Image src="/inkpress-logo.png" alt="" width={22} height={22} className="h-5 w-5 rounded" />
-          <span>© {new Date().getFullYear()} InkPress. All rights reserved.</span>
+          <span>© {new Date().getFullYear()} InkPress · 数字文刊工坊</span>
         </div>
         <nav className="flex flex-wrap items-center gap-4">
           <Link href="/dashboard" className="hover:text-foreground">控制台</Link>

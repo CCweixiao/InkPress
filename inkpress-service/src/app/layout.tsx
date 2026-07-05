@@ -8,11 +8,11 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://inkpress.app";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "InkPress · AI 公众号写作排版与内容发布工具",
-    template: "%s · InkPress",
+    default: "InkPress · 数字文刊工坊",
+    template: "%s · InkPress 数字文刊工坊",
   },
   description:
-    "InkPress 是面向内容创作者和团队的公众号写作、Markdown 排版、素材管理、AI 辅助创作、文章预览与内容发布工具。",
+    "InkPress 数字文刊工坊是面向数字媒体创作者和团队的 AI 写作、Markdown 排版、素材管理、AI 辅助创作、文章预览与内容发布工具。",
   keywords: [
     "InkPress",
     "公众号排版工具",
