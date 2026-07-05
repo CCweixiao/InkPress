@@ -20,17 +20,7 @@ export function LicenseGateDialog() {
   const [licenseKey, setLicenseKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [serviceBaseUrl, setServiceBaseUrl] = useState("");
   const purchaseLinks = getPurchaseLinks();
-
-  // 初始化服务地址
-  useEffect(() => {
-    if (!serviceBaseUrl) {
-      setServiceBaseUrl(
-        status?.state?.serviceBaseUrl ?? status?.defaultServiceBaseUrl ?? ""
-      );
-    }
-  }, [status, serviceBaseUrl]);
 
   // 弹窗关闭时清空错误
   useEffect(() => {
@@ -55,7 +45,7 @@ export function LicenseGateDialog() {
       const res = await fetch("/api/license/activate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ licenseKey, serviceBaseUrl }),
+        body: JSON.stringify({ licenseKey }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -111,17 +101,8 @@ export function LicenseGateDialog() {
               autoFocus
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="gate-service">服务地址</Label>
-            <Input
-              id="gate-service"
-              value={serviceBaseUrl}
-              onChange={(e) => setServiceBaseUrl(e.target.value)}
-              placeholder="https://www.longoflow.com"
-            />
-          </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" disabled={busy || !licenseKey.trim() || !serviceBaseUrl.trim()} className="w-full">
+          <Button type="submit" disabled={busy || !licenseKey.trim()} className="w-full">
             <KeyRound className="h-4 w-4" />
             {busy ? "处理中..." : "激活 License"}
           </Button>

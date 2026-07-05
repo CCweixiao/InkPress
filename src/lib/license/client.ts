@@ -77,8 +77,28 @@ function publicState(state: LocalLicenseState | null): LicenseRuntimeStatus["sta
   return safe;
 }
 
-function isNetworkError(error: unknown): boolean {
-  return error instanceof TypeError || error instanceof Error;
+export function isLicenseServiceNetworkError(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "NetworkError";
+  }
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return (
+      code === "ECONNREFUSED" ||
+      code === "ECONNRESET" ||
+      code === "ETIMEDOUT" ||
+      code === "ENOTFOUND" ||
+      code === "EAI_AGAIN"
+    );
+  }
+  return false;
+}
+
+function isExpiredIso(value: string | null | undefined, nowMs = Date.now()): boolean {
+  if (!value) return false;
+  const expiresMs = new Date(value).getTime();
+  return Number.isFinite(expiresMs) && expiresMs <= nowMs;
 }
 
 async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
@@ -210,7 +230,13 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
     };
   } catch (error) {
     const graceMs = new Date(state.offlineGraceExpiresAt).getTime();
-    if (isNetworkError(error) && graceMs > Date.now()) {
+    const networkError = isLicenseServiceNetworkError(error);
+    if (
+      networkError &&
+      Number.isFinite(graceMs) &&
+      graceMs > Date.now() &&
+      !isExpiredIso(state.effectiveExpiresAt)
+    ) {
       return {
         required: true,
         allowed: true,
@@ -224,7 +250,7 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
       allowed: false,
       mode: "invalid",
       state: publicState(state),
-      message: isNetworkError(error)
+      message: networkError
         ? "已超过 30 天离线宽限，请重新激活 License。"
         : error instanceof Error
           ? error.message
@@ -253,4 +279,3 @@ export async function deactivateLocalLicense(): Promise<LicenseRuntimeStatus> {
   clearLocalLicenseState();
   return { required: true, allowed: false, mode: "inactive", state: null };
 }
-
