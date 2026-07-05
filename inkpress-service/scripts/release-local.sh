@@ -87,6 +87,10 @@ rsync -a .next/static/ release/.next/static/
 rsync -a public/ release/public/
 # Prisma 生成代码（runtime 必需）
 rsync -a src/generated/ release/src/generated/
+# 共享 seed 模块（init-production.ts 引用 src/lib/plan/seed-plans.ts）
+# 不全量 rsync src/lib，避免把运行时已 trace 进 standalone 的代码再重复打包
+mkdir -p release/src/lib/plan
+rsync -a src/lib/plan/ release/src/lib/plan/
 # Prisma schema 与 migrations（容器启动 migrate deploy 需要）
 # 排除 seed.ts（生产不需要）
 rsync -a --exclude='seed.ts' prisma/ release/prisma/
