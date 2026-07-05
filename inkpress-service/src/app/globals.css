@@ -143,12 +143,40 @@ body {
   text-underline-offset: 3px;
 }
 
+.guide-markdown hr.guide-hr {
+  margin: 2.2rem 0;
+  border: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--muted-foreground) 35%, transparent),
+    transparent
+  );
+}
+
+.guide-markdown img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1rem auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+}
+
 .guide-markdown code {
   border-radius: 6px;
   background: var(--muted);
   padding: 0.15rem 0.36rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.88em;
+}
+
+.guide-markdown li ul,
+.guide-markdown li ol {
+  margin: 0.35rem 0 0;
+  padding-left: 1.4rem;
 }
 
 .guide-markdown blockquote {
@@ -224,4 +252,12 @@ body {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+/* 锚点跳转时避开顶部 sticky ServiceHeader（高度约 73px，留余量到 96px） */
+.guide-markdown h1,
+.guide-markdown h2,
+.guide-markdown h3,
+.guide-markdown h4 {
+  scroll-margin-top: 96px;
 }
