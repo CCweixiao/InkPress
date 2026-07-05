@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { auth } from "@/auth";
 import { listPublishedReleases } from "@/lib/release/service";
 import { DownloadsPage, type DownloadsPageProps } from "@/components/downloads/downloads-page";
-import { notFound } from "next/navigation";
+import { ServiceHeader } from "@/components/navigation/service-header";
 
 export const metadata: Metadata = {
   title: "下载 InkPress · macOS / Windows 桌面版",
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
  * /downloads — 公开下载页。
  *
  * 数据从 SoftwareRelease 表读取（status=PUBLISHED，按平台分组取最新）。
- * 未发布过任何版本时返回 notFound（避免展示空白页）。
+ * 未发布过任何版本时展示「即将上线」空态，避免直接 404 让访问者扑空。
  */
 export default async function DownloadsRoutePage() {
   const [session, data] = await Promise.all([
@@ -23,7 +23,29 @@ export default async function DownloadsRoutePage() {
     listPublishedReleases("inkpress"),
   ]);
 
-  if (!data) notFound();
+  const isLoggedIn = Boolean(session?.user?.id);
+  const email = session?.user?.email ?? null;
+  const role = session?.user?.role ?? null;
+
+  if (!data) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/30">
+        <ServiceHeader isLoggedIn={isLoggedIn} email={email} role={role} />
+        <section className="mx-auto max-w-3xl px-4 py-24 text-center sm:px-6">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+            即将上线
+          </div>
+          <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">
+            桌面版正在打磨中
+          </h1>
+          <p className="mx-auto mt-4 max-w-xl text-pretty text-base text-muted-foreground">
+            InkPress 桌面客户端的首个公开版本还在最后冲刺阶段，稍后会在这里提供 macOS / Windows 安装包下载。可以先去服务端 Web 版体验，或关注公众号获取发版通知。
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   const props: DownloadsPageProps = {
     isLoggedIn: Boolean(session?.user?.id),
