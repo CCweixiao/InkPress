@@ -11,6 +11,7 @@ const NAV = [
   { href: "/admin/licenses", label: "License" },
   { href: "/admin/orders", label: "订单" },
   { href: "/admin/plans", label: "订阅计划" },
+  { href: "/admin/releases", label: "软件版本" },
   { href: "/admin/users", label: "用户" },
   { href: "/admin/tickets", label: "工单" },
   { href: "/admin/audit-logs", label: "审计日志" },
