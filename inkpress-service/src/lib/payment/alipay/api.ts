@@ -4,54 +4,60 @@ import { moduleLogger } from "@/lib/logger";
 
 const log = moduleLogger("payment:alipay");
 
-export interface PrecreateResult {
-  /** 二维码链接（前端用 qrcode.react 渲染成图片） */
-  qrCode: string;
+export interface WapPayResult {
+  /** 支付宝收银台跳转 URL（前端 window.location.href 过去） */
+  payUrl: string;
 }
 
 /**
- * 调用 alipay.trade.precreate 生成扫码支付二维码。
+ * 调用 alipay.trade.wap.pay 拿到收银台跳转 URL。
+ *
+ * - PC 端：跳到支付宝收银台，自动渲染二维码给用户扫
+ * - 移动端：跳到收银台，自动唤起支付宝 App
+ * - 用户支付完成后，支付宝 GET return_url（带 out_trade_no 等参数）
+ * - 真实支付状态由 notify_url 异步通知（return_url 不可作为支付凭据）
  *
  * - totalAmount 单位为元（数字），调支付宝 API 时 toFixed(2) 转字符串
- * - notifyUrl 必须公网可达（生产 HTTPS，沙箱允许 HTTP）
  * - timeout_express=15m：超时后支付宝自动关单
  *
  * 错误统一抛 PAYMENT_PROVIDER_ERROR（HTTP 502），让上层返回「支付通道暂不可用」。
  */
-export async function precreateOrder(opts: {
+export async function createWapPayUrl(opts: {
   outTradeNo: string;
   totalAmount: number; // 元
   subject: string;
   notifyUrl: string;
-}): Promise<PrecreateResult> {
+  returnUrl: string;
+}): Promise<WapPayResult> {
   const client = getAlipayClient();
   try {
-    const result = await client.exec("alipay.trade.precreate", {
+    // pageExec 返回跳转 URL 字符串（alipay-sdk v4 行为）
+    const payUrl = await client.pageExec("alipay.trade.wap.pay", {
       notify_url: opts.notifyUrl,
+      return_url: opts.returnUrl,
       bizContent: {
         out_trade_no: opts.outTradeNo,
         total_amount: opts.totalAmount.toFixed(2),
         subject: opts.subject,
+        product_code: "FAST_INSTANT_TRADE_PAY",
         timeout_express: "15m",
       },
     });
 
-    // SDK 默认 camelcase=true，返回字段为 qrCode；老版本可能保留 qr_code
-    const qrCode = (result.qrCode ?? result.qr_code) as string | undefined;
-    if (!qrCode) {
+    if (typeof payUrl !== "string" || !payUrl) {
       log.error(
-        { code: result.code, msg: result.msg, subCode: result.sub_code },
-        "支付宝 precreate 未返回二维码"
+        { outTradeNo: opts.outTradeNo, got: typeof payUrl },
+        "支付宝 wap.pay 未返回跳转 URL"
       );
       throw new AppError(
         ErrorCode.PAYMENT_PROVIDER_ERROR,
-        "支付宝未返回二维码，请稍后重试"
+        "支付宝未返回支付链接，请稍后重试"
       );
     }
-    return { qrCode };
+    return { payUrl };
   } catch (err) {
     if (err instanceof AppError) throw err;
-    log.error({ err, outTradeNo: opts.outTradeNo }, "支付宝 precreate 调用失败");
+    log.error({ err, outTradeNo: opts.outTradeNo }, "支付宝 wap.pay 调用失败");
     throw new AppError(
       ErrorCode.PAYMENT_PROVIDER_ERROR,
       "支付通道暂不可用，请稍后重试"
