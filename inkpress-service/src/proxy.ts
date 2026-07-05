@@ -40,7 +40,8 @@ function buildCsp(nonce: string): string {
     "font-src 'self'",
     `connect-src 'self'${devConnect}`,
     "object-src 'none'",
-    "frame-src 'none'",
+    // 首页案例区 iframe 嵌入 B 站官方播放器
+    "frame-src https://player.bilibili.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

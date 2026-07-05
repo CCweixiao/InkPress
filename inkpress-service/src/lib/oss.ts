@@ -72,8 +72,12 @@ export async function putObject(
 }
 
 /** 生成私有 Bucket 对象的签名 URL（默认 15 分钟有效） */
-export function signObjectUrl(key: string, expiresSec = 900): string {
-  return getOssClient().signatureUrl(key, { expires: expiresSec });
+export function signObjectUrl(
+  key: string,
+  expiresSec = 900,
+  response?: Record<string, string>
+): string {
+  return getOssClient().signatureUrl(key, { expires: expiresSec, response });
 }
 
 /**
@@ -82,6 +86,10 @@ export function signObjectUrl(key: string, expiresSec = 900): string {
  *
  * - URL hostname 匹配当前配置 bucket → 提取 pathname 作为 key → 签名
  * - URL hostname 不匹配（如未来接 CDN / 其他源）→ 原样返回
+ *
+ * **安装包强制 attachment**：DMG/EXE/ZIP 等扩展名通过签名 URL 的
+ * `response-content-disposition` 显式强制下载，避免关掉 Bucket force-download
+ * 后浏览器把安装包当普通资源预览（图片则保持内联渲染）。
  *
  * @param rawUrl OSS 完整 URL（来自 DB 的 downloadUrl 字段）
  * @param expiresSec 签名有效期秒数，默认 600（10 分钟）
@@ -114,7 +122,25 @@ export function signOssUrlFromUrl(rawUrl: string, expiresSec = 600): string {
     return rawUrl;
   }
 
-  return signObjectUrl(objectKey, expiresSec);
+  const response = buildDownloadResponse(u.pathname);
+  return signObjectUrl(objectKey, expiresSec, response);
+}
+
+const DOWNLOAD_EXTENSIONS = /\.(dmg|exe|msi|zip|tar\.gz|tgz|AppImage|deb|rpm|pkg)$/i;
+
+/**
+ * 安装包 / 压缩包扩展名 → 让 OSS 签名 URL 显式返回 Content-Disposition: attachment。
+ * 关掉 Bucket force-download 后，仅靠 Bucket 默认行为 DMG 不再触发下载，
+ * 必须通过签名 URL 的 response 参数覆盖响应头。
+ */
+function buildDownloadResponse(
+  pathname: string
+): { "content-disposition": string } | undefined {
+  if (!DOWNLOAD_EXTENSIONS.test(pathname)) return undefined;
+  const filename = pathname.split("/").filter(Boolean).pop() ?? "download";
+  // RFC 6266：filename 仅允许 ASCII，特殊字符用 filename* 编码
+  const safe = filename.replace(/["\\]/g, "");
+  return { "content-disposition": `attachment; filename="${safe}"` };
 }
 
 /** 删除对象（用于用户移除已上传图片，避免孤儿） */
