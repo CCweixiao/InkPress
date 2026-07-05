@@ -12,6 +12,7 @@ import {
 } from "@/lib/theme-mode";
 import { LicenseStatusSyncProvider } from "@/components/license/LicenseStatusSync";
 import { LicenseGateDialog } from "@/components/license/LicenseGateDialog";
+import { UpdateNotification } from "@/components/update/UpdateNotification";
 
 export const metadata: Metadata = {
   title: "InkPress · 数字文刊工坊",
@@ -45,6 +46,7 @@ export default async function RootLayout({
           <LicenseStatusSyncProvider>
             {children}
             <LicenseGateDialog />
+            <UpdateNotification />
           </LicenseStatusSyncProvider>
         </ThemeProvider>
       </body>
