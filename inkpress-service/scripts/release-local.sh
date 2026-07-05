@@ -136,6 +136,13 @@ else
   echo "       如需本地维护生产配置：scp -i $SSH_KEY -P $SSH_PORT $SSH_HOST:$REMOTE_DIR/.env.production .env.production"
 fi
 
+# 同步 docker-compose.yml（资源限制 / healthcheck 等运维调整）
+if [ -f docker-compose.yml ]; then
+  echo "    同步 docker-compose.yml..."
+  scp -i "$SSH_KEY" -P "$SSH_PORT" docker-compose.yml "$SSH_HOST:$REMOTE_DIR/docker-compose.yml" >/dev/null
+  echo "    ✅ docker-compose.yml 已同步"
+fi
+
 # ===== Stage 4: 服务器侧构建镜像并启动 =====
 echo ""
 echo ">>> Stage 4/5: 服务器构建镜像 + 拉起容器..."
