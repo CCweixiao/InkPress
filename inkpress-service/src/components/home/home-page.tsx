@@ -57,10 +57,9 @@ interface HomePageProps {
 
 export function HomePage({ isLoggedIn, email, role, plans }: HomePageProps) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_52%,#ffffff_100%)] text-foreground">
       <ServiceHeader isLoggedIn={isLoggedIn} email={email} role={role} />
       <HeroSection isLoggedIn={isLoggedIn} role={role} />
-      <TrustBar />
       <FeaturesSection />
       <WorkflowSection />
       <PricingSection plans={plans} isLoggedIn={isLoggedIn} />
@@ -78,8 +77,11 @@ function HeroSection({
   isLoggedIn: boolean;
   role: string | null;
 }) {
+  const primaryHref = isLoggedIn ? (role === "ADMIN" ? "/admin" : "/dashboard") : "/register";
+  const primaryText = isLoggedIn ? "进入工作区" : "开始使用";
+
   return (
-    <section className="relative min-h-[78vh] overflow-hidden border-b bg-[#111827] text-white">
+    <section id="home" className="relative min-h-[100svh] scroll-mt-16 overflow-hidden border-b bg-[#111827] text-white">
       <Image
         src="/assets/inkpress-hero-workflow.png"
         alt="InkPress 数字内容工作流界面"
@@ -88,68 +90,55 @@ function HeroSection({
         priority
         sizes="100vw"
       />
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,6,23,0.92)_0%,rgba(2,6,23,0.78)_34%,rgba(2,6,23,0.32)_68%,rgba(2,6,23,0.12)_100%)]" />
-      <div className="relative mx-auto flex min-h-[78vh] max-w-7xl items-center px-4 py-16 sm:px-6">
-        <div className="max-w-3xl">
-          <Badge className="mb-5 border border-white/12 bg-white/10 text-white">
-            面向公众号与专业内容团队的数字文刊工坊
-          </Badge>
-          <h1 className="text-balance text-5xl font-bold leading-[1.04] tracking-normal md:text-7xl">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_58%_34%,rgba(37,99,235,0.22),transparent_34%),linear-gradient(180deg,rgba(2,6,23,0.82)_0%,rgba(2,6,23,0.74)_48%,rgba(2,6,23,0.9)_100%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-slate-950/70 to-transparent" />
+      <div className="relative mx-auto flex min-h-[100svh] max-w-7xl items-center px-4 py-14 sm:px-6 md:py-16">
+        <div className="mx-auto w-full max-w-5xl text-center">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-medium text-slate-100 shadow-sm backdrop-blur-md">
+            <Sparkles className="h-3.5 w-3.5 text-blue-300" />
+            Claude Agent 驱动的内容自动化工作台
+          </div>
+          <h1 className="text-balance text-5xl font-bold leading-[1.02] tracking-normal md:text-7xl">
             InkPress
           </h1>
-          <p className="mt-6 max-w-2xl text-pretty text-lg leading-8 text-slate-200 md:text-xl">
-            从 AI 辅助创作、Markdown 排版、素材管理到公众号草稿发布，
-            为内容创作者构建一条清晰、稳定、专业的内容生产工作流。
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-8 text-slate-200 md:text-xl">
+            把选题、写作、排版、素材与发布交给一条可编排的 Agent 工作流。
           </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Button asChild size="lg">
-              <Link href={isLoggedIn ? (role === "ADMIN" ? "/admin" : "/dashboard") : "/register"}>
-                {isLoggedIn ? "进入工作区" : "免费注册"}
+          <div className="mx-auto mt-6 flex max-w-3xl flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-slate-300">
+            <span>Claude Agent Engine</span>
+            <span className="h-1 w-1 rounded-full bg-blue-300/80" />
+            <span>自动化任务编排</span>
+            <span className="h-1 w-1 rounded-full bg-blue-300/80" />
+            <span>Markdown 到公众号发布</span>
+          </div>
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+            <Button asChild size="lg" className="w-full sm:w-auto">
+              <Link href={primaryHref}>
+                {primaryText}
                 <ChevronRight className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild size="lg" variant="outline" className="border-white/30 bg-white/10 text-white hover:bg-white/16 hover:text-white">
+            <Button asChild size="lg" variant="ghost" className="w-full bg-[rgba(255,255,255,0.08)] text-white hover:bg-[rgba(255,255,255,0.14)] hover:text-white sm:w-auto">
               <Link href="/guide">
                 <BookOpen className="h-4 w-4" />
-                使用指引
+                快速开始
               </Link>
             </Button>
           </div>
-          <div className="mt-8 grid max-w-2xl gap-3 text-sm text-slate-200 sm:grid-cols-3">
-            <HeroMetric value="全流程" label="写作到发布一站完成" />
-            <HeroMetric value="Markdown" label="结构化写作排版" />
-            <HeroMetric value="用户中心" label="订单与支持集中管理" />
+          <div className="mx-auto mt-12 grid max-w-3xl gap-6 text-left sm:grid-cols-3">
+            {[
+              ["01", "理解创作意图"],
+              ["02", "执行自动化链路"],
+              ["03", "交付可发布内容"],
+            ].map(([num, label]) => (
+              <div key={num} className="relative pt-4">
+                <div className="absolute left-0 top-0 h-px w-full bg-gradient-to-r from-blue-300/70 to-transparent" />
+                <div className="font-mono text-xs text-blue-200/90">{num}</div>
+                <div className="mt-2 text-sm font-medium text-slate-100">{label}</div>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
-    </section>
-  );
-}
-
-function HeroMetric({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="border-l border-white/24 pl-3">
-      <div className="font-semibold text-white">{value}</div>
-      <div className="mt-1 text-xs text-slate-300">{label}</div>
-    </div>
-  );
-}
-
-function TrustBar() {
-  return (
-    <section className="border-b bg-muted/30">
-      <div className="mx-auto grid max-w-7xl gap-3 px-4 py-5 text-sm text-muted-foreground sm:px-6 md:grid-cols-4">
-        {[
-          ["专注创作", "把选题、写作、排版和发布收进同一套工作流"],
-          ["账户清晰", "登录后可统一管理订单、资料和服务支持"],
-          ["专业排版", "Markdown、素材、封面、发布流程面向公众号场景优化"],
-          ["支持闭环", "使用问题、截图附件和回复记录集中追踪"],
-        ].map(([title, desc]) => (
-          <div key={title} className="rounded-lg border bg-card px-4 py-3">
-            <div className="font-medium text-foreground">{title}</div>
-            <div className="mt-1 text-xs leading-5">{desc}</div>
-          </div>
-        ))}
       </div>
     </section>
   );
@@ -157,63 +146,65 @@ function TrustBar() {
 
 const FEATURES = [
   {
-    title: "AI 写作与选题辅助",
-    desc: "围绕公众号、技术文、产品稿等内容类型，辅助生成提纲、润色标题、补全段落和整理摘要。",
+    title: "Claude Agent 引擎",
+    desc: "把研究、构思、改写和校对交给可追踪的 Agent 任务流。",
     icon: Sparkles,
   },
   {
-    title: "Markdown 排版工作流",
-    desc: "面向长文、代码块、表格和图文混排设计，让创作和交付保持同一份结构化内容。",
+    title: "Markdown 工艺排版",
+    desc: "让长文、代码块、表格和图文内容保持清晰结构。",
     icon: FileText,
   },
   {
     title: "素材与封面管理",
-    desc: "图片、附件、文章素材归档到内容项目，减少重复上传和跨工具寻找素材的时间。",
+    desc: "把图片、附件和封面归档到同一份内容上下文。",
     icon: Layers3,
   },
   {
     title: "公众号草稿发布",
-    desc: "围绕微信公众号发布链路整理样式、素材和草稿投递，降低复制粘贴造成的格式损耗。",
+    desc: "围绕公众号交付链路处理样式、素材与草稿投递。",
     icon: Send,
   },
   {
     title: "用户中心",
-    desc: "登录后集中查看订单、个人资料、服务支持记录和账户安全状态，减少来回跳转。",
+    desc: "订单、资料、支持记录和账户状态集中管理。",
     icon: LifeBuoy,
   },
   {
     title: "问题反馈与支持",
-    desc: "遇到使用问题时可以提交说明和截图，跟进回复和处理状态，不再散落在不同沟通渠道。",
+    desc: "截图、说明和处理状态在一条记录里闭环。",
     icon: Ticket,
   },
 ];
 
 function FeaturesSection() {
   return (
-    <section id="features" className="border-b">
-      <div className="mx-auto max-w-7xl px-4 pb-14 pt-12 sm:px-6 md:pb-20 md:pt-16">
-        <div className="max-w-3xl">
-          <Badge variant="secondary" className="mb-3">产品能力</Badge>
-          <h2 className="text-3xl font-bold tracking-normal md:text-4xl">
-            为内容生产而设计，从第一行文字到发布成稿
-          </h2>
-          <p className="mt-3 text-sm leading-7 text-muted-foreground md:text-base">
-            InkPress 把创作、排版、素材、预览、发布和用户支持接起来，让公众号写作不再被工具切换打断。
-          </p>
-        </div>
-        <div className="mt-7 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((feature) => {
-            const Icon = feature.icon;
-            return (
-              <article key={feature.title} className="rounded-lg border bg-card p-5 transition-shadow hover:shadow-md">
-                <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h3 className="text-lg font-semibold">{feature.title}</h3>
-                <p className="mt-2 text-sm leading-7 text-muted-foreground">{feature.desc}</p>
-              </article>
-            );
-          })}
+    <section id="features" className="min-h-[100svh] scroll-mt-16 border-b bg-white/80">
+      <div className="mx-auto flex min-h-[100svh] max-w-7xl items-center px-4 py-14 sm:px-6 md:py-16">
+        <div className="w-full">
+          <div className="mx-auto max-w-4xl text-center">
+            <Badge variant="secondary" className="mb-3">产品能力</Badge>
+            <h2 className="text-3xl font-bold tracking-normal md:text-4xl">
+              为内容生产而设计，从第一行文字到发布成稿
+            </h2>
+            <p className="mx-auto mt-3 max-w-3xl text-sm leading-7 text-muted-foreground md:text-base">
+              InkPress 把创作、排版、素材、预览、发布和用户支持接起来，让公众号写作不再被工具切换打断。
+            </p>
+          </div>
+          <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {FEATURES.map((feature) => {
+              const Icon = feature.icon;
+              return (
+                <article key={feature.title} className="group flex min-h-[178px] flex-col rounded-lg border border-slate-200/70 bg-white/[0.86] p-6 shadow-[0_18px_60px_rgba(15,23,42,0.055)] backdrop-blur transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_70px_rgba(15,23,42,0.08)]">
+                  <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-primary ring-1 ring-blue-100">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-lg font-semibold">{feature.title}</h3>
+                  <p className="mt-2 text-sm leading-7 text-muted-foreground">{feature.desc}</p>
+                </article>
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
@@ -221,39 +212,41 @@ function FeaturesSection() {
 }
 
 const WORKFLOW = [
-  { title: "创作", desc: "在桌面端完成选题、写作、Markdown 排版和素材整理。", icon: PenLine },
-  { title: "整理", desc: "把封面、配图、附件和文章结构归档到同一套内容空间。", icon: Layers3 },
-  { title: "发布", desc: "按公众号草稿和多渠道内容规范交付成稿。", icon: Send },
-  { title: "管理", desc: "在用户中心查看订单、个人资料和服务支持记录。", icon: LifeBuoy },
+  { title: "构思", desc: "让 Agent 帮你把素材、问题和目标整理成清晰方向。", icon: PenLine },
+  { title: "生成", desc: "在 Markdown 结构中完成写作、改写和段落整理。", icon: Sparkles },
+  { title: "交付", desc: "按公众号草稿与多渠道内容规范输出成稿。", icon: Send },
+  { title: "闭环", desc: "订单、支持和使用记录统一回到用户中心。", icon: LifeBuoy },
 ];
 
 function WorkflowSection() {
   return (
-    <section id="workflow" className="border-b bg-muted/30">
-      <div className="mx-auto max-w-7xl px-4 pb-14 pt-12 sm:px-6 md:pb-20 md:pt-16">
-        <div className="grid gap-8 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
-          <div>
+    <section id="workflow" className="min-h-[100svh] scroll-mt-16 border-b bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)]">
+      <div className="mx-auto flex min-h-[100svh] max-w-7xl items-center px-4 py-14 sm:px-6 md:py-16">
+        <div className="w-full">
+          <div className="mx-auto max-w-4xl text-center">
             <Badge variant="secondary" className="mb-3">工作流</Badge>
             <h2 className="text-3xl font-bold tracking-normal md:text-4xl">
               从灵感到成稿，路径更短
             </h2>
-            <p className="mt-3 text-sm leading-7 text-muted-foreground md:text-base">
+            <p className="mx-auto mt-3 max-w-3xl text-sm leading-7 text-muted-foreground md:text-base">
               首页负责快速理解产品，使用指引负责上手，用户中心负责账号、订单和支持记录，让每个入口都只做用户真正需要的事。
             </p>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {WORKFLOW.map((item, index) => {
               const Icon = item.icon;
               return (
-                <article key={item.title} className="rounded-lg border bg-card p-5">
-                  <div className="mb-4 flex items-center justify-between">
-                    <Icon className="h-5 w-5 text-primary" />
-                    <span className="font-mono text-xs text-muted-foreground">
+                <article key={item.title} className="flex min-h-[214px] flex-col rounded-lg border border-slate-200/70 bg-white/[0.88] p-6 shadow-[0_18px_60px_rgba(15,23,42,0.055)]">
+                  <div className="flex w-full items-center justify-between">
+                    <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-blue-50 text-primary ring-1 ring-blue-100">
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <span className="font-mono text-xs font-semibold text-muted-foreground">
                       0{index + 1}
                     </span>
                   </div>
-                  <h3 className="font-semibold">{item.title}</h3>
-                  <p className="mt-2 text-sm leading-7 text-muted-foreground">{item.desc}</p>
+                  <h3 className="mt-8 text-lg font-semibold">{item.title}</h3>
+                  <p className="mt-3 text-sm leading-7 text-muted-foreground">{item.desc}</p>
                 </article>
               );
             })}
@@ -272,29 +265,31 @@ function PricingSection({
   isLoggedIn: boolean;
 }) {
   return (
-    <section id="pricing" className="border-b">
-      <div className="mx-auto max-w-7xl px-4 pb-12 pt-10 sm:px-6 md:pb-16 md:pt-12">
-        <div className="mx-auto max-w-3xl text-center">
-          <Badge variant="warning" className="mb-3">限时折扣</Badge>
-          <h2 className="text-3xl font-bold tracking-normal md:text-4xl">
-            选择适合你的 InkPress 使用方案
-          </h2>
-          <p className="mt-3 text-sm text-muted-foreground md:text-base">
-            按你的创作频率和使用场景选择方案，购买后可在用户中心查看订单和服务支持。
-          </p>
-        </div>
+    <section id="pricing" className="min-h-[100svh] scroll-mt-16 border-b bg-white/80">
+      <div className="mx-auto flex min-h-[100svh] max-w-7xl items-center px-4 py-14 sm:px-6 md:py-16">
+        <div className="w-full">
+          <div className="mx-auto max-w-3xl text-center">
+            <Badge variant="warning" className="mb-3">限时折扣</Badge>
+            <h2 className="text-3xl font-bold tracking-normal md:text-4xl">
+              选择适合你的 InkPress 使用方案
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground md:text-base">
+              按你的创作频率和使用场景选择方案，购买后可在用户中心查看订单和服务支持。
+            </p>
+          </div>
 
-        {plans.length === 0 ? (
-          <div className="mt-8 rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-            暂无可选方案，请稍后再来查看。
-          </div>
-        ) : (
-          <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {plans.map((plan) => (
-              <PlanCard key={plan.slug} plan={plan} isLoggedIn={isLoggedIn} />
-            ))}
-          </div>
-        )}
+          {plans.length === 0 ? (
+            <div className="mt-8 rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+              暂无可选方案，请稍后再来查看。
+            </div>
+          ) : (
+            <div className="mt-9 grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {plans.map((plan) => (
+                <PlanCard key={plan.slug} plan={plan} isLoggedIn={isLoggedIn} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -314,12 +309,12 @@ function PlanCard({
     ? checkoutHref
     : `/login?callbackUrl=${encodeURIComponent(checkoutHref)}`;
   const ringClass = isInactive
-    ? "border-border opacity-60"
+    ? "border-slate-200/70 opacity-60"
     : plan.highlight === "popular"
-      ? "border-primary ring-2 ring-primary/30"
+      ? "border-blue-300/80 shadow-[0_22px_70px_rgba(37,99,235,0.12)]"
       : plan.highlight === "best_value"
-        ? "border-emerald-500 ring-2 ring-emerald-500/30"
-        : "border-border";
+        ? "border-emerald-300/80 shadow-[0_22px_70px_rgba(16,185,129,0.12)]"
+        : "border-slate-200/70 shadow-[0_18px_60px_rgba(15,23,42,0.055)]";
   const badgeLabel = isInactive
     ? "已下架"
     : plan.highlight === "popular"
@@ -335,7 +330,14 @@ function PlanCard({
         : plan.durationKind;
 
   return (
-    <article className={`relative flex flex-col rounded-lg border bg-card p-5 shadow-sm transition-shadow ${isInactive ? "" : "hover:shadow-md"} ${ringClass}`}>
+    <article className={`relative flex flex-col overflow-hidden rounded-lg border bg-white/[0.9] p-5 backdrop-blur transition duration-200 ${isInactive ? "" : "hover:-translate-y-0.5"} ${ringClass}`}>
+      {!isInactive && plan.highlight && (
+        <div
+          className={`absolute inset-x-0 top-0 h-1 ${
+            plan.highlight === "best_value" ? "bg-emerald-400" : "bg-primary"
+          }`}
+        />
+      )}
       <div className="mb-2 flex items-start justify-between gap-3">
         <h3 className="text-lg font-semibold">{plan.name}</h3>
         {badgeLabel && (
@@ -394,7 +396,7 @@ function PlanCard({
 
 function GuideSection() {
   return (
-    <section className="border-b bg-muted/30">
+    <section className="border-b bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]">
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:items-center">
         <div>
           <Badge variant="secondary" className="mb-4">使用指引</Badge>
@@ -426,7 +428,7 @@ function GuideSection() {
             ["用户中心", "查看订单、个人资料和账号安全信息。"],
             ["问题反馈", "用截图和上下文把使用问题说清楚。"],
           ].map(([title, desc]) => (
-            <div key={title} className="flex items-start gap-4 rounded-lg border bg-card p-4">
+            <div key={title} className="flex items-start gap-4 rounded-lg border border-slate-200/70 bg-white/[0.88] p-4 shadow-[0_14px_46px_rgba(15,23,42,0.045)]">
               <Ticket className="mt-1 h-4 w-4 shrink-0 text-primary" />
               <div>
                 <div className="font-medium">{title}</div>
