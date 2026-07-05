@@ -33,25 +33,21 @@ export async function registerRelease(
   const highlightsJson = JSON.stringify(input.highlights ?? []);
   const releasedAt = input.releasedAt ? new Date(input.releasedAt) : new Date();
 
-  // update 不包含 status：保护管理员审核结果
-  const createData: Prisma.SoftwareReleaseCreateInput = {
-    packageName: input.packageName,
-    platform: input.platform,
-    version: input.version,
-    displayName: input.displayName,
-    logoUrl: input.logoUrl ?? null,
-    fileName: input.fileName,
-    fileSizeBytes: input.fileSizeBytes,
-    fileHashSha256: input.fileHashSha256 ?? null,
-    downloadUrl: input.downloadUrl,
-    changelogMarkdown: input.changelogMarkdown ?? null,
-    highlightsJson,
-    channel: input.channel,
-    source: "ci",
-    status: "PUBLISHED",
-    releasedAt,
-  };
+  // upsert 前先查一次，准确判定 created/updated（并发下最坏情况是误报 updated，
+  // 仅影响日志/审计/HTTP 状态码，不影响数据正确性——唯一约束兜底）
+  const existing = await prisma.softwareRelease.findUnique({
+    where: {
+      packageName_platform_version: {
+        packageName: input.packageName,
+        platform: input.platform,
+        version: input.version,
+      },
+    },
+    select: { id: true },
+  });
+  const action: "created" | "updated" = existing ? "updated" : "created";
 
+  // update 不包含 status：保护管理员审核结果（CI 不能越权改 status）
   const result = await prisma.softwareRelease.upsert({
     where: {
       packageName_platform_version: {
@@ -60,7 +56,23 @@ export async function registerRelease(
         version: input.version,
       },
     },
-    create: createData,
+    create: {
+      packageName: input.packageName,
+      platform: input.platform,
+      version: input.version,
+      displayName: input.displayName,
+      logoUrl: input.logoUrl ?? null,
+      fileName: input.fileName,
+      fileSizeBytes: input.fileSizeBytes,
+      fileHashSha256: input.fileHashSha256 ?? null,
+      downloadUrl: input.downloadUrl,
+      changelogMarkdown: input.changelogMarkdown ?? null,
+      highlightsJson,
+      channel: input.channel,
+      source: "ci",
+      status: "PUBLISHED",
+      releasedAt,
+    },
     update: {
       displayName: input.displayName,
       logoUrl: input.logoUrl ?? null,
@@ -77,26 +89,6 @@ export async function registerRelease(
     },
     select: { id: true },
   });
-
-  // 判断 created / updated：通过 releasedAt 推断不准确，单独查一次更可靠
-  // upsert 不会返回是否新建，所以用计数对比。SQLite 上很快。
-  const totalCount = await prisma.softwareRelease.count({
-    where: {
-      packageName: input.packageName,
-      platform: input.platform,
-    },
-  });
-  // 简单判断：如果是该平台第一条记录，肯定是新建；否则可能是更新
-  // 注意并发下不严格准确，但只用于日志/响应展示，不影响数据正确性
-  const action: "created" | "updated" =
-    totalCount === 1 &&
-    (await prisma.softwareRelease.findFirst({
-      where: { packageName: input.packageName, platform: input.platform },
-      orderBy: { releasedAt: "desc" },
-      select: { id: true },
-    }))?.id === result.id
-      ? "created"
-      : "updated";
 
   log.info(
     { id: result.id, action, package: input.packageName, platform: input.platform, version: input.version },
