@@ -1,5 +1,8 @@
 import { NextRequest } from "next/server";
-import { verifyNotifySign } from "@/lib/payment/alipay/verify";
+import {
+  verifyNotifyMerchant,
+  verifyNotifySign,
+} from "@/lib/payment/alipay/verify";
 import { fulfillOrderIfPending } from "@/lib/payment/order-service";
 import { checkRateLimits, type RateLimitRule } from "@/lib/rate-limit";
 import { moduleLogger } from "@/lib/logger";
@@ -46,6 +49,12 @@ export async function POST(req: NextRequest) {
       return new Response("fail", { status: 200 });
     }
 
+    const merchant = verifyNotifyMerchant(params);
+    if (!merchant.ok) {
+      log.warn({ outTradeNo, reason: merchant.reason }, "支付宝回调归属校验失败");
+      return new Response("fail", { status: 200 });
+    }
+
     // 2. 只处理最终成功状态；WAIT_BUYER_PAY / TRADE_CLOSED 直接 ack
     if (tradeStatus !== "TRADE_SUCCESS" && tradeStatus !== "TRADE_FINISHED") {
       log.info({ outTradeNo, tradeStatus }, "回调非成功状态，直接 ack");
@@ -55,6 +64,10 @@ export async function POST(req: NextRequest) {
     const tradeNo = params.trade_no ?? "";
     const totalAmount = params.total_amount ?? "";
     const buyerLogonId = params.buyer_logon_id;
+    if (!tradeNo || !/^\d+(\.\d{1,2})?$/.test(totalAmount)) {
+      log.warn({ outTradeNo, tradeNoPresent: Boolean(tradeNo), totalAmount }, "支付宝成功回调字段缺失");
+      return new Response("fail", { status: 200 });
+    }
 
     // 3. 幂等 + 金额校验 + 发券（事务）
     try {

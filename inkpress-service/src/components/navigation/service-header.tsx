@@ -16,7 +16,7 @@ type ServiceHeaderProps = {
 
 const publicLinks = [
   { href: "/#features", label: "功能" },
-  { href: "/#workflow", label: "流程" },
+  { href: "/#cases", label: "案例" },
   { href: "/#pricing", label: "价格" },
   { href: "/downloads", label: "下载", icon: Download },
   { href: "/guide", label: "使用指引", icon: BookOpen },

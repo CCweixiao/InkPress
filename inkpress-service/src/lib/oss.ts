@@ -12,7 +12,7 @@ let _client: OSS | null = null;
  * 接受 "shanghai" / "cn-shanghai" / "oss-cn-shanghai"，统一输出 "cn-shanghai"。
  * 备份脚本（ossutil）直接拼 endpoint，容忍省略 cn- 前缀；但 ali-oss SDK 需要完整格式。
  */
-function normalizeRegion(raw: string): string {
+export function normalizeRegion(raw: string): string {
   let r = raw.trim().replace(/^oss-/, "");
   // 纯区域名（如 shanghai / hangzhou / beijing）补 cn- 前缀
   if (!r.includes("-")) {
@@ -74,6 +74,47 @@ export async function putObject(
 /** 生成私有 Bucket 对象的签名 URL（默认 15 分钟有效） */
 export function signObjectUrl(key: string, expiresSec = 900): string {
   return getOssClient().signatureUrl(key, { expires: expiresSec });
+}
+
+/**
+ * 从一个完整的 OSS URL 提取 object key 并签发短期访问 URL。
+ * 用于发布产物下载场景：DB 中存的是 OSS 完整直链，运行时签名后 302 跳转。
+ *
+ * - URL hostname 匹配当前配置 bucket → 提取 pathname 作为 key → 签名
+ * - URL hostname 不匹配（如未来接 CDN / 其他源）→ 原样返回
+ *
+ * @param rawUrl OSS 完整 URL（来自 DB 的 downloadUrl 字段）
+ * @param expiresSec 签名有效期秒数，默认 600（10 分钟）
+ */
+export function signOssUrlFromUrl(rawUrl: string, expiresSec = 600): string {
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    // URL 解析失败，原样返回（调用方自行处理）
+    return rawUrl;
+  }
+
+  const regionRaw = process.env.OSS_PUBLISH_REGION?.trim();
+  const bucket = process.env.OSS_PUBLISH_BUCKET?.trim();
+  if (!regionRaw || !bucket) {
+    // OSS 未配置，无法签名
+    return rawUrl;
+  }
+
+  const expectedHost = `${bucket}.oss-${normalizeRegion(regionRaw)}.aliyuncs.com`;
+  if (u.hostname !== expectedHost) {
+    // 非 OSS bucket 域名（可能是 CDN、其他源），原样返回
+    return rawUrl;
+  }
+
+  // 提取 object key（pathname 去掉前导 /）
+  const objectKey = decodeURIComponent(u.pathname.slice(1));
+  if (!objectKey) {
+    return rawUrl;
+  }
+
+  return signObjectUrl(objectKey, expiresSec);
 }
 
 /** 删除对象（用于用户移除已上传图片，避免孤儿） */

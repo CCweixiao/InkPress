@@ -27,6 +27,7 @@ next-env.d.ts
 *.db-journal
 dev.db
 /backups
+.backup
 
 # logs
 /logs
