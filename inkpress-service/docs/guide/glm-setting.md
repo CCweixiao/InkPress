@@ -150,49 +150,11 @@ InkPress 主链路 Claude Agent 只能走 **Anthropic /messages 协议**，所�
 
 | 模型 | 申请 / 控制台入口 | 备注 |
 |---|---|---|
-| **MiniMax**（M 系列） | [https://platform.
-
-minimaxi.
-
-com](https://platform.
-
-minimaxi.
-
-com) | 国内性价比之一；如官方未提供 Anthropic 兼容端点，走 OpenRouter 中转 |
-| **Kimi**（月之暗面 K 系列） | [https://platform.
-
-moonshot.
-
-cn](https://platform.
-
-moonshot.
-
-cn) | 长上下文表现好；同样推荐先确认是否提供 Anthropic 端点 |
-| **OpenRouter**（多模型聚合） | [https://openrouter.
-
-ai/keys](https://openrouter.
-
-ai/keys) | **强烈推荐作为备选**：一个 Key 调用 Claude / GLM / Gemini 等几十种模型，InkPress 已内置预设（`baseUrl = https://openrouter.
-
-ai/api/v1`）|
-| **Anthropic 官方** | [https://console.
-
-anthropic.
-
-com/settings/keys](https://console.
-
-anthropic.
-
-com/settings/keys) | 海外信用卡；能力最强但成本最高 |
-| **DeepSeek** | [https://platform.
-
-deepseek.
-
-com](https://platform.
-
-deepseek.
-
-com) | 通常需走 OpenRouter 才能接 InkPress |
+| **MiniMax**（M 系列） | [platform.minimaxi.com](https://platform.minimaxi.com) | 国内性价比之一；如官方未提供 Anthropic 兼容端点，走 OpenRouter 中转 |
+| **Kimi**（月之暗面 K 系列） | [platform.moonshot.cn](https://platform.moonshot.cn) | 长上下文表现好；同样推荐先确认是否提供 Anthropic 端点 |
+| **OpenRouter**（多模型聚合） | [openrouter.ai/keys](https://openrouter.ai/keys) | **强烈推荐作为备选**：一个 Key 调用 Claude / GLM / Gemini 等几十种模型，InkPress 已内置预设（`baseUrl = https://openrouter.ai/api/v1`）|
+| **Anthropic 官方** | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) | 海外信用卡；能力最强但成本最高 |
+| **DeepSeek** | [platform.deepseek.com](https://platform.deepseek.com) | 通常需走 OpenRouter 才能接 InkPress |
 
 > 配置方法与 GLM 完全一致：在 InkPress 设置页选对应预设（或手填 baseUrl），粘贴 API Key，选模型，保存。
 
@@ -202,24 +164,12 @@ com) | 通常需走 OpenRouter 才能接 InkPress |
 
 | 现象 | 原因 | 解决 |
 |---|---|---|
-| 调用报 401 / 403 | API Key 错误、过期或没权限 | 重新去 [apikey/platform](https://bigmodel.
-
-cn/apikey/platform) 复制；检查是否多余空格/换行 |
-| 报 404 / 路径错误 | baseUrl 填成了 OpenAI 端点 `/api/coding/paas/v4` | 改回 `https://open.
-
-bigmodel.
-
-cn/api/anthropic`，或直接选「智谱 GLM」预设 |
+| 调用报 401 / 403 | API Key 错误、过期或没权限 | 重新去 [apikey/platform](https://bigmodel.cn/apikey/platform) 复制；检查是否多余空格/换行 |
+| 报 404 / 路径错误 | baseUrl 填成了 OpenAI 端点 `/api/coding/paas/v4` | 改回 `https://open.bigmodel.cn/api/anthropic`，或直接选「智谱 GLM」预设 |
 | 设置页出现橙色警告 | 历史遗留的 openai-compatible 配置 | 改用 Anthropic 预设；旧 baseUrl 不再生效 |
-| 调用很慢或频繁 429 | 触达 5 小时 / 每周限额，或赶上了高峰期（每日 14:00–18:00 UTC+8）| 等下一周期刷新；或升级到 Pro / Max；GLM-5.
-
-2 高峰期会按 3 倍消耗额度 |
+| 调用很慢或频繁 429 | 触达 5 小时 / 每周限额，或赶上了高峰期（每日 14:00–18:00 UTC+8）| 等下一周期刷新；或升级到 Pro / Max；GLM-5.2 高峰期会按 3 倍消耗额度 |
 | 切换模型后对话"失忆" | InkPress 检测到模型变化会强制开启新的 Agent 会话 | 这是正常行为；要继续同一篇内容，把上一段上下文复制到新会话即可 |
-| 模型 ID 不识别 | 手填了 GLM-5.
-
-2 等新模型，但 ID 大小写或拼写不对 | 以 [BigModel 控制台](https://bigmodel.
-
-cn) 显示的模型 ID 为准 |
+| 模型 ID 不识别 | 手填了 GLM-5.2 等新模型，但 ID 大小写或拼写不对 | 以 [BigModel 控制台](https://bigmodel.cn) 显示的模型 ID 为准 |
 | 套餐提示额度未扣 | Coding Plan 仅官方指定工具享套餐额度，第三方客户端可能走 API 余额 | 准备一份按量计费余额兜底；或先咨询官方确认 |
 
 ---
