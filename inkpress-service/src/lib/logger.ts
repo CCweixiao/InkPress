@@ -6,8 +6,12 @@ import pino from "pino";
  * - 生产：JSON 行 → stdout（容器友好，由 Docker 日志驱动收集）
  * - 开发：pino-pretty 美化控制台
  *
- * redact：敏感字段在序列化时以 "***" 替换，避免验证码 / 密码哈希 / token 落日志。
+ * redact：敏感字段在序列化时以 "***" 替换，避免密码哈希 / 密钥 / token 落日志。
  * 级别由 LOG_LEVEL 控制，默认 info。
+ *
+ * 注：曾把 `code` / `*.code` 列入掩码，但误伤了支付宝 result.code、
+ * AppError.code 等业务错误码，导致排查困难。验证码本身从不上日志
+ * （email-code-service.ts 只记 email+purpose），故移除该规则。
  */
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -17,7 +21,6 @@ const REDACT_PATHS = [
   "passwordHash",
   "newPassword",
   "oldPassword",
-  "code",
   "codeHash",
   "activationSecret",
   // Phase 4 补充：License / 密钥 / 凭据相关（PDC §9.2）
@@ -35,7 +38,6 @@ const REDACT_PATHS = [
   "*.passwordHash",
   "*.newPassword",
   "*.oldPassword",
-  "*.code",
   "*.codeHash",
   "*.activationSecret",
   "*.licenseKey",
