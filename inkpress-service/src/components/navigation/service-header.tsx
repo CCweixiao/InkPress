@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { BookOpen, LayoutDashboard, LogIn, Settings, ShieldCheck, Ticket, UserPlus } from "lucide-react";
+import { BookOpen, Download, LayoutDashboard, LogIn, Settings, ShieldCheck, Ticket, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,7 @@ const publicLinks = [
   { href: "/#features", label: "功能" },
   { href: "/#workflow", label: "流程" },
   { href: "/#pricing", label: "价格" },
+  { href: "/downloads", label: "下载", icon: Download },
   { href: "/guide", label: "使用指引", icon: BookOpen },
 ];
 
@@ -52,7 +53,9 @@ export function ServiceHeader({ isLoggedIn, email, role }: ServiceHeaderProps) {
               const active =
                 item.href === "/guide"
                   ? pathname.startsWith("/guide")
-                  : pathname === "/" && item.href.startsWith("/#");
+                  : item.href === "/downloads"
+                    ? pathname.startsWith("/downloads")
+                    : pathname === "/" && item.href.startsWith("/#");
               return (
                 <Link
                   key={item.href}

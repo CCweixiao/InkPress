@@ -262,6 +262,38 @@ model SubscriptionPlan {
   @@index([status, sortOrder])
 }
 
+// ===== 软件发布版本（CI 自动登记 / 用户下载页用） =====
+model SoftwareRelease {
+  id                String   @id @default(cuid())
+  // 业务唯一键：同包名 + 同平台 + 同版本 → upsert 覆盖（"相同版本替换"语义）
+  packageName       String   // "inkpress"，未来可扩展其他产品
+  platform          String   // "darwin-arm64" | "darwin-x64" | "win32-x64" | "linux-x64"
+  version           String   // semver "0.3.0"
+  // 显示元信息
+  displayName       String   // "InkPress 桌面版"
+  logoUrl           String?  // 软件图标 URL（可空，前端兜底用内置 logo）
+  // 文件元信息（CI 上传后填入）
+  fileName          String   // "InkPress-0.3.0-arm64.dmg"
+  fileSizeBytes     Int      // 字节数（前端格式化为 MB）
+  fileHashSha256    String?  // 完整性校验（可选）
+  downloadUrl       String   // OSS / CDN 完整直链
+  // 修改内容
+  changelogMarkdown String?  // markdown 原文，详情页渲染
+  highlightsJson    String   @default("[]") // 结构化要点 JSON string[]
+  // 状态与分类
+  status            String   @default("PUBLISHED") // PUBLISHED | HIDDEN
+  channel           String   @default("stable") // stable | beta
+  // 审计
+  source            String   @default("ci") // ci | admin
+  releasedAt        DateTime @default(now()) // CI 发布时间（"最新版"判定 + 排序）
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([packageName, platform, version])
+  @@index([packageName, status, releasedAt])
+  @@index([packageName, channel])
+}
+
 // ===== 订单（支付宝当面付自助购买） =====
 model Order {
   id             String    @id @default(cuid())
