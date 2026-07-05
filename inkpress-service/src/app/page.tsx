@@ -4,17 +4,18 @@ import { HomePage } from "@/components/home/home-page";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "InkPress · AI 公众号写作排版、Markdown 编辑与内容发布工具",
+  title: "InkPress · AI 数字媒体创作与多渠道作品发布工具",
   description:
-    "InkPress 为公众号创作者和内容团队提供 AI 写作、Markdown 排版、素材管理、文章预览、草稿发布、用户中心和问题反馈支持。",
+    "InkPress 为数字媒体创作者和内容团队提供 AI 写作、素材管理、作品预览、多渠道发布，以及图文、种草、小说、短剧脚本和 AI 视频创意生成能力。",
   keywords: [
-    "公众号写作工具",
-    "公众号排版",
+    "数字媒体创作",
+    "AI 内容创作",
     "AI 写作",
-    "Markdown 排版",
-    "微信图文编辑器",
-    "用户中心",
-    "内容创作者工具",
+    "小红书种草文案",
+    "小说创作",
+    "短剧剧本",
+    "AI 视频生成",
+    "多渠道发布",
   ],
   alternates: { canonical: "/" },
 };

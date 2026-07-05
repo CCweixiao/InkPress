@@ -27,6 +27,11 @@
           "slug": "support-tickets",
           "title": "问题反馈",
           "description": "提交问题、补充截图并跟进回复状态。"
+        },
+        {
+          "slug": "faq",
+          "title": "常见问题",
+          "description": "了解适用人群、用户中心、问题反馈和团队采购。"
         }
       ]
     }

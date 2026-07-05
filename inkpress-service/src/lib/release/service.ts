@@ -2,6 +2,9 @@ import { prisma } from "@/lib/db";
 import { AppError, ErrorCode } from "@/lib/errors";
 import { writeAudit } from "@/lib/audit";
 import { moduleLogger } from "@/lib/logger";
+import { signOssUrlFromUrl } from "@/lib/oss";
+import { shouldCountDownload } from "@/lib/release/download-dedup";
+import { isVersionNewer } from "@/lib/release/version";
 import type {
   RegisterReleaseInput,
   ReleaseChannel,
@@ -216,27 +219,143 @@ export async function getReleaseById(id: string) {
 }
 
 /**
- * 公开下载跟踪：找到 PUBLISHED 版本 → 原子自增 downloadCount → 返回真实 downloadUrl。
+ * 公开下载跟踪：
+ * 1. 校验版本存在且 status=PUBLISHED
+ * 2. 计数幂等：同 IP + 同版本 30 分钟内只 +1（防刷量）
+ * 3. 返回短期签名 URL（10 分钟过期，private bucket 必需）
+ *
  * HIDDEN / 不存在 → 抛 NOT_FOUND，端点返回 404。
  *
- * 注意：使用 update({ where: { id, status: "PUBLISHED" } }) 兜底，
- * 若已被隐藏则更新 0 行，调用方据此判定不可下载。
+ * @param id   release id
+ * @param ip   客户端 IP（用于幂等去重，传空则跳过去重始终计数）
+ * @returns    签名后的 OSS URL（10 分钟有效），用于 302 跳转
  */
-export async function incrementDownloadCount(id: string): Promise<string> {
-  const updated = await prisma.softwareRelease.updateMany({
+export async function incrementDownloadCount(
+  id: string,
+  ip: string | null
+): Promise<string> {
+  // 1. 校验存在 + PUBLISHED
+  const row = await prisma.softwareRelease.findFirst({
     where: { id, status: "PUBLISHED" },
-    data: { downloadCount: { increment: 1 } },
+    select: { id: true, downloadUrl: true },
   });
-  if (updated.count === 0) {
+  if (!row) {
     throw new AppError(ErrorCode.NOT_FOUND, "版本不存在或已下架");
   }
-  const row = await prisma.softwareRelease.findUnique({
-    where: { id },
-    select: { downloadUrl: true },
+
+  // 2. 计数幂等 + 原子自增
+  const shouldCount = ip ? shouldCountDownload(ip, id) : true;
+  if (shouldCount) {
+    await prisma.softwareRelease.updateMany({
+      where: { id },
+      data: { downloadCount: { increment: 1 } },
+    });
+  }
+
+  // 3. 签名 URL（OSS bucket 是 private，必须签名才能访问）
+  return signOssUrlFromUrl(row.downloadUrl, 600);
+}
+
+/**
+ * 用户渠道对应的「可感知更新」范围（保守到激进）。
+ * stable 用户只看 stable；beta 用户看 stable + beta；以此类推。
+ */
+const CHANNEL_TIER: Record<ReleaseChannel, ReleaseChannel[]> = {
+  stable: ["stable"],
+  beta: ["stable", "beta"],
+  rc: ["stable", "beta", "rc"],
+  snapshot: ["stable", "beta", "rc", "snapshot"],
+};
+
+export type UpdateCheckResult = {
+  hasUpdate: boolean;
+  currentVersion: string;
+  /** 已发布的最新版本号；DB 中无任何匹配版本时为 null */
+  latestVersion: string | null;
+  // 以下字段仅 hasUpdate=true 时填充
+  releasedAt?: Date;
+  channel?: ReleaseChannel;
+  changelogMarkdown?: string | null;
+  highlights?: string[];
+  /** 同源下载跟踪 URL（/api/releases/{id}/download） */
+  downloadUrl?: string;
+  /** 下载页面（相对 origin） */
+  downloadPageUrl?: string;
+  fileName?: string;
+  fileSizeBytes?: number;
+};
+
+/**
+ * 客户端轮询「是否有新版本」：
+ * 1. 按平台（如提供）+ 渠道范围取所有 PUBLISHED，按 releasedAt 倒序
+ * 2. 在结果中找版本号最大者（SQLite 字符串排序 ≠ semver，必须客户端比较）
+ * 3. 用 isVersionNewer 比对 currentVersion
+ *
+ * 设计权衡：
+ * - 不直接 ORDER BY version DESC：SQLite 字符串比较下 "0.10.0" < "0.9.0"，会取错
+ * - 取 take=20 是上限保护：单平台单渠道历史版本极少超过这个量级
+ */
+export async function checkForUpdate(opts: {
+  packageName?: string;
+  currentVersion: string;
+  platform?: ReleasePlatform;
+  channel?: ReleaseChannel;
+}): Promise<UpdateCheckResult> {
+  const packageName = opts.packageName ?? "inkpress";
+  const userChannel: ReleaseChannel = opts.channel ?? "stable";
+  const allowedChannels = CHANNEL_TIER[userChannel];
+
+  const where: Prisma.SoftwareReleaseWhereInput = {
+    packageName,
+    status: "PUBLISHED",
+    channel: { in: allowedChannels },
+  };
+  if (opts.platform) where.platform = opts.platform;
+
+  const rows = await prisma.softwareRelease.findMany({
+    where,
+    orderBy: [{ releasedAt: "desc" }],
+    take: 20,
   });
-  // 上一个 updateMany 已确认存在，这里再查不到属并发删除的极端情况
-  if (!row) throw new AppError(ErrorCode.NOT_FOUND, "版本不存在或已下架");
-  return row.downloadUrl;
+
+  if (rows.length === 0) {
+    return {
+      hasUpdate: false,
+      currentVersion: opts.currentVersion,
+      latestVersion: null,
+    };
+  }
+
+  // 在候选中找最大版本号
+  let latestRow = rows[0]!;
+  for (const row of rows) {
+    if (isVersionNewer(row.version, latestRow.version)) {
+      latestRow = row;
+    }
+  }
+
+  const hasUpdate = isVersionNewer(latestRow.version, opts.currentVersion);
+  if (!hasUpdate) {
+    return {
+      hasUpdate: false,
+      currentVersion: opts.currentVersion,
+      latestVersion: latestRow.version,
+    };
+  }
+
+  return {
+    hasUpdate: true,
+    currentVersion: opts.currentVersion,
+    latestVersion: latestRow.version,
+    releasedAt: latestRow.releasedAt,
+    channel: latestRow.channel as ReleaseChannel,
+    changelogMarkdown: latestRow.changelogMarkdown,
+    highlights: parseHighlights(latestRow.highlightsJson),
+    downloadUrl: `/api/releases/${latestRow.id}/download`,
+    downloadPageUrl: "/downloads",
+    fileName: latestRow.fileName,
+    fileSizeBytes: latestRow.fileSizeBytes,
+  };
 }
 
 /** 管理员：全量列表 */
