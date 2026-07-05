@@ -7,6 +7,7 @@ import { generateLicenseKey } from "@/lib/license/key";
 import { encryptLicenseKey } from "@/lib/license/key-vault";
 import { precreateOrder } from "@/lib/payment/alipay/api";
 import { getSystemUserId } from "@/lib/payment/system-user";
+import { sendMail, renderOrderPaidReceiptEmail } from "@/lib/email";
 
 const log = moduleLogger("payment:order");
 
@@ -311,6 +312,18 @@ export async function getOrderAdmin(orderId: string) {
  *
  * 抛错时外层 catch 返回 fail，支付宝会重试。
  */
+interface OrderReceipt {
+  orderId: string;
+  outTradeNo: string;
+  planName: string;
+  amountCents: number;
+  paidAt: Date;
+  tradeNo: string;
+  keyFingerprint: string;
+  keySuffix: string;
+  userEmail: string;
+}
+
 export async function fulfillOrderIfPending(opts: {
   outTradeNo: string;
   tradeNo: string;
@@ -319,7 +332,8 @@ export async function fulfillOrderIfPending(opts: {
 }): Promise<void> {
   const systemUserId = getSystemUserId();
 
-  await prisma.$transaction(async (tx) => {
+  // 事务返回收据数据；幂等/异常场景返回 null，跳过邮件发送
+  const receipt = await prisma.$transaction<OrderReceipt | null>(async (tx) => {
     const order = await tx.order.findUnique({
       where: { outTradeNo: opts.outTradeNo },
       select: {
@@ -327,6 +341,7 @@ export async function fulfillOrderIfPending(opts: {
         userId: true,
         status: true,
         amountCents: true,
+        planName: true,
         planConfigJson: true,
       },
     });
@@ -334,13 +349,13 @@ export async function fulfillOrderIfPending(opts: {
     // 订单不存在：可能伪造（虽已验签），返回 success 避免重试
     if (!order) {
       log.warn({ outTradeNo: opts.outTradeNo }, "回调订单不存在");
-      return;
+      return null;
     }
 
     // 幂等：已处理直接返回
     if (order.status === "PAID") {
       log.info({ orderId: order.id }, "订单已支付，幂等跳过");
-      return;
+      return null;
     }
 
     // 异常状态：跳过
@@ -349,7 +364,7 @@ export async function fulfillOrderIfPending(opts: {
         { orderId: order.id, status: order.status },
         "订单状态异常，跳过回调"
       );
-      return;
+      return null;
     }
 
     // 金额校验（关键安全点）
@@ -379,6 +394,7 @@ export async function fulfillOrderIfPending(opts: {
     // License 生成：循环防 keyHash 冲突
     let licenseKeyId: string | null = null;
     let keyFingerprint = "";
+    let keySuffix = "";
     for (let attempt = 0; attempt < LICENSE_KEY_RETRY; attempt++) {
       const g = generateLicenseKey();
       try {
@@ -396,10 +412,11 @@ export async function fulfillOrderIfPending(opts: {
             note: `在线购买自动发放（订单 ${opts.outTradeNo}）`,
             createdByUserId: systemUserId,
           },
-          select: { id: true, keyFingerprint: true },
+          select: { id: true, keyFingerprint: true, displayKeySuffix: true },
         });
         licenseKeyId = created.id;
         keyFingerprint = created.keyFingerprint;
+        keySuffix = created.displayKeySuffix;
         break;
       } catch (err) {
         if (isUniqueViolation(err)) continue;
@@ -411,6 +428,7 @@ export async function fulfillOrderIfPending(opts: {
     }
 
     // 改单
+    const paidAt = new Date();
     await tx.order.update({
       where: { id: order.id },
       data: {
@@ -418,9 +436,9 @@ export async function fulfillOrderIfPending(opts: {
         tradeNo: opts.tradeNo,
         buyerLogonId: opts.buyerLogonId ?? null,
         licenseKeyId,
-        paidAt: new Date(),
+        paidAt,
         notifyCount: { increment: 1 },
-        lastNotifyAt: new Date(),
+        lastNotifyAt: paidAt,
       },
     });
 
@@ -446,5 +464,40 @@ export async function fulfillOrderIfPending(opts: {
       { orderId: order.id, licenseKeyId },
       "订单支付成功，License 已发放"
     );
+
+    return {
+      orderId: order.id,
+      outTradeNo: opts.outTradeNo,
+      planName: order.planName,
+      amountCents: order.amountCents,
+      paidAt,
+      tradeNo: opts.tradeNo,
+      keyFingerprint,
+      keySuffix,
+      userEmail: user.email,
+    };
   });
+
+  // 邮件发送放在事务外：失败不能回滚已 PAID 订单
+  if (receipt) {
+    try {
+      const msg = renderOrderPaidReceiptEmail(receipt.userEmail, {
+        orderId: receipt.orderId,
+        outTradeNo: receipt.outTradeNo,
+        planName: receipt.planName,
+        amountCents: receipt.amountCents,
+        paidAt: receipt.paidAt,
+        tradeNo: receipt.tradeNo,
+        keyFingerprint: receipt.keyFingerprint,
+        keySuffix: receipt.keySuffix,
+      });
+      await sendMail(msg);
+      log.info({ orderId: receipt.orderId }, "支付收据邮件已发送");
+    } catch (err) {
+      log.warn(
+        { orderId: receipt.orderId, err },
+        "支付收据邮件发送失败（订单已成功，忽略）"
+      );
+    }
+  }
 }
