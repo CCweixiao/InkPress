@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GATE_COOKIE_NAME, verifyGate } from "@/lib/license/gate-cookie";
 
-export const runtime = "edge";
+export const runtime = "experimental-edge";
 
 // 不拦截的路径前缀
 const PUBLIC_PATHS = [
