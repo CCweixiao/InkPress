@@ -5,7 +5,7 @@ import { writeAudit } from "@/lib/audit";
 import { moduleLogger } from "@/lib/logger";
 import { generateLicenseKey } from "@/lib/license/key";
 import { encryptLicenseKey } from "@/lib/license/key-vault";
-import { precreateOrder } from "@/lib/payment/alipay/api";
+import { createWapPayUrl } from "@/lib/payment/alipay/api";
 import { getSystemUserId } from "@/lib/payment/system-user";
 import { sendMail, renderOrderPaidReceiptEmail } from "@/lib/email";
 
@@ -42,7 +42,7 @@ function computeAmountCents(plan: {
 export interface CreateOrderResult {
   orderId: string;
   outTradeNo: string;
-  qrCode: string;
+  payUrl: string;
   amountCents: number;
   subject: string;
   /** 订单失效时间（15 分钟后） */
@@ -89,10 +89,17 @@ export async function createOrder(opts: {
     maxDevices: plan.maxDevices,
   });
   const notifyUrl = process.env.ALIPAY_NOTIFY_URL?.trim();
+  const returnUrlBase = process.env.ALIPAY_RETURN_URL?.trim();
   if (!notifyUrl) {
     throw new AppError(
       ErrorCode.INTERNAL_ERROR,
       "ALIPAY_NOTIFY_URL 未配置"
+    );
+  }
+  if (!returnUrlBase) {
+    throw new AppError(
+      ErrorCode.INTERNAL_ERROR,
+      "ALIPAY_RETURN_URL 未配置"
     );
   }
 
@@ -129,13 +136,15 @@ export async function createOrder(opts: {
     throw new AppError(ErrorCode.INTERNAL_ERROR, "订单号生成失败，请重试");
   }
 
-  // 5. 调 precreate；失败则删订单保持干净
+  // 5. 调 wap.pay 生成跳转 URL；失败则删订单保持干净
   try {
-    const { qrCode } = await precreateOrder({
+    const returnUrl = `${returnUrlBase}?orderId=${orderId}`;
+    const { payUrl } = await createWapPayUrl({
       outTradeNo,
       totalAmount: amountCents / 100,
       subject,
       notifyUrl,
+      returnUrl,
     });
 
     await writeAudit({
@@ -152,13 +161,13 @@ export async function createOrder(opts: {
     return {
       orderId,
       outTradeNo,
-      qrCode,
+      payUrl,
       amountCents,
       subject,
       expiresAt: new Date(Date.now() + ORDER_TTL_MS),
     };
   } catch (err) {
-    // precreate 失败：删除 PENDING 订单，避免脏数据阻塞用户再次下单
+    // wap.pay 失败：删除 PENDING 订单，避免脏数据阻塞用户再次下单
     await prisma.order.delete({ where: { id: orderId } }).catch(() => undefined);
     throw err;
   }

@@ -5,13 +5,17 @@ import { prisma } from "@/lib/db";
 import { durationLabel } from "@/lib/license/key";
 import { Button } from "@/components/ui/button";
 import { SuccessRevealKey } from "@/components/payment/success-reveal-key";
+import { SuccessPoller } from "@/components/payment/success-poller";
 import { formatDate } from "@/lib/utils";
 
 /**
  * /checkout/success?orderId=xxx — 支付成功页。
  *
- * 校验：登录 + 订单归属当前用户 + status=PAID。
- * 任意不匹配 → notFound（避免泄露订单是否存在）。
+ * 校验：登录 + 订单归属当前用户。
+ * - status=PAID → 显示成功 + License Key
+ * - status=PENDING → 显示轮询器（return_url 早于 notify_url 时会落到这里）
+ * - 其他状态/不存在/不属于自己 → notFound
+ *
  * License Key 通过 SuccessRevealKey 复用 /api/me/owned-licenses/:id/reveal-key。
  */
 export default async function CheckoutSuccessPage({
@@ -34,6 +38,7 @@ export default async function CheckoutSuccessPage({
       id: true,
       userId: true,
       status: true,
+      outTradeNo: true,
       planName: true,
       subject: true,
       amountCents: true,
@@ -42,8 +47,26 @@ export default async function CheckoutSuccessPage({
     },
   });
 
-  if (!order || order.userId !== session.user.id || order.status !== "PAID") {
+  // 不存在/不属于自己 → notFound（避免泄露订单存在性）
+  if (!order || order.userId !== session.user.id) {
     notFound();
+  }
+
+  // PENDING：return_url 已到但 notify_url 还没到，显示轮询器
+  if (order.status !== "PAID") {
+    return (
+      <div className="min-h-screen bg-muted/30">
+        <header className="border-b bg-background">
+          <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-3">
+            <span className="text-base font-semibold">InkPress · 支付确认</span>
+            <Link href="/" className="text-sm text-muted-foreground hover:underline">
+              返回首页
+            </Link>
+          </div>
+        </header>
+        <SuccessPoller orderId={order.id} outTradeNo={order.outTradeNo} />
+      </div>
+    );
   }
 
   // 查关联 License（归属当前用户邮箱，reveal-key API 会再做归属校验）
