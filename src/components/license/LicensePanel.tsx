@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, KeyRound, RefreshCw, ShieldAlert, Unlink } from "lucide-react";
+import { CheckCircle2, ExternalLink, KeyRound, RefreshCw, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,7 +32,6 @@ export function LicensePanel() {
   const { status: syncedStatus, refresh } = useLicenseStatus();
   const [status, setStatus] = useState<LicenseStatus | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
-  const [serviceBaseUrl, setServiceBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const purchaseLinks = getPurchaseLinks();
@@ -41,7 +40,6 @@ export function LicensePanel() {
   useEffect(() => {
     if (syncedStatus) {
       setStatus(syncedStatus);
-      setServiceBaseUrl((current) => current || syncedStatus.state?.serviceBaseUrl || syncedStatus.defaultServiceBaseUrl || "");
     }
   }, [syncedStatus]);
 
@@ -62,7 +60,7 @@ export function LicensePanel() {
       const res = await fetch("/api/license/activate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ licenseKey, serviceBaseUrl }),
+        body: JSON.stringify({ licenseKey }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -90,26 +88,6 @@ export function LicensePanel() {
       await refresh();
     } catch {
       setError("网络错误，刷新失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deactivate() {
-    if (!window.confirm("确认释放本机 License？此设备将不再占用席位。")) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/license/deactivate", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "释放失败");
-        return;
-      }
-      setStatus(data as LicenseStatus);
-      await refresh();
-    } catch {
-      setError("网络错误，释放失败");
     } finally {
       setBusy(false);
     }
@@ -166,7 +144,6 @@ export function LicensePanel() {
           )}
           {!isTrial && <Info label="最近校验" value={status?.state ? formatDate(status.state.lastValidatedAt) : "—"} />}
           {!isTrial && <Info label="离线宽限至" value={status?.state ? formatDate(status.state.offlineGraceExpiresAt) : "—"} />}
-          <Info label="服务地址" value={(status?.state?.serviceBaseUrl ?? serviceBaseUrl) || "—"} />
         </div>
         {status?.message && <p className="mt-3 text-sm text-muted-foreground">{status.message}</p>}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
@@ -175,12 +152,6 @@ export function LicensePanel() {
             <Button variant="outline" size="sm" onClick={() => void manualRefresh()} disabled={busy || !status?.state}>
               <RefreshCw className="h-4 w-4" />
               手动刷新
-            </Button>
-          )}
-          {!isTrial && (
-            <Button variant="outline" size="sm" onClick={() => void deactivate()} disabled={busy || !status?.state}>
-              <Unlink className="h-4 w-4" />
-              释放本机
             </Button>
           )}
           <Button variant="outline" size="sm" asChild>
@@ -197,28 +168,17 @@ export function LicensePanel() {
           <KeyRound className="h-5 w-5 text-primary" />
           激活 License
         </div>
-        <div className="grid gap-3 md:grid-cols-[1fr_1.3fr]">
-          <div className="space-y-1.5">
-            <Label htmlFor="license-key">License Key</Label>
-            <Input
-              id="license-key"
-              value={licenseKey}
-              onChange={(e) => setLicenseKey(e.target.value)}
-              placeholder="INKP-..."
-              autoComplete="off"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="license-service">License 服务地址</Label>
-            <Input
-              id="license-service"
-              value={serviceBaseUrl}
-              onChange={(e) => setServiceBaseUrl(e.target.value)}
-              placeholder="https://www.longoflow.com"
-            />
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="license-key">License Key</Label>
+          <Input
+            id="license-key"
+            value={licenseKey}
+            onChange={(e) => setLicenseKey(e.target.value)}
+            placeholder="INKP-..."
+            autoComplete="off"
+          />
         </div>
-        <Button type="submit" disabled={busy || !licenseKey.trim() || !serviceBaseUrl.trim()}>
+        <Button type="submit" disabled={busy || !licenseKey.trim()}>
           {busy ? "处理中..." : "激活"}
         </Button>
       </form>

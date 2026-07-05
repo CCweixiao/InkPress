@@ -95,6 +95,11 @@ export type TrialEvaluation = {
   remainingMs: number;
 };
 
+function parseTimeMs(value: string): number {
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : Number.NaN;
+}
+
 /**
  * 本地判定试用状态（不联网）。
  * - now < trialLastCheckedAt → 时钟回拨 → 视为篡改 → expired。
@@ -103,15 +108,18 @@ export type TrialEvaluation = {
  */
 export function evaluateTrial(state: TrialState): TrialEvaluation {
   const nowMs = Date.now();
-  const lastCheckedMs = new Date(state.trialLastCheckedAt).getTime();
-  const expiresMs = new Date(state.trialExpiresAt).getTime();
+  const lastCheckedMs = parseTimeMs(state.trialLastCheckedAt);
+  const expiresMs = parseTimeMs(state.trialExpiresAt);
 
-  const tampered = nowMs < lastCheckedMs - 60_000; // 60s 容差（NTP 微调）
-  const remainingMs = expiresMs - nowMs;
-  const expired = tampered || remainingMs <= 0;
+  const invalidClockState = !Number.isFinite(lastCheckedMs) || !Number.isFinite(expiresMs);
+  const tampered = invalidClockState || nowMs < lastCheckedMs - 60_000; // 60s 容差（NTP 微调）
+  const remainingMs = Number.isFinite(expiresMs) ? expiresMs - nowMs : 0;
+  const alreadyExpired = state.status === "EXPIRED";
+  const expired = alreadyExpired || tampered || remainingMs <= 0;
 
   // monotonic 更新 trialLastCheckedAt
-  const nextChecked = new Date(Math.max(nowMs, lastCheckedMs)).toISOString();
+  const safeLastCheckedMs = Number.isFinite(lastCheckedMs) ? lastCheckedMs : nowMs;
+  const nextChecked = new Date(Math.max(nowMs, safeLastCheckedMs)).toISOString();
   if (nextChecked !== state.trialLastCheckedAt || state.status !== (expired ? "EXPIRED" : state.status)) {
     const updated: TrialState = {
       ...state,
@@ -125,21 +133,24 @@ export function evaluateTrial(state: TrialState): TrialEvaluation {
     inTrial: !expired,
     expired,
     tampered,
-    remainingMs: Math.max(0, remainingMs),
+    remainingMs: expired ? 0 : Math.max(0, remainingMs),
   };
 }
 
 /** 用服务端状态覆盖本地（锁定试用起点）。 */
 function applyServerState(local: TrialState, remote: TrialServiceState): TrialState {
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const serverMs = parseTimeMs(remote.serverTime);
+  const checkedMs = Math.max(nowMs, Number.isFinite(serverMs) ? serverMs : nowMs);
+  const checkedIso = new Date(checkedMs).toISOString();
   const next: TrialState = {
     ...local,
     deviceIdHash: remote.deviceIdHash ?? local.deviceIdHash,
     trialStartedAt: remote.trialStartedAt ?? local.trialStartedAt,
     trialExpiresAt: remote.trialExpiresAt ?? local.trialExpiresAt,
-    trialLastCheckedAt: nowIso,
+    trialLastCheckedAt: checkedIso,
     serverRegisteredAt: local.serverRegisteredAt ?? remote.trialStartedAt ?? null,
-    serverSyncedAt: nowIso,
+    serverSyncedAt: checkedIso,
     status: remote.status === "UNREGISTERED" ? local.status : remote.status,
   };
   writeTrialStateRaw(next);

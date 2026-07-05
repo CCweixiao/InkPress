@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { licenseGuard } from "@/lib/license/guard";
 import { isLicenseRequired, readLocalLicenseState } from "@/lib/license/store";
-import { signGate, GATE_COOKIE_NAME } from "@/lib/license/gate-cookie";
+import { attachGateCookie } from "@/lib/license/gate-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,12 +14,15 @@ export const dynamic = "force-dynamic";
  */
 export async function POST() {
   if (!isLicenseRequired()) {
-    return NextResponse.json({
+    const status = {
       required: false,
       allowed: true,
       mode: "not-required",
       state: null,
-    });
+    } as const;
+    const res = NextResponse.json(status);
+    await attachGateCookie(res, status);
+    return res;
   }
 
   // 有 license 状态 → 触发 validate（刷新凭证）
@@ -45,22 +48,7 @@ export async function POST() {
   const status = await licenseGuard();
 
   const res = NextResponse.json(status);
-
-  // 回写 gate cookie
-  try {
-    const gateValue = await signGate({
-      allowed: status.allowed,
-      mode: status.mode,
-    });
-    res.cookies.set(GATE_COOKIE_NAME, gateValue, {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 300,
-      path: "/",
-    });
-  } catch {
-    // ignore
-  }
+  await attachGateCookie(res, status);
 
   return res;
 }

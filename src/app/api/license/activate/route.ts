@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { activateLocalLicense } from "@/lib/license/client";
+import { attachGateCookie } from "@/lib/license/gate-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,9 @@ export async function POST(req: NextRequest) {
   }
   try {
     const status = await activateLocalLicense(parsed.data);
-    return NextResponse.json(status);
+    const res = NextResponse.json(status);
+    await attachGateCookie(res, status);
+    return res;
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "激活失败" },
@@ -25,4 +28,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
