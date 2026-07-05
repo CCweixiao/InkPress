@@ -44,6 +44,7 @@ COPY --chown=nextjs:nodejs prisma.config.ts ./prisma.config.ts
 COPY --chown=nextjs:nodejs docs ./docs
 
 # 6) 生产初始化脚本（migrate 后自动跑：admin + 订阅计划，幂等）
+COPY --chown=nextjs:nodejs src/lib/plan/seed-plans.ts ./src/lib/plan/seed-plans.ts
 COPY --chown=nextjs:nodejs scripts/init-production.ts ./scripts/init-production.ts
 
 # 7) 启动脚本（先 migrate，再 init，再启动 server）
