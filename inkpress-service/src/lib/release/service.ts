@@ -4,6 +4,7 @@ import { writeAudit } from "@/lib/audit";
 import { moduleLogger } from "@/lib/logger";
 import type {
   RegisterReleaseInput,
+  ReleaseChannel,
   ReleasePlatform,
 } from "@/lib/validation/schemas";
 import type { Prisma, SoftwareRelease } from "@/generated/prisma/client";
@@ -16,6 +17,17 @@ export const PLATFORM_LABELS: Record<ReleasePlatform, string> = {
   "darwin-x64": "macOS · Intel",
   "win32-x64": "Windows · x64",
   "linux-x64": "Linux · x64",
+};
+
+/** 通道展示标签 + UI 用色提示 */
+export const CHANNEL_META: Record<
+  ReleaseChannel,
+  { label: string; description: string; tone: "default" | "secondary" | "outline" | "destructive" }
+> = {
+  stable: { label: "正式版", description: "经过完整测试的稳定版本，推荐所有用户使用", tone: "default" },
+  beta: { label: "公测版", description: "功能基本完成，欢迎用户体验并反馈", tone: "secondary" },
+  rc: { label: "候选版", description: "即将转正的发布候选，仅修复 blocker", tone: "outline" },
+  snapshot: { label: "快照版", description: "开发自动构建，可能不稳定，仅供尝鲜/调试", tone: "destructive" },
 };
 
 /**
@@ -169,6 +181,10 @@ function parseHighlights(json: string): string[] {
   }
 }
 
+/**
+ * 公开序列化：downloadUrl 替换为同源跟踪 URL（/api/releases/[id]/download）。
+ * 真实 OSS 直链不暴露给前端，避免绕过计数；管理员页通过 getReleaseById 拿原始 URL。
+ */
 function serializeRelease(row: SoftwareRelease) {
   return {
     id: row.id,
@@ -176,7 +192,7 @@ function serializeRelease(row: SoftwareRelease) {
     fileName: row.fileName,
     fileSizeBytes: row.fileSizeBytes,
     fileHashSha256: row.fileHashSha256,
-    downloadUrl: row.downloadUrl,
+    downloadUrl: `/api/releases/${row.id}/download`,
     releasedAt: row.releasedAt,
     channel: row.channel,
     changelogMarkdown: row.changelogMarkdown,
@@ -190,6 +206,37 @@ function serializeReleaseWithPlatform(row: SoftwareRelease) {
     platform: row.platform as ReleasePlatform,
     platformLabel: PLATFORM_LABELS[row.platform as ReleasePlatform] ?? row.platform,
   };
+}
+
+/** 管理员：单条详情（含 downloadCount 与原始 downloadUrl，不脱敏） */
+export async function getReleaseById(id: string) {
+  const row = await prisma.softwareRelease.findUnique({ where: { id } });
+  if (!row) throw new AppError(ErrorCode.NOT_FOUND, "版本不存在");
+  return row;
+}
+
+/**
+ * 公开下载跟踪：找到 PUBLISHED 版本 → 原子自增 downloadCount → 返回真实 downloadUrl。
+ * HIDDEN / 不存在 → 抛 NOT_FOUND，端点返回 404。
+ *
+ * 注意：使用 update({ where: { id, status: "PUBLISHED" } }) 兜底，
+ * 若已被隐藏则更新 0 行，调用方据此判定不可下载。
+ */
+export async function incrementDownloadCount(id: string): Promise<string> {
+  const updated = await prisma.softwareRelease.updateMany({
+    where: { id, status: "PUBLISHED" },
+    data: { downloadCount: { increment: 1 } },
+  });
+  if (updated.count === 0) {
+    throw new AppError(ErrorCode.NOT_FOUND, "版本不存在或已下架");
+  }
+  const row = await prisma.softwareRelease.findUnique({
+    where: { id },
+    select: { downloadUrl: true },
+  });
+  // 上一个 updateMany 已确认存在，这里再查不到属并发删除的极端情况
+  if (!row) throw new AppError(ErrorCode.NOT_FOUND, "版本不存在或已下架");
+  return row.downloadUrl;
 }
 
 /** 管理员：全量列表 */
@@ -224,7 +271,7 @@ export async function updateRelease(
     changelogMarkdown?: string | null;
     highlights?: string[];
     status?: "PUBLISHED" | "HIDDEN";
-    channel?: "stable" | "beta";
+    channel?: ReleaseChannel;
   },
   meta: { actorUserId: string; ip: string | null; ua: string | null }
 ) {
