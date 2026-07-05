@@ -219,30 +219,34 @@ type DemoCase = {
   eyebrow: string;
   desc: string;
   icon: typeof Sparkles;
-  videoSrc: string | null;
+  /** B 站官方播放器 iframe src（player.bilibili.com/player.html?bvid=...） */
+  embedUrl: string;
 };
 
 const DEMO_CASES: DemoCase[] = [
   {
     eyebrow: "案例 01",
-    title: "从一个选题到可编辑初稿",
-    desc: "演示 InkPress 如何围绕主题补充资料、整理角度，并生成可继续打磨的文章结构。",
+    title: "网络调研，编写推广文章",
+    desc: "演示如何基于 InkPress AI 进行网络调研，整理话题资料与角度，并产出可继续打磨的推广文案。",
     icon: PenLine,
-    videoSrc: null,
+    embedUrl:
+      "https://player.bilibili.com/player.html?bvid=BV1cUT16XEdj&page=1&autoplay=0&high_quality=1&danmaku=0&t=66.1",
   },
   {
     eyebrow: "案例 02",
-    title: "素材、封面与作品预览",
-    desc: "演示图片、封面、参考资料和视觉样式如何围绕同一份作品被组织和校准。",
+    title: "加载素材，穿插媒体资料",
+    desc: "演示如何把图片、参考资料与外部链接作为素材载入会话，让 AI 在写作中按需穿插图片、引用与媒体片段。",
     icon: Layers3,
-    videoSrc: null,
+    embedUrl:
+      "https://player.bilibili.com/player.html?bvid=BV1J9T16JEHd&page=1&autoplay=0&high_quality=1&danmaku=0&t=48.1",
   },
   {
     eyebrow: "案例 03",
-    title: "从底稿到多渠道发布",
-    desc: "演示图文、种草文案、小说片段、短剧脚本或 AI 视频创意如何完成发布前整理。",
+    title: "探索项目，编写技术文章",
+    desc: "演示如何让 AI 读取本地或 GitHub 上的代码项目，基于真实代码结构编写出有出处、可校验的技术文章。",
     icon: Send,
-    videoSrc: null,
+    embedUrl:
+      "https://player.bilibili.com/player.html?bvid=BV1z9T16EE1e&page=1&autoplay=0&high_quality=1&danmaku=0&t=30.2",
   },
 ];
 
@@ -258,7 +262,7 @@ function CaseDemoSection() {
               用三个场景看见 InkPress 的真实工作方式
             </h2>
             <p className="mx-auto mt-3 max-w-3xl text-sm leading-7 text-muted-foreground md:text-base">
-              这里会承载三段产品演示视频。当前先保留完整的视频版式和案例文案，后续补充链接后即可直接展示真实内容。
+              从调研、素材组织到代码项目探索，三个真实场景呈现 InkPress 的完整 AI 写作工作流。
             </p>
           </div>
           <div className="mt-10 grid gap-4 lg:grid-cols-[1.22fr_0.78fr]">
@@ -273,25 +277,17 @@ function CaseDemoSection() {
                   }`}
                 >
                   <div className="relative aspect-video overflow-hidden bg-[linear-gradient(135deg,#0f172a_0%,#1f2937_58%,#2563eb_100%)]">
-                    {item.videoSrc ? (
-                      <video
-                        className="h-full w-full object-cover"
-                        src={item.videoSrc}
-                        controls
-                        preload="metadata"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full flex-col items-center justify-center px-6 text-center text-white">
-                        <span className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-full bg-white/12 ring-1 ring-white/20">
-                          <Icon className="h-6 w-6" />
-                        </span>
-                        <span className="text-sm font-medium text-white/92">{item.eyebrow}</span>
-                        <span className="mt-2 text-lg font-semibold tracking-normal md:text-xl">
-                          视频即将上线
-                        </span>
-                      </div>
-                    )}
-                    <div className="absolute left-4 top-4 rounded-full bg-black/36 px-3 py-1 text-xs font-medium text-white backdrop-blur">
+                    <iframe
+                      className="absolute inset-0 h-full w-full"
+                      src={item.embedUrl}
+                      title={`${item.title} - B 站演示视频`}
+                      loading="lazy"
+                      scrolling="no"
+                      frameBorder={0}
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    />
+                    <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-black/36 px-3 py-1 text-xs font-medium text-white backdrop-blur">
                       {item.eyebrow}
                     </div>
                   </div>

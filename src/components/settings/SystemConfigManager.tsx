@@ -1780,11 +1780,19 @@ function ModelRow({
       >
         <GripVertical className="h-3.5 w-3.5" />
       </button>
+      {model.name !== model.id && (
+        <span
+          className="max-w-[40%] shrink-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+          title={`真实模型 ID（发送给 LLM API 的 model 参数）：${model.id}`}
+        >
+          {model.id}
+        </span>
+      )}
       <span
-        className="max-w-[40%] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
-        title={model.id}
+        className="shrink-0 text-[11px] text-muted-foreground"
+        title="仅用于界面展示，不会影响实际调用的模型 ID"
       >
-        {model.id}
+        别名
       </span>
       <Input
         value={model.name}
