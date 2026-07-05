@@ -110,11 +110,7 @@ export function ServiceHeader({ isLoggedIn, email, role }: ServiceHeaderProps) {
               <span className="hidden max-w-[180px] truncate text-xs text-muted-foreground xl:inline">
                 {email}
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => signOut({ callbackUrl: "/login" })}
-              >
+              <Button variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: "/" })}>
                 退出
               </Button>
             </>
