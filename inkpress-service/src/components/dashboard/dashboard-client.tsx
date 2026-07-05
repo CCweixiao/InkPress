@@ -105,13 +105,26 @@ export function DashboardClient({
           </Badge>
         </div>
 
-        {!changed && (
+        {!changed && user.role !== "ADMIN" && (
           <ChangePasswordCard
             onDone={() => {
               setChanged(true);
               router.refresh();
             }}
           />
+        )}
+
+        {user.role === "ADMIN" && user.mustChangePassword && (
+          <Card className="border-blue-500/40">
+            <CardHeader>
+              <CardTitle className="text-sm text-blue-600">
+                管理员密码由部署配置管理
+              </CardTitle>
+              <CardDescription>
+                无法在界面修改，如需改密请更新 .env.production 的 ADMIN_PASSWORD 后重新发布。
+              </CardDescription>
+            </CardHeader>
+          </Card>
         )}
 
         <Card>
