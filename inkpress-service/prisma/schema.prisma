@@ -189,6 +189,8 @@ model LicenseValidationLog {
   @@index([activationId, createdAt])
   @@index([deviceIdHash, createdAt])
   @@index([action, result, createdAt])
+  // TTL 清理：deleteMany({ createdAt: { lt: cutoff } }) 跨 licenseKeyId 全表扫描，需单列索引
+  @@index([createdAt])
 }
 
 // ===== 设备试用登记（7 天免费试用，服务端权威） =====
