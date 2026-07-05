@@ -12,13 +12,23 @@ const log = moduleLogger("me:password");
 
 /**
  * POST /api/me/password — 修改密码（session 保护）。
- * 同时用于「管理员首登强制改密」流程，成功后清除 mustChangePassword。
+ *
+ * **管理员禁用**：admin 密码由 .env.production 的 ADMIN_PASSWORD 管理，
+ * 单一来源、每次发布自动同步。普通用户可改自己的密码。
  */
 export async function POST(req: NextRequest) {
   const requestId = getRequestId(req.headers);
   const session = await auth();
   if (!session?.user?.id) {
     return fail(ErrorCode.UNAUTHORIZED, { message: "请先登录", requestId });
+  }
+
+  // 管理员密码由配置文件管理，禁止自行修改
+  if (session.user.role === "ADMIN") {
+    return fail(ErrorCode.FORBIDDEN, {
+      message: "管理员密码由部署配置（ADMIN_PASSWORD）管理，无法在界面修改",
+      requestId,
+    });
   }
 
   let body: unknown;
