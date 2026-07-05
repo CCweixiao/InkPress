@@ -16,11 +16,14 @@ export default async function GuidePage() {
   const [session, guide] = await Promise.all([auth(), getGuideDocument()]);
   if (!guide) notFound();
 
+  const { html, toc } = renderGuideMarkdown(guide.markdown);
+
   return (
     <GuideView
       manifest={guide.manifest}
       current={guide.item}
-      html={renderGuideMarkdown(guide.markdown)}
+      html={html}
+      toc={toc}
       isLoggedIn={Boolean(session?.user?.id)}
       email={session?.user?.email ?? null}
       role={session?.user?.role ?? null}
