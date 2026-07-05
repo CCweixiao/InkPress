@@ -19,3 +19,28 @@ export function verifyNotifySign(params: Record<string, string>): boolean {
     return false;
   }
 }
+
+export interface NotifyMerchantCheck {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * 回调归属校验：支付宝平台签名只证明“支付宝发出”，还必须确认通知属于本应用/本商户。
+ * seller_id 默认可选，便于沙箱与小微账号先跑通；生产建议显式配置。
+ */
+export function verifyNotifyMerchant(params: Record<string, string>): NotifyMerchantCheck {
+  const expectedAppId = process.env.ALIPAY_APP_ID?.trim();
+  const expectedSellerId = process.env.ALIPAY_SELLER_ID?.trim();
+
+  if (!expectedAppId) {
+    return { ok: false, reason: "ALIPAY_APP_ID 未配置" };
+  }
+  if (params.app_id !== expectedAppId) {
+    return { ok: false, reason: "app_id 不匹配" };
+  }
+  if (expectedSellerId && params.seller_id !== expectedSellerId) {
+    return { ok: false, reason: "seller_id 不匹配" };
+  }
+  return { ok: true };
+}

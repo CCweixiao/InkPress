@@ -86,6 +86,7 @@ export default async function CheckoutSuccessPage({
     : null;
 
   const amountYuan = (order.amountCents / 100).toFixed(2);
+  const sessionEmail = session.user.email?.trim().toLowerCase();
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -138,7 +139,7 @@ export default async function CheckoutSuccessPage({
             </div>
           </dl>
 
-          {license && license.ownerEmail === session.user.email && (
+          {license && license.ownerEmail === sessionEmail && (
             <div className="mt-6 border-t pt-6">
               <h2 className="mb-3 text-base font-semibold">你的 License Key</h2>
               <div className="space-y-3">

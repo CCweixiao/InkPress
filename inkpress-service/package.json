@@ -21,7 +21,10 @@
     "db:backup": "tsx scripts/backup-db.ts",
     "init-admin": "tsx scripts/init-admin.ts",
     "gen-token-key": "tsx scripts/gen-token-key.ts",
-    "test:email": "tsx scripts/test-email.ts"
+    "test:email": "tsx scripts/test-email.ts",
+    "publish:oss": "tsx scripts/publish-oss.ts",
+    "release:register": "tsx scripts/register-release.ts",
+    "release:full": "cd .. && pnpm electron:build:arm64 && cd inkpress-service && pnpm publish:oss && pnpm release:register"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",

@@ -429,6 +429,7 @@ export async function fulfillOrderIfPending(opts: {
       select: { email: true },
     });
     if (!user) throw new Error("用户不存在");
+    const ownerEmail = user.email.trim().toLowerCase();
 
     // License 生成：循环防 keyHash 冲突
     let licenseKeyId: string | null = null;
@@ -447,7 +448,7 @@ export async function fulfillOrderIfPending(opts: {
             durationYears: cfg.durationYears ?? null,
             maxDevices: cfg.maxDevices,
             status: "ENABLED",
-            ownerEmail: user.email,
+            ownerEmail,
             note: `在线购买自动发放（订单 ${opts.outTradeNo}）`,
             createdByUserId: systemUserId,
           },
