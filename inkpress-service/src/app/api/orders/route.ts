@@ -10,7 +10,7 @@ import { AppError, ErrorCode } from "@/lib/errors";
 const ORDER_CREATE_PER_MIN: RateLimitRule = { windowSec: 60, max: 5 };
 const ORDER_CREATE_PER_HOUR: RateLimitRule = { windowSec: 3600, max: 30 };
 
-/** POST /api/orders — 创建订单 + 调 precreate 拿二维码 */
+/** POST /api/orders — 创建订单 + 调 alipay.trade.wap.pay 拿跳转 URL */
 export async function POST(req: NextRequest) {
   const requestId = getRequestId(req.headers);
   const ip = getClientIp(req.headers);

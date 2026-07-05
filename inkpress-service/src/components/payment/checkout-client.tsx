@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 
 export interface CheckoutPlan {
@@ -19,7 +18,7 @@ export interface CheckoutPlan {
 interface CreatedOrder {
   orderId: string;
   outTradeNo: string;
-  qrCode: string;
+  payUrl: string;
   amountCents: number;
   subject: string;
   expiresAt: string;
@@ -33,8 +32,11 @@ const TIMEOUT_MS = 15 * 60 * 1000;
 /**
  * 收银台客户端：状态机 loading → pending → paid | error。
  *
- * - mount 时 POST /api/orders 创建订单
- * - pending 每 2s 轮询 GET /api/orders/:id，PAID 跳成功页
+ * - mount 时 POST /api/orders 创建订单（拿到支付宝跳转 URL）
+ * - pending 阶段显示订单摘要 + 「去支付宝支付」按钮
+ *   ├─ 用户点按钮 → window.location.href 跳走（PC 显示扫码，移动端唤起 App）
+ *   └─ 用户支付完成 → 支付宝 GET return_url=/checkout/success?orderId=xxx
+ * - 同时每 2s 轮询 GET /api/orders/:id 作兜底（用户若保留原标签页可直接跳转）
  * - 15 分钟未支付 → error
  */
 export function CheckoutClient({
@@ -77,7 +79,7 @@ export function CheckoutClient({
     })();
   }, [plan.slug]);
 
-  // 2. 轮询订单状态
+  // 2. 轮询订单状态（兜底：用户若保留原标签页可直接跳转）
   useEffect(() => {
     if (phase !== "pending" || !order) return;
     const timer = setInterval(async () => {
@@ -152,7 +154,7 @@ export function CheckoutClient({
             </dl>
           </section>
 
-          {/* 二维码 / 状态 */}
+          {/* 支付入口 / 状态 */}
           <section className="rounded-xl border bg-card p-6">
             {phase === "loading" && (
               <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
@@ -161,16 +163,25 @@ export function CheckoutClient({
             )}
 
             {phase === "pending" && order && (
-              <div className="flex flex-col items-center gap-4">
+              <div className="flex h-72 flex-col items-center justify-center gap-4">
                 <div className="text-sm text-muted-foreground">
-                  请用支付宝扫码支付
+                  点击下方按钮跳转到支付宝完成支付
                 </div>
-                <div className="rounded-lg border bg-white p-3">
-                  <QRCodeSVG value={order.qrCode} size={220} />
-                </div>
+                <Button
+                  size="lg"
+                  className="w-full max-w-xs"
+                  onClick={() => {
+                    window.location.href = order.payUrl;
+                  }}
+                >
+                  去支付宝支付 ¥{amountYuan.toFixed(2)}
+                </Button>
                 <div className="text-xs text-muted-foreground">
                   剩余支付时间 {mm}:{ss}
                 </div>
+                <p className="max-w-xs text-center text-xs text-muted-foreground">
+                  支付完成后将自动返回本站。如未自动跳转，点击下方按钮查询支付状态。
+                </p>
                 <Button
                   variant="outline"
                   size="sm"
