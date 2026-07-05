@@ -17,11 +17,41 @@ export interface ValidationLogInput {
 }
 
 /**
+ * 写入分级（缓解 SQLite IO 压力 / IOPS 上限）：
+ * - all       全量记录（默认）
+ * - denied    仅 DENIED / RATE_LIMITED / ERROR（丢 ALLOWED）
+ * - error     仅 ERROR（异常路径）
+ * - off       完全关停
+ *
+ * 紧急情况：LICENSE_VALIDATION_LOG_LEVEL=off 可立即停写。
+ */
+type ValidationLogLevel = "all" | "denied" | "error" | "off";
+
+const LOG_LEVEL: ValidationLogLevel = (() => {
+  const raw = (process.env.LICENSE_VALIDATION_LOG_LEVEL ?? "all")
+    .trim()
+    .toLowerCase();
+  return raw === "denied" || raw === "error" || raw === "off" ? raw : "all";
+})();
+
+function shouldWrite(result: ValidationLogInput["result"]): boolean {
+  if (LOG_LEVEL === "off") return false;
+  if (LOG_LEVEL === "error") return result === "ERROR";
+  if (LOG_LEVEL === "denied") {
+    return result === "DENIED" || result === "RATE_LIMITED" || result === "ERROR";
+  }
+  return true;
+}
+
+/**
  * 写 License 校验日志（PDC §9.4）。可异步、失败仅记录不抛，但错误必须可见。
+ *
+ * 注：调用方处于请求关键路径，函数内部根据 LOG_LEVEL 决定是否真正落盘。
  */
 export async function writeValidationLog(
   input: ValidationLogInput
 ): Promise<void> {
+  if (!shouldWrite(input.result)) return;
   try {
     await prisma.licenseValidationLog.create({
       data: {
