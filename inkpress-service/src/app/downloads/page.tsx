@@ -37,10 +37,10 @@ export default async function DownloadsRoutePage() {
             即将上线
           </div>
           <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">
-            桌面版正在打磨中
+            桌面版即将上线
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-pretty text-base text-muted-foreground">
-            InkPress 桌面客户端的首个公开版本还在最后冲刺阶段，稍后会在这里提供 macOS / Windows 安装包下载。可以先去服务端 Web 版体验，或关注公众号获取发版通知。
+            InkPress 桌面客户端的首个公开版本正在最后冲刺，稍后会在这里提供 macOS / Windows 安装包下载。敬请期待。
           </p>
         </section>
       </div>
