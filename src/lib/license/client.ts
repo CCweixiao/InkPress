@@ -101,6 +101,13 @@ function isExpiredIso(value: string | null | undefined, nowMs = Date.now()): boo
   return Number.isFinite(expiresMs) && expiresMs <= nowMs;
 }
 
+export function isLocalLicenseUsable(
+  state: Pick<LocalLicenseState, "status" | "effectiveExpiresAt">,
+  nowMs = Date.now()
+): boolean {
+  return state.status === "ACTIVE" && !isExpiredIso(state.effectiveExpiresAt, nowMs);
+}
+
 async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
   return (await response.json().catch(() => ({
     ok: false,
@@ -192,12 +199,13 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
   if (state.nextCheckAt) {
     const nextMs = new Date(state.nextCheckAt).getTime();
     if (Number.isFinite(nextMs) && Date.now() < nextMs - 30_000) {
-      const allowed = state.status === "ACTIVE";
+      const allowed = isLocalLicenseUsable(state);
       return {
         required: true,
         allowed,
         mode: allowed ? "active" : "invalid",
         state: publicState(state),
+        message: allowed ? undefined : "License 未激活或已过期。",
       };
     }
   }
@@ -233,8 +241,11 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
       licenseToken: envelope.data.licenseToken ?? state.licenseToken,
       nextCheckAt: envelope.data.nextCheckAt,
       lastValidatedAt: new Date().toISOString(),
-      // 滚动宽限：lastValidatedAt + 30d（服务端值优先）
-      offlineGraceExpiresAt: offlineGraceExpiresAt(envelope.data.offlineGraceSeconds),
+      // 仅 ACTIVE 响应刷新离线宽限；禁用/撤销/过期不能重新获得离线可用期。
+      offlineGraceExpiresAt:
+        envelope.data.status === "ACTIVE"
+          ? offlineGraceExpiresAt(envelope.data.offlineGraceSeconds)
+          : state.offlineGraceExpiresAt,
       metadata: envelope.data.metadata ?? state.metadata,
     };
     writeLocalLicenseState(next);
@@ -250,9 +261,9 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
     const networkError = isLicenseServiceNetworkError(error);
     if (
       networkError &&
+      isLocalLicenseUsable(state) &&
       Number.isFinite(graceMs) &&
-      graceMs > Date.now() &&
-      !isExpiredIso(state.effectiveExpiresAt)
+      graceMs > Date.now()
     ) {
       return {
         required: true,
