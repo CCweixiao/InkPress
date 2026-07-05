@@ -345,4 +345,57 @@ export const updateTicketStatusSchema = z.object({
   priority: TicketPrioritySchema.optional(),
 });
 
+// ===== 软件发布（CI 自动登记 / 公开下载页） =====
+export const ReleasePlatformSchema = z.enum([
+  "darwin-arm64",
+  "darwin-x64",
+  "win32-x64",
+  "linux-x64",
+]);
+export type ReleasePlatform = z.infer<typeof ReleasePlatformSchema>;
+
+export const ReleaseStatusSchema = z.enum(["PUBLISHED", "HIDDEN"]);
+export type ReleaseStatus = z.infer<typeof ReleaseStatusSchema>;
+
+export const ReleaseChannelSchema = z.enum(["stable", "beta"]);
+
+/** semver 宽松校验：不强制严格 semver，允许如 "1.0.0-beta1" */
+const looseSemver = z
+  .string()
+  .trim()
+  .min(1, "版本号不能为空")
+  .max(64)
+  .regex(/^v?\d+\.\d+\.\d+[-+.\w]*$/, "版本号格式不合法（期望 x.y.z）");
+
+/**
+ * CI 制品登记请求体。
+ * 注意：CI 不携带 status 字段——保护管理员审核结果，CI upsert 时不动 status。
+ */
+export const registerReleaseSchema = z.object({
+  packageName: z.string().trim().min(1).max(64),
+  platform: ReleasePlatformSchema,
+  version: looseSemver,
+  displayName: z.string().trim().min(1).max(120),
+  fileName: z.string().trim().min(1).max(255),
+  fileSizeBytes: z.number().int().positive().max(20 * 1024 * 1024 * 1024), // ≤ 20 GB
+  fileHashSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  downloadUrl: z.string().trim().url().max(2048),
+  logoUrl: z.string().trim().url().max(2048).optional(),
+  changelogMarkdown: z.string().trim().max(20000).optional(),
+  highlights: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+  channel: ReleaseChannelSchema.default("stable"),
+  releasedAt: z.string().datetime().optional(),
+});
+export type RegisterReleaseInput = z.infer<typeof registerReleaseSchema>;
+
+/** 管理员编辑请求体（只允许改这些字段，不能改 packageName/platform/version） */
+export const updateReleaseSchema = z.object({
+  displayName: z.string().trim().min(1).max(120).optional(),
+  logoUrl: z.string().trim().url().max(2048).optional(),
+  changelogMarkdown: z.string().trim().max(20000).optional(),
+  highlights: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+  status: ReleaseStatusSchema.optional(),
+  channel: ReleaseChannelSchema.optional(),
+});
+
 
