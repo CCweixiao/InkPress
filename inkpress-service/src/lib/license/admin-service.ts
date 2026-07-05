@@ -363,7 +363,7 @@ export async function listLicenses(params: ListLicensesParams) {
 }
 
 export async function getLicenseDetail(id: string) {
-  const [license, activeDevices, recentLogs] = await Promise.all([
+  const [license, activeDevices] = await Promise.all([
     prisma.licenseKey.findUnique({
       where: { id },
       select: {
@@ -395,11 +395,6 @@ export async function getLicenseDetail(id: string) {
     prisma.licenseActivation.count({
       where: { licenseKeyId: id, status: "ACTIVE" },
     }),
-    prisma.licenseValidationLog.findMany({
-      where: { licenseKeyId: id },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    }),
   ]);
 
   if (!license) throw new AppError(ErrorCode.NOT_FOUND, "License 不存在");
@@ -414,7 +409,6 @@ export async function getLicenseDetail(id: string) {
       ),
     },
     activeDevices,
-    recentLogs,
   };
 }
 

@@ -10,6 +10,7 @@ import {
   LicenseLifecycleBadge,
   ActivationStatusBadge,
 } from "@/components/admin/status-badge";
+import { ValidationLogTable } from "@/components/admin/validation-log-table";
 import { formatDate } from "@/lib/utils";
 
 function expiresLabel(
@@ -26,7 +27,7 @@ export default async function LicenseDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { license, activeDevices, recentLogs } = await getLicenseDetail(id);
+  const { license, activeDevices } = await getLicenseDetail(id);
 
   return (
     <div className="space-y-6">
@@ -177,37 +178,7 @@ export default async function LicenseDetailPage({
 
       <section>
         <h2 className="mb-2 text-base font-semibold">最近校验日志</h2>
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2">时间</th>
-                <th className="px-3 py-2">动作</th>
-                <th className="px-3 py-2">结果</th>
-                <th className="px-3 py-2">原因</th>
-                <th className="px-3 py-2">IP</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentLogs.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
-                    暂无日志
-                  </td>
-                </tr>
-              )}
-              {recentLogs.map((l) => (
-                <tr key={l.id} className="border-t">
-                  <td className="px-3 py-2 text-xs">{formatDate(l.createdAt)}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{l.action}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{l.result}</td>
-                  <td className="px-3 py-2 text-xs">{l.reason ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs">{l.ip ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ValidationLogTable licenseId={id} />
       </section>
     </div>
   );
