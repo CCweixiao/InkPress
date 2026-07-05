@@ -13,6 +13,8 @@ export {
   renderTicketClosedUserEmail,
 } from "./templates/ticket-emails";
 export type { TicketEmailData, TicketReplyEmailData } from "./templates/ticket-emails";
+export { renderOrderPaidReceiptEmail } from "./templates/order-emails";
+export type { OrderReceiptData } from "./templates/order-emails";
 
 const log = moduleLogger("mail");
 
