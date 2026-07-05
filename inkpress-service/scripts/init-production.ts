@@ -100,7 +100,14 @@ async function ensureAdmin(): Promise<void> {
   console.log(`[init] admin 已创建：${email}（首登需改密）`);
 }
 
-// ===== 内置订阅计划（与 scripts/seed-plans.ts 保持一致） =====
+// ===== 内置订阅计划 =====
+//
+// 策略（与 admin UI 编辑权限的边界）：
+// - 首次部署：按硬编码创建 4 个默认 plan
+// - 升级/重启：**已存在的 plan 一律跳过**，永不覆盖
+//   → 管理员在 /admin/plans 的手动调价持久化
+//   → 如需推送新的 plan 配置，通过 admin UI 或单独的 SQL 迁移
+//   → 这条边界保证「后续版本发布不破坏既有数据」
 
 interface SeedPlan {
   slug: string;
@@ -199,7 +206,6 @@ const PLANS: SeedPlan[] = [
 
 async function seedPlans(): Promise<void> {
   let created = 0;
-  let updated = 0;
   let skipped = 0;
 
   for (const plan of PLANS) {
@@ -229,32 +235,12 @@ async function seedPlans(): Promise<void> {
       continue;
     }
 
-    const needsUpdate =
-      existing.name !== data.name ||
-      existing.tagline !== data.tagline ||
-      existing.durationKind !== data.durationKind ||
-      existing.durationYears !== data.durationYears ||
-      existing.maxDevices !== data.maxDevices ||
-      existing.priceCents !== data.priceCents ||
-      existing.discountPriceCents !== data.discountPriceCents ||
-      existing.featuresJson !== data.featuresJson ||
-      existing.highlight !== data.highlight ||
-      existing.sortOrder !== data.sortOrder;
-
-    if (!needsUpdate) {
-      skipped++;
-      continue;
-    }
-
-    await prisma.subscriptionPlan.update({
-      where: { slug: plan.slug },
-      data,
-    });
-    updated++;
+    // 已存在 → 一律跳过（见上方「策略」注释）
+    skipped++;
   }
 
   console.log(
-    `[init] plans 完成：新增 ${created} / 更新 ${updated} / 跳过 ${skipped}`
+    `[init] plans 完成：新增 ${created} / 跳过 ${skipped}（已存在不覆盖）`
   );
 }
 
