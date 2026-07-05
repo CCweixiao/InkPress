@@ -39,12 +39,21 @@ export interface PublicPlan {
   sortOrder: number;
   /** ACTIVE 可购买；INACTIVE 仅展示不可购买 */
   status: string;
+  /** 每日库存上限：null = 不限 */
+  dailyStockLimit: number | null;
+  /** 今日已售（PENDING + PAID，自今日 0 点或最近 reset 起） */
+  dailySoldToday: number;
+  /** 今日剩余（null = 不限；>=0 表示剩余） */
+  dailyRemaining: number | null;
+  /** 是否售罄（dailyStockLimit 非 null 且 dailyRemaining === 0） */
+  soldOut: boolean;
 }
 
 export interface AdminPlan extends PublicPlan {
   status: string;
   priceCents: number;
   discountPriceCents: number | null;
+  dailyStockResetAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +72,9 @@ function toPublicPlan(row: {
   highlight: string | null;
   sortOrder: number;
   status: string;
+  dailyStockLimit: number | null;
+  dailyStockResetAt?: Date | null;
+  dailySoldToday?: number;
 }): PublicPlan {
   const priceYuan = row.priceCents / 100;
   const discountCents = row.discountPriceCents ?? null;
@@ -99,6 +111,12 @@ function toPublicPlan(row: {
     features = [];
   }
 
+  const dailySoldToday = row.dailySoldToday ?? 0;
+  const dailyStockLimit = row.dailyStockLimit;
+  const dailyRemaining =
+    dailyStockLimit === null ? null : Math.max(0, dailyStockLimit - dailySoldToday);
+  const soldOut = dailyStockLimit !== null && dailyRemaining === 0;
+
   return {
     id: row.id,
     slug: row.slug,
@@ -117,6 +135,10 @@ function toPublicPlan(row: {
     highlight: row.highlight,
     sortOrder: row.sortOrder,
     status: row.status,
+    dailyStockLimit,
+    dailySoldToday,
+    dailyRemaining,
+    soldOut,
   };
 }
 
@@ -134,14 +156,19 @@ function toAdminPlan(row: {
   highlight: string | null;
   sortOrder: number;
   status: string;
+  dailyStockLimit: number | null;
+  dailyStockResetAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  dailySoldToday?: number;
 }): AdminPlan {
   return {
     ...toPublicPlan(row),
     status: row.status,
     priceCents: row.priceCents,
     discountPriceCents: row.discountPriceCents,
+    dailyStockLimit: row.dailyStockLimit,
+    dailyStockResetAt: row.dailyStockResetAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -161,6 +188,8 @@ const PUBLIC_SELECT = {
   highlight: true,
   sortOrder: true,
   status: true,
+  dailyStockLimit: true,
+  dailyStockResetAt: true,
 } as const;
 
 const ADMIN_SELECT = {
@@ -169,6 +198,57 @@ const ADMIN_SELECT = {
   createdAt: true,
   updatedAt: true,
 } as const;
+
+/**
+ * 批量统计今日各 plan 销量（PENDING + PAID），用于列表展示剩余库存。
+ * 计数起点：max(startOfToday, plan.dailyStockResetAt)
+ *
+ * 实现方式：对每个 plan 起点不同，无法一次 groupBy；但今日 0 点起的数据
+ * 用一次 groupBy 拿到，对 resetAt 在今日内的 plan 用单独 count 补差。
+ */
+async function computeDailySoldToday(
+  plans: { slug: string; dailyStockResetAt: Date | null }[]
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (plans.length === 0) return result;
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  // 1. 一次性查 startOfToday 起所有 plan 的销量
+  const grouped = await prisma.order.groupBy({
+    by: ["planSlug"],
+    where: {
+      status: { in: ["PENDING", "PAID"] },
+      createdAt: { gte: startOfToday },
+    },
+    _count: { _all: true },
+  });
+  const soldFromMidnight = new Map<string, number>();
+  for (const g of grouped) {
+    soldFromMidnight.set(g.planSlug, g._count._all);
+  }
+
+  // 2. 对 resetAt 在今日内的 plan，单独 count（起点更晚）
+  for (const p of plans) {
+    if (
+      p.dailyStockResetAt &&
+      p.dailyStockResetAt > startOfToday
+    ) {
+      const c = await prisma.order.count({
+        where: {
+          planSlug: p.slug,
+          status: { in: ["PENDING", "PAID"] },
+          createdAt: { gte: p.dailyStockResetAt },
+        },
+      });
+      result.set(p.slug, c);
+    } else {
+      result.set(p.slug, soldFromMidnight.get(p.slug) ?? 0);
+    }
+  }
+  return result;
+}
 
 /**
  * 公开端点：返回 ACTIVE 与 INACTIVE 计划。
@@ -186,7 +266,10 @@ export async function listPublicPlans(): Promise<PublicPlan[]> {
     ],
     select: PUBLIC_SELECT,
   });
-  return rows.map(toPublicPlan);
+  const soldMap = await computeDailySoldToday(rows);
+  return rows.map((r) =>
+    toPublicPlan({ ...r, dailySoldToday: soldMap.get(r.slug) ?? 0 })
+  );
 }
 
 /** 管理端：返回全部，含 status */
@@ -195,7 +278,10 @@ export async function listAllPlans(): Promise<AdminPlan[]> {
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     select: ADMIN_SELECT,
   });
-  return rows.map(toAdminPlan);
+  const soldMap = await computeDailySoldToday(rows);
+  return rows.map((r) =>
+    toAdminPlan({ ...r, dailySoldToday: soldMap.get(r.slug) ?? 0 })
+  );
 }
 
 export interface CreatePlanInput {
@@ -211,6 +297,8 @@ export interface CreatePlanInput {
   highlight?: "popular" | "best_value" | null;
   sortOrder?: number;
   status?: "ACTIVE" | "INACTIVE";
+  /** 每日库存上限：null/undefined = 不限；0 = 停售；>0 = 限制 */
+  dailyStockLimit?: number | null;
 }
 
 export async function createPlan(
@@ -232,6 +320,7 @@ export async function createPlan(
         highlight: input.highlight ?? null,
         sortOrder: input.sortOrder ?? 0,
         status: input.status ?? "ACTIVE",
+        dailyStockLimit: input.dailyStockLimit ?? null,
       },
       select: ADMIN_SELECT,
     });
@@ -246,11 +335,12 @@ export async function createPlan(
         name: created.name,
         priceCents: created.priceCents,
         discountPriceCents: created.discountPriceCents,
+        dailyStockLimit: created.dailyStockLimit,
       },
       ip: actor.ip,
       userAgent: actor.ua,
     });
-    return toAdminPlan(created);
+    return toAdminPlan({ ...created, dailySoldToday: 0 });
   } catch (err) {
     if ((err as { code?: string })?.code === "P2002") {
       throw new AppError(ErrorCode.VALIDATION_ERROR, "slug 已存在");
@@ -271,6 +361,8 @@ export interface UpdatePlanInput {
   highlight?: "popular" | "best_value" | null;
   sortOrder?: number;
   status?: "ACTIVE" | "INACTIVE";
+  /** null = 取消库存上限 */
+  dailyStockLimit?: number | null;
 }
 
 export async function updatePlan(
@@ -300,9 +392,12 @@ export async function updatePlan(
   if (patch.highlight !== undefined) data.highlight = patch.highlight;
   if (patch.sortOrder !== undefined) data.sortOrder = patch.sortOrder;
   if (patch.status !== undefined) data.status = patch.status;
+  if (patch.dailyStockLimit !== undefined) {
+    data.dailyStockLimit = patch.dailyStockLimit;
+  }
 
   if (Object.keys(data).length === 0) {
-    return toAdminPlan(existing);
+    return toAdminPlan({ ...existing, dailySoldToday: 0 });
   }
 
   const updated = await prisma.subscriptionPlan.update({
@@ -321,17 +416,52 @@ export async function updatePlan(
       priceCents: existing.priceCents,
       discountPriceCents: existing.discountPriceCents,
       status: existing.status,
+      dailyStockLimit: existing.dailyStockLimit,
     },
     after: {
       name: updated.name,
       priceCents: updated.priceCents,
       discountPriceCents: updated.discountPriceCents,
       status: updated.status,
+      dailyStockLimit: updated.dailyStockLimit,
     },
     ip: actor.ip,
     userAgent: actor.ua,
   });
-  return toAdminPlan(updated);
+  return toAdminPlan({ ...updated, dailySoldToday: 0 });
+}
+
+/**
+ * 手动重置今日库存：把 dailyStockResetAt 设为 now，
+ * 计数器从此刻起重新从 0 累加。
+ */
+export async function resetDailyStock(
+  id: string,
+  actor: { id: string; ip: string | null; ua: string | null }
+): Promise<AdminPlan> {
+  const existing = await prisma.subscriptionPlan.findUnique({
+    where: { id },
+    select: { id: true, slug: true, name: true, dailyStockLimit: true },
+  });
+  if (!existing) {
+    throw new AppError(ErrorCode.NOT_FOUND, "订阅计划不存在");
+  }
+  const updated = await prisma.subscriptionPlan.update({
+    where: { id },
+    data: { dailyStockResetAt: new Date() },
+    select: ADMIN_SELECT,
+  });
+  await writeAudit({
+    actorUserId: actor.id,
+    actorRole: "ADMIN",
+    action: "plan.reset_daily_stock",
+    targetType: "SubscriptionPlan",
+    targetId: id,
+    after: { slug: existing.slug, resetAt: updated.dailyStockResetAt },
+    ip: actor.ip,
+    userAgent: actor.ua,
+  });
+  return toAdminPlan({ ...updated, dailySoldToday: 0 });
 }
 
 export async function deletePlan(

@@ -250,6 +250,12 @@ model SubscriptionPlan {
   highlight          String? // "popular" | "best_value" | null，用于徽章渲染
   sortOrder          Int      @default(0)
   status             String   @default("ACTIVE") // ACTIVE | INACTIVE
+  // 每日库存上限：null = 不限；0 = 停售；>0 = 当日可售件数
+  // 防止触发支付宝小微商户单日收款限额（默认 ≤1000 元/日）
+  dailyStockLimit    Int?
+  // 管理员手动重置时间戳：库存计数时 since = max(startOfToday, dailyStockResetAt)
+  // 设置后只统计此时间之后创建的订单，等于把当前计数器清零
+  dailyStockResetAt  DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

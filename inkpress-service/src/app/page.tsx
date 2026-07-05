@@ -51,6 +51,9 @@ export default async function Home() {
         highlight: p.highlight,
         sortOrder: p.sortOrder,
         status: p.status,
+        dailyStockLimit: p.dailyStockLimit,
+        dailyRemaining: p.dailyRemaining,
+        soldOut: p.soldOut,
       }))}
     />
   );

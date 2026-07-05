@@ -34,6 +34,7 @@ export const ErrorCode = {
   REPLAY_DETECTED: "REPLAY_DETECTED",
   // 支付
   PAYMENT_PROVIDER_ERROR: "PAYMENT_PROVIDER_ERROR",
+  PLAN_SOLD_OUT: "PLAN_SOLD_OUT",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -66,6 +67,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   SIGNATURE_INVALID: 401,
   REPLAY_DETECTED: 401,
   PAYMENT_PROVIDER_ERROR: 502,
+  PLAN_SOLD_OUT: 409,
 };
 
 /** 业务错误，携带稳定错误码与 HTTP 状态。 */
