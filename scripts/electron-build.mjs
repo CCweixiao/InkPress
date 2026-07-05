@@ -11,8 +11,12 @@
  * 流程：next build → prepare-standalone（按目标 arch 重编 better-sqlite3）
  *       → tsc electron → electron-builder --mac --<arch>
  *
- * 双架构发布请走 GitHub Actions（release.yml 双 runner 原生构建），
- * 勿在本机一次命令打两个架构——standalone bundle 内的 .node 只能匹配一种 CPU。
+ * 仅允许本机架构打包（targetArch === hostArch），跨架构直接 exit(1)。
+ * 根因：bytenode 编 server.jsc 用的是 node_modules/electron（host arch），
+ * 跨架构时 .app 里 Electron 的 V8 read-only snapshot checksum（roChecksum）
+ * 与 .jsc 内嵌的 cache header 不一致 → V8 cachedDataRejected → server 子进程启动即退出。
+ * 此外 standalone bundle 内的 better-sqlite3 .node 也只匹配 host 架构。
+ * 双架构发布走 GitHub Actions（release.yml 双 runner 原生构建）。
  */
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -90,10 +94,16 @@ console.log(`  本机架构 : ${hostArch}`);
 console.log("═".repeat(56));
 
 if (targetArch !== hostArch) {
-  console.warn(
-    `\n⚠  跨架构打包（${hostArch} → ${targetArch}）：better-sqlite3 将 cross-compile。` +
-      `\n   Intel 包请在 x64 Mac / macos-13 runner 上构建；M 系包请在 arm64 Mac 上构建。\n`
+  console.error(
+    `\n✗ 拒绝跨架构打包（host=${hostArch} → target=${targetArch}）。\n` +
+      `  bytenode 编 server.jsc 用的是 node_modules/electron（host = ${hostArch}），\n` +
+      `  而 electron-builder --${targetArch} 把 ${targetArch} Electron 装进 .app，\n` +
+      `  两端 V8 roChecksum 不一致 → 目标机器加载 server.jsc 时报 cachedDataRejected，\n` +
+      `  server 子进程启动即退出。better-sqlite3 .node 同样只匹配 host 架构。\n\n` +
+      `  请改用原生构建：Intel 包 → x64 Mac / macos-13 runner；M 系包 → arm64 Mac。\n` +
+      `  双架构发布请走 GitHub Actions（release.yml 双 runner 原生构建）。\n`
   );
+  process.exit(1);
 }
 
 const archEnv = { INKPRESS_TARGET_ARCH: targetArch };
