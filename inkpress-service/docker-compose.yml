@@ -22,14 +22,15 @@ services:
       - ./data:/data
     restart: unless-stopped
     # 2c2g 服务器资源限制：留 0.5 核 + ~500 MiB 给系统 / docker daemon
+    # 注：pids 必须放 deploy.resources.limits.pids，与顶层 pids_limit 互斥
     deploy:
       resources:
         limits:
           cpus: '1.5'
           memory: 1500M
+          pids: 1000
         reservations:
           memory: 512M
-    pids_limit: 1000
     ulimits:
       nofile: 65536
     # 健康检查：30s 启动宽限，每 30s 探一次 /login
