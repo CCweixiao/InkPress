@@ -4,14 +4,29 @@
       "title": "快速开始",
       "items": [
         {
-          "slug": "getting-started",
-          "title": "快速上手",
-          "description": "了解 InkPress 能做什么，以及如何开始第一篇文章。"
+          "slug": "getting-started-mac-user",
+          "title": "下载安装-Mac用户",
+          "description": "了解 InkPress 软件的安装流程，仅适用于Mac用户。"
         },
         {
-          "slug": "product-workflow",
-          "title": "创作工作流",
-          "description": "熟悉写作、排版、素材、预览和发布前检查。"
+          "slug": "getting-started-windows-user",
+          "title": "下载安装-Windows用户",
+          "description": "了解 InkPress 软件的安装流程，仅适用于Windows用户。"
+        },
+        {
+          "slug": "glm-setting",
+          "title": "InkPress 模型配置指引",
+          "description": "以智谱模型套餐为例，为 InkPress 设置LLM的api-key。"
+        },
+        {
+          "slug": "wx-setting",
+          "title": "InkPress 公众号授权配置指引",
+          "description": "配一次公众号，InkPress 写完的文章一键发布进草稿箱。"
+        },
+        {
+          "slug": "tavily-setting",
+          "title": "InkPress 联网搜索配置",
+          "description": "获取tavily联网搜索的key，为 InkPress 增加联网搜索能力。"
         }
       ]
     },
