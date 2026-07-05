@@ -75,8 +75,8 @@ fi
 DB_SIZE=$(du -h "$TMP_DB" | awk '{print $1}')
 log "  ✓ SQLite 备份完成（$DB_SIZE）"
 
-# 2. gzip 压缩（-9 最高压缩比，SQLite 全零页压缩效果显著）
-gzip -9 -c "$TMP_DB" > "$ARCHIVE"
+# 2. gzip 压缩（-1 最快模式，SQLite 全零页压缩效果仍显著；避免 -9 撑爆 CPU+IO）
+gzip -1 -c "$TMP_DB" > "$ARCHIVE"
 rm -f "$TMP_DB"
 ARCHIVE_SIZE=$(du -h "$ARCHIVE" | awk '{print $1}')
 log "  ✓ 压缩完成（$ARCHIVE_SIZE）"
