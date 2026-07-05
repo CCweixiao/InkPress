@@ -357,7 +357,8 @@ export type ReleasePlatform = z.infer<typeof ReleasePlatformSchema>;
 export const ReleaseStatusSchema = z.enum(["PUBLISHED", "HIDDEN"]);
 export type ReleaseStatus = z.infer<typeof ReleaseStatusSchema>;
 
-export const ReleaseChannelSchema = z.enum(["stable", "beta"]);
+export const ReleaseChannelSchema = z.enum(["stable", "beta", "rc", "snapshot"]);
+export type ReleaseChannel = z.infer<typeof ReleaseChannelSchema>;
 
 /** semver 宽松校验：不强制严格 semver，允许如 "1.0.0-beta1" */
 const looseSemver = z

@@ -282,7 +282,9 @@ model SoftwareRelease {
   highlightsJson    String   @default("[]") // 结构化要点 JSON string[]
   // 状态与分类
   status            String   @default("PUBLISHED") // PUBLISHED | HIDDEN
-  channel           String   @default("stable") // stable | beta
+  channel           String   @default("stable") // stable | beta | rc | snapshot
+  // 下载计数（公开页点击 → /api/releases/[id]/download → +1 → 302 跳真实 URL）
+  downloadCount     Int      @default(0)
   // 审计
   source            String   @default("ci") // ci | admin
   releasedAt        DateTime @default(now()) // CI 发布时间（"最新版"判定 + 排序）

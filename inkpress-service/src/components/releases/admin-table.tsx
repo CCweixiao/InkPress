@@ -1,28 +1,22 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Trash2, Pencil, EyeOff, Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 /**
- * 行级操作：状态切换 + 编辑 + 删除。
+ * 行级操作：状态切换 + 跳详情编辑 + 删除。
  *
- * 当前最小可用版本：
- * - 点击徽章快速切换 PUBLISHED / HIDDEN
- * - 编辑按钮打开 dialog（仅 displayName/changelog，本轮先简化为 alert）
- * - 删除按钮二次确认
- *
- * 后续可在 admin-table 升级为完整 dialog 编辑。
+ * - 点击状态徽章快速切换 PUBLISHED / HIDDEN（最常用的运营动作）
+ * - 详情按钮跳转 /admin/releases/[id]，提供完整编辑表单
+ * - 删除按钮二次确认后硬删除
  */
 export function ReleasesAdminTable(props: {
   id: string;
   initialStatus: string;
   initialDisplayName: string;
-  initialLogoUrl: string;
-  initialChangelogMarkdown: string;
-  initialHighlights: string[];
-  initialChannel: "stable" | "beta";
 }) {
   const [status, setStatus] = useState(props.initialStatus);
   const [pending, start] = useTransition();
@@ -45,7 +39,11 @@ export function ReleasesAdminTable(props: {
   }
 
   function handleDelete() {
-    if (!confirm(`确认删除 ${props.initialDisplayName} 这条版本记录？\n\n注意：删除后该版本不会出现在 /downloads 页面，但 OSS 文件不会被自动清理。`)) {
+    if (
+      !confirm(
+        `确认删除 ${props.initialDisplayName} 这条版本记录？\n\n注意：删除后该版本不会出现在 /downloads 页面，但 OSS 文件不会被自动清理。`
+      )
+    ) {
       return;
     }
     start(async () => {
@@ -54,7 +52,6 @@ export function ReleasesAdminTable(props: {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        // 行级硬删除：直接刷新页面让表格重新渲染
         window.location.reload();
       } else {
         alert(data?.error?.message ?? "删除失败");
@@ -71,26 +68,25 @@ export function ReleasesAdminTable(props: {
         title={status === "PUBLISHED" ? "点击隐藏" : "点击恢复公开"}
         className="inline-flex items-center"
       >
-        <Badge variant={status === "PUBLISHED" ? "default" : "secondary"}>
+        <Badge variant={status === "PUBLISHED" ? "success" : "warning"}>
           {status === "PUBLISHED" ? (
             <Eye className="mr-1 h-3 w-3" />
           ) : (
             <EyeOff className="mr-1 h-3 w-3" />
           )}
-          {status}
+          {status === "PUBLISHED" ? "公开" : "隐藏"}
         </Badge>
       </button>
       <Button
+        asChild
         variant="ghost"
         size="sm"
         className="h-7 w-7 p-0"
-        disabled={pending}
-        title="编辑（即将支持完整 dialog）"
-        onClick={() =>
-          alert("完整编辑功能下一轮交付；本轮可改状态（点击徽章）或删除。")
-        }
+        title="详情 / 编辑"
       >
-        <Pencil className="h-3.5 w-3.5" />
+        <Link href={`/admin/releases/${props.id}`}>
+          <Pencil className="h-3.5 w-3.5" />
+        </Link>
       </Button>
       <Button
         variant="ghost"
