@@ -152,9 +152,17 @@ export function DashboardClient({
           </CardHeader>
           <CardContent>
             {ownedLicenses.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                暂无归属到你邮箱的 License。请联系管理员获取。
-              </p>
+              <div className="flex flex-col items-start gap-3 rounded-md border border-dashed bg-muted/30 p-4">
+                <div>
+                  <p className="text-sm font-medium">还没有 License</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    选择合适的方案下单，购买成功后 License 会自动发放到当前邮箱（{user.email}）。
+                  </p>
+                </div>
+                <Button asChild size="sm">
+                  <Link href="/#pricing">前往首页购买</Link>
+                </Button>
+              </div>
             ) : (
               <OwnedLicensesList licenses={ownedLicenses} />
             )}
