@@ -185,6 +185,23 @@ export async function validateLocalLicense(): Promise<LicenseRuntimeStatus> {
   if (!state) {
     return { required: true, allowed: false, mode: "inactive", state: null };
   }
+
+  // 客户端节流：未到 nextCheckAt（服务端签发的下次校验时间，默认 1h）直接返回本地缓存。
+  // 避免每次用户操作（编辑/导出/AI）都打服务端，降低服务端 SQLite IO 压力。
+  // 30s 安全余量防止时钟漂移导致刚到点立即触发。
+  if (state.nextCheckAt) {
+    const nextMs = new Date(state.nextCheckAt).getTime();
+    if (Number.isFinite(nextMs) && Date.now() < nextMs - 30_000) {
+      const allowed = state.status === "ACTIVE";
+      return {
+        required: true,
+        allowed,
+        mode: allowed ? "active" : "invalid",
+        state: publicState(state),
+      };
+    }
+  }
+
   const path = "/api/v1/licenses/validate";
   const body = JSON.stringify({
     activationId: state.activationId,
