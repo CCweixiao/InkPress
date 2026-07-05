@@ -5,7 +5,7 @@ import { writeAudit } from "@/lib/audit";
 import { moduleLogger } from "@/lib/logger";
 import { generateLicenseKey } from "@/lib/license/key";
 import { encryptLicenseKey } from "@/lib/license/key-vault";
-import { createWapPayUrl } from "@/lib/payment/alipay/api";
+import { createPayUrl, detectPayChannel, type PayChannel } from "@/lib/payment/alipay/api";
 import { getSystemUserId } from "@/lib/payment/system-user";
 import { sendMail, renderOrderPaidReceiptEmail } from "@/lib/email";
 
@@ -43,6 +43,8 @@ export interface CreateOrderResult {
   orderId: string;
   outTradeNo: string;
   payUrl: string;
+  /** 实际使用的支付通道：PC=page（电脑网站支付），移动端=wap（手机网站支付） */
+  channel: PayChannel;
   amountCents: number;
   subject: string;
   /** 订单失效时间（15 分钟后） */
@@ -51,7 +53,7 @@ export interface CreateOrderResult {
 
 /**
  * 创建订单：查 Plan → 限流 PENDING 堆积 → 生成 outTradeNo →
- * DB 落 PENDING → 调 precreate 拿二维码（失败回滚订单）→ 审计。
+ * DB 落 PENDING → 按 UA 分流调 page.pay/wap.pay 拿跳转 URL（失败回滚订单）→ 审计。
  */
 export async function createOrder(opts: {
   planSlug: string;
@@ -161,15 +163,17 @@ export async function createOrder(opts: {
     throw new AppError(ErrorCode.INTERNAL_ERROR, "订单号生成失败，请重试");
   }
 
-  // 5. 调 wap.pay 生成跳转 URL；失败则删订单保持干净
+  // 5. 按 UA 分流生成跳转 URL；失败则删订单保持干净
   try {
     const returnUrl = `${returnUrlBase}?orderId=${orderId}`;
-    const { payUrl } = await createWapPayUrl({
+    const channel = detectPayChannel(opts.ua);
+    const { payUrl, channel: usedChannel } = await createPayUrl({
       outTradeNo,
       totalAmount: amountCents / 100,
       subject,
       notifyUrl,
       returnUrl,
+      channel,
     });
 
     await writeAudit({
@@ -178,7 +182,7 @@ export async function createOrder(opts: {
       action: "order.create",
       targetType: "Order",
       targetId: orderId,
-      after: { outTradeNo, planSlug: plan.slug, amountCents },
+      after: { outTradeNo, planSlug: plan.slug, amountCents, channel: usedChannel },
       ip,
       userAgent: ua,
     });
@@ -187,12 +191,13 @@ export async function createOrder(opts: {
       orderId,
       outTradeNo,
       payUrl,
+      channel: usedChannel,
       amountCents,
       subject,
       expiresAt: new Date(Date.now() + ORDER_TTL_MS),
     };
   } catch (err) {
-    // wap.pay 失败：删除 PENDING 订单，避免脏数据阻塞用户再次下单
+    // 支付 URL 生成失败：删除 PENDING 订单，避免脏数据阻塞用户再次下单
     await prisma.order.delete({ where: { id: orderId } }).catch(() => undefined);
     throw err;
   }
