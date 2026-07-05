@@ -329,6 +329,9 @@ export interface ValidateResult {
 }
 
 const OFFLINE_GRACE_SECONDS = 30 * 24 * 60 * 60; // 30 天滚动宽限
+// validate 路径节流：同设备 10 分钟内的重复 validate 跳过 lastValidatedAt/ipLast/ua 更新，
+// 降低 SQLite 写盘频率（每次 validate 必发，N 设备 × 每小时 = 主要 IO 来源）。
+const VALIDATE_TOUCH_THROTTLE_MS = 10 * 60 * 1000;
 
 /** 校验激活状态：业务态以 200+status 返回（不抛），仅 ACTIVE 刷新并重签 token。 */
 export async function validateLicense(opts: {
@@ -410,15 +413,22 @@ export async function validateLicense(opts: {
       }
 
       // ACTIVE：刷新校验时间并重签 token
-      await prisma.licenseActivation.update({
-        where: { id: activation.id },
-        data: {
-          lastValidatedAt: now,
-          ipLast: ip,
-          userAgentLast: ua,
-          appVersion: input.appVersion,
-        },
-      });
+      // 节流：同设备 10 分钟内的重复 validate 不写盘（缓解 SQLite IO 压力）
+      const shouldTouch =
+        !activation.lastValidatedAt ||
+        now.getTime() - activation.lastValidatedAt.getTime() >
+          VALIDATE_TOUCH_THROTTLE_MS;
+      if (shouldTouch) {
+        await prisma.licenseActivation.update({
+          where: { id: activation.id },
+          data: {
+            lastValidatedAt: now,
+            ipLast: ip,
+            userAgentLast: ua,
+            appVersion: input.appVersion,
+          },
+        });
+      }
       const licenseToken = signLicenseToken({
         activationId: activation.id,
         licenseId: license.id,

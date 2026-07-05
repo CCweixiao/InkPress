@@ -4,6 +4,13 @@ import { truncateUa } from "@/lib/http";
 
 const log = moduleLogger("audit");
 
+/**
+ * 紧急关停开关（缓解 SQLite IO 压力 / IOPS 上限）：
+ * AUDIT_LOG_DISABLE=true 时完全跳过所有审计写入，不阻断主业务。
+ * 默认 false（保留审计）。
+ */
+const AUDIT_DISABLED = process.env.AUDIT_LOG_DISABLE === "true";
+
 export interface AuditInput {
   actorUserId: string | null;
   actorRole: string | null;
@@ -18,8 +25,11 @@ export interface AuditInput {
 
 /**
  * 写审计日志。失败仅记录不抛出（不阻断主业务），但错误必须可见（PDC §9.4）。
+ *
+ * 注：AUDIT_LOG_DISABLE=true 时直接 no-op，紧急情况可立即停写。
  */
 export async function writeAudit(input: AuditInput): Promise<void> {
+  if (AUDIT_DISABLED) return;
   try {
     await prisma.auditLog.create({
       data: {
