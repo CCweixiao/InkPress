@@ -16,9 +16,29 @@ services:
     environment:
       - DATABASE_URL=file:/data/inkpress-service.db
       - NODE_ENV=production
+      # V8 堆上限 1 GiB（< 容器 memory limit，给非堆内存留余量）
+      - NODE_OPTIONS=--max-old-space-size=1024
     volumes:
       - ./data:/data
     restart: unless-stopped
+    # 2c2g 服务器资源限制：留 0.5 核 + ~500 MiB 给系统 / docker daemon
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1500M
+        reservations:
+          memory: 512M
+    pids_limit: 1000
+    ulimits:
+      nofile: 65536
+    # 健康检查：30s 启动宽限，每 30s 探一次 /login
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:3000/login || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     # 日志轮转：单文件 50MB，最多 3 份（防磁盘撑爆）
     logging:
       driver: json-file
