@@ -124,17 +124,45 @@ const LOG_RETENTION_DAYS = Math.max(
   0,
   Math.floor(Number(process.env.LICENSE_LOG_RETENTION_DAYS) || 3)
 );
+// 启动后首次清理的延迟：避免重启高峰叠加 IO 压力
+const SWEEP_START_DELAY_MS = Math.max(
+  60_000,
+  Math.floor(Number(process.env.LICENSE_LOG_SWEEP_START_DELAY_MS) || 5 * 60_000)
+);
 const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+// 单次 deleteMany 上限，超过则分批；0 = 不限制
+const SWEEP_BATCH_SIZE = Math.max(
+  0,
+  Math.floor(Number(process.env.LICENSE_LOG_SWEEP_BATCH) || 5000)
+);
 
 async function sweepExpiredLogs(): Promise<void> {
   if (LOG_RETENTION_DAYS <= 0) return;
+  // LOG_LEVEL=off 时跳过 sweep：用户紧急关停日志时不应再产生 IO 压力
+  if (LOG_LEVEL === "off") return;
   try {
     const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86_400_000);
-    const result = await prisma.licenseValidationLog.deleteMany({
-      where: { createdAt: { lt: cutoff } },
-    });
-    if (result.count > 0) {
-      log.info({ count: result.count, cutoff }, "清理过期校验日志");
+    // 分批删除，避免一次性卡死 SQLite（deleteMany 无 LIMIT，用 raw SQL）
+    if (SWEEP_BATCH_SIZE > 0) {
+      // 注：Prisma 参数化绑定，SWEEP_BATCH_SIZE 已校验为非负整数
+      const result = await prisma.$executeRaw`
+        DELETE FROM LicenseValidationLog
+        WHERE rowid IN (
+          SELECT rowid FROM LicenseValidationLog
+          WHERE createdAt < ${cutoff}
+          LIMIT ${SWEEP_BATCH_SIZE}
+        )
+      `;
+      if (result > 0) {
+        log.info({ count: result, cutoff, batch: true }, "清理过期校验日志（分批）");
+      }
+    } else {
+      const result = await prisma.licenseValidationLog.deleteMany({
+        where: { createdAt: { lt: cutoff } },
+      });
+      if (result.count > 0) {
+        log.info({ count: result.count, cutoff }, "清理过期校验日志");
+      }
     }
   } catch (err) {
     log.warn({ err }, "清理过期校验日志失败（忽略）");
@@ -142,8 +170,9 @@ async function sweepExpiredLogs(): Promise<void> {
 }
 
 if (process.env.NEXT_RUNTIME === "nodejs") {
-  // 启动后 30s 跑一次初始清理，随后每 24h 一次
-  const startTimer = setTimeout(() => void sweepExpiredLogs(), 30_000);
+  // 启动后 5 分钟跑一次初始清理（默认），随后每 24h 一次
+  // 默认推迟 5 分钟，让服务先 warm up 完成（SSR 编译、连接池、缓存预热）
+  const startTimer = setTimeout(() => void sweepExpiredLogs(), SWEEP_START_DELAY_MS);
   startTimer.unref?.();
   const timer = setInterval(() => void sweepExpiredLogs(), SWEEP_INTERVAL_MS);
   timer.unref?.();
