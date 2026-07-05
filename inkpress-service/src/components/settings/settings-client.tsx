@@ -41,9 +41,16 @@ export function SettingsClient({ user }: { user: SettingsUser }) {
           </Badge>
         </div>
 
-        {user.mustChangePassword && (
+        {user.mustChangePassword && user.role !== "ADMIN" && (
           <div className="rounded-md border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
             当前使用初始密码，建议尽快修改。
+          </div>
+        )}
+
+        {user.role === "ADMIN" && (
+          <div className="rounded-md border border-blue-500/40 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+            管理员密码由部署配置（<code className="font-mono">.env.production</code> 的 ADMIN_PASSWORD）管理，
+            无法在此修改。如需改密请更新配置文件后重新发布。
           </div>
         )}
 
@@ -65,9 +72,9 @@ export function SettingsClient({ user }: { user: SettingsUser }) {
           </CardContent>
         </Card>
 
-        <ChangePasswordCard
-          onDone={() => router.refresh()}
-        />
+        {user.role !== "ADMIN" && (
+          <ChangePasswordCard onDone={() => router.refresh()} />
+        )}
       </main>
     </div>
   );

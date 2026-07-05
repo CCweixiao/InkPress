@@ -2,8 +2,8 @@ import "dotenv/config";
 import { ensureInitialAdmin } from "../src/lib/auth/init-admin";
 
 /**
- * Prisma seed：仅幂等初始化管理员。
- * 仅在数据库无 ADMIN 时生效（开放问题 5 推荐）。
+ * Prisma seed：初始化 / 同步管理员。
+ * 行为：无 admin 则创建；admin 存在则按 ADMIN_PASSWORD 同步密码。
  */
 async function main() {
   const result = await ensureInitialAdmin();
@@ -11,11 +11,13 @@ async function main() {
     console.error("[seed] 跳过管理员初始化：", result.reason);
     return;
   }
-  console.log(
-    result.created
-      ? `[seed] 已创建管理员：${result.email}（首登需改密）`
-      : `[seed] 管理员已存在：${result.email}`
-  );
+  if (result.created) {
+    console.log(`[seed] 已创建管理员：${result.email}`);
+  } else if (result.synced) {
+    console.log(`[seed] 管理员密码已同步：${result.email}`);
+  } else {
+    console.log(`[seed] 管理员密码与配置一致：${result.email}`);
+  }
 }
 
 main()

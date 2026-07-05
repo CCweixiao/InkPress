@@ -3,20 +3,26 @@
  *
  * 设计目标：
  * - **完全独立**：不依赖 src/lib（避免 tsconfig paths alias 解析问题），直接用 prisma client + argon2
- * - **幂等**：admin 已存在则跳过；plan 已一致则跳过
+ * - **幂等**：admin 不存在则创建；plan 不存在则创建
  * - **失败不阻塞启动**：entrypoint 用 `|| true` 兜底，server.js 仍正常启动
+ *
+ * Admin 密码策略（与 /api/me/password 路由配合）：
+ * - .env.production 的 ADMIN_EMAIL/ADMIN_PASSWORD 是单一来源
+ * - 每次发布都比对：DB 哈希 vs env 密码 → 不一致则覆盖
+ * - admin 不能通过 UI 改密（/api/me/password 拒绝 ADMIN role）
+ * - mustChangePassword=false（密码由配置管理，无需首登改密）
  *
  * 跑法：
  *   node node_modules/tsx/dist/cli.mjs scripts/init-production.ts
  *
  * 配置（已在 .env.production）：
  *   ADMIN_EMAIL     管理员邮箱
- *   ADMIN_PASSWORD  管理员初始密码（首登强制改密）
+ *   ADMIN_PASSWORD  管理员密码（每次发布与 DB 比对，不一致则同步）
  */
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { hash } from "@node-rs/argon2";
+import { hash, verify } from "@node-rs/argon2";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "../src/generated/prisma/client";
 
@@ -62,42 +68,83 @@ async function ensureAdmin(): Promise<void> {
     return;
   }
 
-  const existing = await prisma.user.findFirst({
+  // 1. 查现有 admin
+  const existingAdmin = await prisma.user.findFirst({
     where: { role: "ADMIN" },
-    select: { email: true },
+    select: { id: true, email: true, passwordHash: true, mustChangePassword: true },
   });
-  if (existing) {
-    console.log(`[init] admin 已存在：${existing.email}，跳过`);
+
+  // 2. 不存在 → 创建
+  if (!existingAdmin) {
+    const policyError = validatePasswordPolicy(password);
+    if (policyError) {
+      console.error(`[init] ADMIN_PASSWORD 不合规：${policyError}`);
+      return;
+    }
+    const dup = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (dup) {
+      console.error(`[init] 邮箱 ${email} 已被非管理员用户占用，跳过`);
+      return;
+    }
+    const passwordHash = await hash(password, ARGON2_OPTIONS);
+    await prisma.user.create({
+      data: {
+        email,
+        passwordHash,
+        role: "ADMIN",
+        status: "ACTIVE",
+        emailVerified: new Date(),
+        mustChangePassword: false, // 密码由配置管理，不允许自行修改
+      },
+    });
+    console.log(`[init] admin 已创建：${email}（密码由 ADMIN_PASSWORD 管理）`);
     return;
   }
 
+  // 3. 存在但邮箱不一致 → 警告并跳过（运维需手工处理）
+  if (existingAdmin.email !== email) {
+    console.warn(
+      `[init] 现有 admin 邮箱 ${existingAdmin.email} 与 ADMIN_EMAIL=${email} 不一致，跳过密码同步`
+    );
+    return;
+  }
+
+  // 4. 邮箱一致 → 比对密码哈希
   const policyError = validatePasswordPolicy(password);
   if (policyError) {
-    console.error(`[init] ADMIN_PASSWORD 不合规：${policyError}`);
+    console.warn(`[init] ADMIN_PASSWORD 不合规：${policyError}，跳过密码同步`);
     return;
   }
 
-  const dup = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true },
-  });
-  if (dup) {
-    console.error(`[init] 邮箱 ${email} 已被非管理员用户占用，跳过`);
+  let passwordMatches = false;
+  if (existingAdmin.passwordHash) {
+    try {
+      passwordMatches = await verify(existingAdmin.passwordHash, password);
+    } catch {
+      passwordMatches = false;
+    }
+  }
+
+  if (passwordMatches && !existingAdmin.mustChangePassword) {
+    console.log(`[init] admin 密码与配置一致：${email}，跳过`);
     return;
   }
 
-  const passwordHash = await hash(password, ARGON2_OPTIONS);
-  await prisma.user.create({
+  // 5. 不一致或 mustChangePassword 未清 → 同步
+  const newPasswordHash = await hash(password, ARGON2_OPTIONS);
+  await prisma.user.update({
+    where: { id: existingAdmin.id },
     data: {
-      email,
-      passwordHash,
-      role: "ADMIN",
-      status: "ACTIVE",
-      emailVerified: new Date(),
-      mustChangePassword: true,
+      passwordHash: newPasswordHash,
+      mustChangePassword: false,
     },
   });
-  console.log(`[init] admin 已创建：${email}（首登需改密）`);
+  console.log(
+    `[init] admin 密码已同步到配置最新值：${email}${passwordMatches ? "" : "（旧密码已失效）"}`
+  );
 }
 
 // ===== 内置订阅计划 =====
