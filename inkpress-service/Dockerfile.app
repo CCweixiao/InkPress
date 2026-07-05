@@ -40,10 +40,13 @@ COPY --chown=nextjs:nodejs src/generated ./src/generated
 COPY --chown=nextjs:nodejs prisma ./prisma
 COPY --chown=nextjs:nodejs prisma.config.ts ./prisma.config.ts
 
-# 5) 生产初始化脚本（migrate 后自动跑：admin + 订阅计划，幂等）
+# 5) 指引文档（/guide 路由运行时读 docs/guide/manifest.json）
+COPY --chown=nextjs:nodejs docs ./docs
+
+# 6) 生产初始化脚本（migrate 后自动跑：admin + 订阅计划，幂等）
 COPY --chown=nextjs:nodejs scripts/init-production.ts ./scripts/init-production.ts
 
-# 6) 启动脚本（先 migrate，再 init，再启动 server）
+# 7) 启动脚本（先 migrate，再 init，再启动 server）
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 

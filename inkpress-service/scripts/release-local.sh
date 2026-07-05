@@ -91,6 +91,12 @@ rsync -a src/generated/ release/src/generated/
 # 排除 seed.ts（生产不需要）
 rsync -a --exclude='seed.ts' prisma/ release/prisma/
 
+# 指引文档（/guide 路由运行时读 docs/guide/manifest.json）
+rsync -a docs/ release/docs/
+
+# 生产初始化脚本（admin + plans 种子，由 entrypoint 调用）
+rsync -a scripts/init-production.ts release/scripts/
+
 # 依赖文件（用于服务器侧 pnpm install）
 cp package.json pnpm-lock.yaml pnpm-workspace.yaml release/
 
