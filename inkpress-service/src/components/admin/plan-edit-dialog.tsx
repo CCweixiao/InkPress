@@ -74,6 +74,12 @@ export function PlanEditDialog({ mode, plan }: PlanEditDialogProps) {
   const [highlight, setHighlight] = useState(plan?.highlight ?? "");
   const [sortOrder, setSortOrder] = useState(String(plan?.sortOrder ?? 1));
   const [status, setStatus] = useState(plan?.status ?? "ACTIVE");
+  // 每日库存上限：空字符串 = 不限；数字 = 上限
+  const [dailyStockLimit, setDailyStockLimit] = useState<string>(
+    plan?.dailyStockLimit === null || plan?.dailyStockLimit === undefined
+      ? ""
+      : String(plan.dailyStockLimit)
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,6 +130,7 @@ export function PlanEditDialog({ mode, plan }: PlanEditDialogProps) {
       highlight: highlight || null,
       sortOrder: Number(sortOrder),
       status,
+      dailyStockLimit: dailyStockLimit.trim() === "" ? null : Number(dailyStockLimit),
     };
     if (mode === "create") {
       payload.slug = slug.trim();
@@ -308,6 +315,21 @@ export function PlanEditDialog({ mode, plan }: PlanEditDialogProps) {
               placeholder={"全部功能解锁\n3 台设备授权\n优先邮件客服"}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             />
+          </div>
+          <div className="col-span-2 space-y-1.5 rounded-md border border-amber-500/30 bg-amber-50/50 p-3 dark:bg-amber-950/10">
+            <Label htmlFor="dailyStockLimit">每日库存上限</Label>
+            <Input
+              id="dailyStockLimit"
+              type="number"
+              min={0}
+              max={100000}
+              value={dailyStockLimit}
+              onChange={(e) => setDailyStockLimit(e.target.value)}
+              placeholder="留空 = 不限；0 = 停售；正整数 = 每日可售件数"
+            />
+            <p className="text-xs text-muted-foreground">
+              防止触发支付宝小微商户单日收款限额（默认 ≤1000 元/日）。每日 0 点自动重置。
+            </p>
           </div>
           {error && (
             <p className="col-span-2 text-sm text-destructive">{error}</p>

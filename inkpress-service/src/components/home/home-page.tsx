@@ -38,6 +38,12 @@ export interface HomePlan {
   highlight: string | null;
   sortOrder: number;
   status: string;
+  /** 每日库存上限：null = 不限 */
+  dailyStockLimit: number | null;
+  /** 今日剩余（null = 不限） */
+  dailyRemaining: number | null;
+  /** 是否售罄（dailyStockLimit 非 null 且 dailyRemaining === 0） */
+  soldOut: boolean;
 }
 
 function formatYuan(n: number): string {
@@ -303,12 +309,13 @@ function PlanCard({
   isLoggedIn: boolean;
 }) {
   const isInactive = plan.status !== "ACTIVE";
+  const isSoldOut = !isInactive && plan.soldOut;
   const isHighlighted = plan.highlight !== null && !isInactive;
   const checkoutHref = `/checkout?plan=${encodeURIComponent(plan.slug)}`;
   const ctaHref = isLoggedIn
     ? checkoutHref
     : `/login?callbackUrl=${encodeURIComponent(checkoutHref)}`;
-  const ringClass = isInactive
+  const ringClass = isInactive || isSoldOut
     ? "border-slate-200/70 opacity-60"
     : plan.highlight === "popular"
       ? "border-blue-300/80 shadow-[0_22px_70px_rgba(37,99,235,0.12)]"
@@ -317,11 +324,20 @@ function PlanCard({
         : "border-slate-200/70 shadow-[0_18px_60px_rgba(15,23,42,0.055)]";
   const badgeLabel = isInactive
     ? "已下架"
-    : plan.highlight === "popular"
-      ? "最受欢迎"
-      : plan.highlight === "best_value"
-        ? "最佳价值"
-        : null;
+    : isSoldOut
+      ? "今日售罄"
+      : plan.highlight === "popular"
+        ? "最受欢迎"
+        : plan.highlight === "best_value"
+          ? "最佳价值"
+          : null;
+  const ctaDisabled = isInactive || isSoldOut;
+  const stockHint =
+    !isInactive && !isSoldOut && plan.dailyStockLimit !== null && plan.dailyRemaining !== null
+      ? plan.dailyRemaining <= 1
+        ? `仅剩 ${plan.dailyRemaining} 件`
+        : null
+      : null;
   const durationLabel =
     plan.durationKind === "PERMANENT"
       ? "终身权益"
@@ -365,6 +381,9 @@ function PlanCard({
             省 ¥{formatYuan(plan.saveYuan)}（{plan.discountPct}% off）
           </Badge>
         )}
+        {stockHint && (
+          <Badge variant="warning">{stockHint}</Badge>
+        )}
         <span className="text-muted-foreground">{durationLabel}</span>
         {plan.perYearYuan !== null && (
           <span className="text-muted-foreground">· 折合 ¥{formatYuan(plan.perYearYuan)}/年</span>
@@ -383,12 +402,18 @@ function PlanCard({
         ))}
       </ul>
       <Button
-        asChild={!isInactive}
-        disabled={isInactive}
+        asChild={!ctaDisabled}
+        disabled={ctaDisabled}
         className="mt-auto"
         variant={isHighlighted ? "default" : "outline"}
       >
-        {isInactive ? <span>已下架 · 暂停售卖</span> : <Link href={ctaHref}>选择{plan.name}</Link>}
+        {isInactive ? (
+          <span>已下架 · 暂停售卖</span>
+        ) : isSoldOut ? (
+          <span>今日已售罄 · 明日 0 点重置</span>
+        ) : (
+          <Link href={ctaHref}>选择{plan.name}</Link>
+        )}
       </Button>
     </article>
   );
