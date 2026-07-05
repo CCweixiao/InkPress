@@ -23,3 +23,20 @@ bash scripts/release-local.sh
 - SSH 私钥：`inkpress-service/inkpress-service.pem`（已 gitignore，本地持有）
 - 发布流程详见 `inkpress-service/docs/release-overview.md`（5 阶段：本地构建 → rsync → 远程 docker build → 启动 → 健康检查）
 - 生产密钥由本地 `.env.production` 单一来源管理，发版脚本会自动 scp 推送并备份旧版本
+
+## 数据初始化策略（重要）
+
+entrypoint **不会**自动跑 init 脚本去 mutate 业务数据。流程是：
+
+- **entrypoint 启动时只做两件事**：
+  1. `prisma migrate deploy`（运行所有未应用的 versioned migration）
+  2. `bootstrap-admin.ts`（**仅**在 DB 完全没有 admin 时按 `ADMIN_EMAIL/ADMIN_PASSWORD` 创建一个；已有 admin 一律跳过，不做密码同步）
+- **业务数据变更（plan 定价、新 plan、配置数据等）** → 写 `prisma/migrations/<timestamp>_<name>/migration.sql`，跟着版本走
+- **admin 密码同步/重置**（运维场景，按 .env.production 最新值覆盖 DB）→ 手动跑：
+  ```bash
+  cd inkpress-service
+  dotenv -e .env.production -- pnpm admin:sync
+  ```
+  （`pnpm admin:sync` = `tsx scripts/init-production.ts`，会做 admin 密码同步 + plan 幂等 seed）
+
+**绝对不要**为了让某次发版「顺带」改数据，去改 bootstrap-admin.ts 或在 entrypoint 里塞新脚本。数据变更的唯一入口是 migration 文件。
