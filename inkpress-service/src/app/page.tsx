@@ -4,9 +4,9 @@ import { HomePage } from "@/components/home/home-page";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "InkPress · AI 数字媒体创作与多渠道作品发布工具",
+  title: "InkPress · 数字文刊工坊 — AI 数字媒体创作与多渠道作品发布工具",
   description:
-    "InkPress 为数字媒体创作者和内容团队提供 AI 写作、素材管理、作品预览、多渠道发布，以及图文、种草、小说、短剧脚本和 AI 视频创意生成能力。",
+    "InkPress 数字文刊工坊为数字媒体创作者和内容团队提供 AI 写作、素材管理、作品预览、多渠道发布，以及图文、种草、小说、短剧脚本和 AI 视频创意生成能力。",
   keywords: [
     "数字媒体创作",
     "AI 内容创作",

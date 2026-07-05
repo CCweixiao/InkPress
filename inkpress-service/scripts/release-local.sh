@@ -87,10 +87,6 @@ rsync -a .next/static/ release/.next/static/
 rsync -a public/ release/public/
 # Prisma 生成代码（runtime 必需）
 rsync -a src/generated/ release/src/generated/
-# 共享 seed 模块（init-production.ts 引用 src/lib/plan/seed-plans.ts）
-# 不全量 rsync src/lib，避免把运行时已 trace 进 standalone 的代码再重复打包
-mkdir -p release/src/lib/plan
-rsync -a src/lib/plan/ release/src/lib/plan/
 # Prisma schema 与 migrations（容器启动 migrate deploy 需要）
 # 排除 seed.ts（生产不需要）
 rsync -a --exclude='seed.ts' prisma/ release/prisma/
@@ -98,8 +94,9 @@ rsync -a --exclude='seed.ts' prisma/ release/prisma/
 # 指引文档（/guide 路由运行时读 docs/guide/manifest.json）
 rsync -a docs/ release/docs/
 
-# 生产初始化脚本（admin + plans 种子，由 entrypoint 调用）
-rsync -a scripts/init-production.ts release/scripts/
+# 首次 admin 引导脚本（entrypoint 自动调用，仅 DB 无 admin 时创建）
+# 注意：不打包 init-production.ts（已改为手动 pnpm admin:sync，从本地代码运行）
+rsync -a scripts/bootstrap-admin.ts release/scripts/
 
 # 依赖文件（用于服务器侧 pnpm install）
 cp package.json pnpm-lock.yaml pnpm-workspace.yaml release/
