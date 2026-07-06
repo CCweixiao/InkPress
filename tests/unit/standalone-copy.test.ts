@@ -24,7 +24,7 @@ function createFixture() {
 }
 
 describe("copyStandaloneTree", () => {
-  it("materializes symlinks on simulated Windows fallback", () => {
+  it("materializes symlinks when platform is win32", () => {
     const { src, dest } = createFixture();
     const replaced = copyStandaloneTree(src, dest, "win32");
     expect(replaced).toBeGreaterThan(0);

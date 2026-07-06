@@ -32,7 +32,7 @@ if (!fs.existsSync(srcStandalone)) {
 fs.rmSync(bundle, { recursive: true, force: true });
 
 console.log("生成去符号链接的 standalone bundle…");
-// 核心：复制 standalone。Windows 上使用 fallback，避免 fs.cpSync(dereference=true) 崩溃（exit 3221226505）
+// 核心：复制 standalone。Windows 上使用 fallback，避免 fs.cpSync(dereference=true) 触发崩溃（0xC0000409）
 const materializedSymlinks = copyStandaloneTree(srcStandalone, bundle);
 const copyDetail =
   process.platform === "win32" && materializedSymlinks > 0
