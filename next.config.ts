@@ -25,6 +25,14 @@ const nextConfig: NextConfig = {
     // Claude Agent SDK 会 spawn 原生 Claude Code 子进程，依赖 node: 内建，不能被打包
     "@anthropic-ai/claude-agent-sdk",
   ],
+  images: {
+    // 禁用 next/image 优化器：避免运行时把缓存写到 .next/cache/images/
+    // （Next.js standalone 模式下 cwd=Resources/standalone/，缓存落在
+    // .app bundle 的 sealed resource 区，运行时写入会破坏代码签名）。
+    // 项目内 next/image 仅用于 3 处静态 logo（28×28 PNG），无优化收益；
+    // 素材库 / 文章内嵌图走原生 <img>，不受此配置影响。
+    unoptimized: true,
+  },
 };
 
 export default nextConfig;
