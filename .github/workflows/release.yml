@@ -19,20 +19,15 @@ concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: true
 
+# 仅构建 arm64：GitHub Actions 自 2025-12-04 退役 macos-13 镜像后，
+# 已无任何原生 Intel macOS runner；跨架构在 arm64 runner 上打 x64 需要
+# 解决 bytenode bytecode + better-sqlite3 native binding 的 cross-arch
+# 问题（见 scripts/electron-build.mjs 的 arch guard），暂不支持。
+# Intel Mac 用户请引导到 Web 版或后续 self-hosted runner 方案。
 jobs:
   build:
-    name: Build (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        # 双 runner 并行：每个 runner 的原生模块(better-sqlite3)prebuilt 天然匹配其 CPU 架构，
-        # 无需 cross-arch rebuild，最稳定。
-        include:
-          - runner: macos-latest # Apple Silicon
-            arch: arm64
-          - runner: macos-13 # Intel
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    name: Build (arm64)
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +51,25 @@ jobs:
           # 允许 better-sqlite3 / electron / sharp 等原生包构建
           pnpm_allow_build: "true"
 
+      # 从 tag 名提取版本号写回 package.json，避免 tag 与产物文件名错位。
+      # 例如 tag=v0.4.2 → package.json.version=0.4.2 → 产物 InkPress-0.4.2-arm64.dmg。
+      # next.config.ts 的 APP_VERSION 注入和 prepare-standalone 均依赖 package.json.version。
+      - name: Sync version from tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.tag }}"
+          else
+            RAW="${{ github.ref_name }}"
+          fi
+          VERSION="${RAW#v}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "✗ tag 版本号非法: $RAW（期望 vX.Y.Z）"
+            exit 1
+          fi
+          echo "同步 package.json version → $VERSION（来源: $RAW）"
+          node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          grep '"version"' package.json
+
       - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
         run: pnpm electron:prepare
 
@@ -74,7 +88,7 @@ jobs:
             node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
           fi
 
-      - name: Build DMG（${{ matrix.arch }}）
+      - name: Build DMG (arm64)
         env:
           # 透传签名 env 给 electron-builder。未签名时 CSC_LINK 为空 + identity:null 已禁用签名
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -82,12 +96,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
+        run: pnpm exec electron-builder --mac --arm64 --publish never
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dmg-${{ matrix.arch }}
+          name: dmg-arm64
           path: dist/*.dmg
           if-no-files-found: error
           retention-days: 7
@@ -102,11 +116,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download all DMG artifacts
+      - name: Download DMG artifact
         uses: actions/download-artifact@v4
         with:
+          name: dmg-arm64
           path: artifacts
-          merge-multiple: true
 
       - name: List artifacts
         run: ls -lh artifacts/
@@ -138,14 +152,14 @@ jobs:
             | 文件 | 适用平台 |
             | --- | --- |
             | `*-arm64.dmg` | Apple Silicon（M1/M2/M3/M4） |
-            | `*-x64.dmg` | Intel Mac |
 
             ## 安装说明
 
-            1. 下载对应架构的 `.dmg`（Apple Silicon 选 arm64，Intel 选 x64）
-            2. 双击打开，将 InkPress 拖入 Applications
-            3. 首次打开若提示「无法验证开发者」：右键点击应用 → 选择「打开」即可绕过 Gatekeeper（未签名构建）
-            4. 启动后数据存放在 `~/.inkpress`（数据库、文章、技能、日志）
+            1. 下载 `*-arm64.dmg`，双击打开，将 InkPress 拖入 Applications
+            2. 首次打开若提示「无法验证开发者」：右键点击应用 → 选择「打开」即可绕过 Gatekeeper（未签名构建）；已签名构建可双击直接打开
+            3. 启动后数据存放在 `~/.inkpress`（数据库、文章、技能、日志）
+
+            > 注：仅支持 Apple Silicon。Intel Mac 暂未提供原生包，可使用 Web 版。
 
             ---
         env:
