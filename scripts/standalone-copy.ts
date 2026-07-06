@@ -21,8 +21,17 @@ function materializeSymlinks(rootDir: string): number {
       const stat = fs.lstatSync(full);
 
       if (stat.isSymbolicLink()) {
-        const target = fs.realpathSync(full);
-        const targetStat = fs.statSync(target);
+        let target: string;
+        let targetStat: fs.Stats;
+        try {
+          target = fs.realpathSync(full);
+          targetStat = fs.statSync(target);
+        } catch {
+          // 悬空链接在打包产物中不可用，直接清理，避免中断整个拷贝流程
+          fs.rmSync(full, { recursive: true, force: true });
+          replaced += 1;
+          continue;
+        }
         fs.rmSync(full, { recursive: true, force: true });
         if (targetStat.isDirectory()) {
           fs.cpSync(target, full, { recursive: true, dereference: true });
