@@ -24,6 +24,60 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire, builtinModules } from "node:module";
 
+/**
+ * 跨平台递归复制（跟随 symlink/junction 物化为真实文件）。
+ *
+ * 不能直接用 fs.cpSync(..., { dereference: true })：
+ * Windows 上 Node 22 的 fs.cpSync 对 pnpm 的 .pnpm junction 结构处理时会触发
+ * STATUS_STACK_BUFFER_OVERRUN（exit code 3221226505 = 0xC0000409），native crash。
+ * 已知问题：https://github.com/nodejs/node/issues/53855 系列。
+ *
+ * Windows 分流为手动递归复制（lstat + readlink + stat），逐个文件 copyFile，
+ * 避开 fs.cpSync 的 dereference 路径。其他平台保留原 fs.cpSync（性能更好）。
+ */
+function safeCpSync(src: string, dest: string): void {
+  if (process.platform === "win32") {
+    copyTreeFollowingLinks(src, dest);
+  } else {
+    safeCpSync(src, dest);
+  }
+}
+
+/** 手动递归复制：跟随 symlink/junction 复制 target 内容（Windows 专用）。 */
+function copyTreeFollowingLinks(src: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true });
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(src, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    const s = path.join(src, e.name);
+    const d = path.join(dest, e.name);
+    if (e.isSymbolicLink()) {
+      let target: string;
+      try {
+        target = fs.readlinkSync(s);
+      } catch {
+        continue;
+      }
+      const resolved = path.isAbsolute(target) ? target : path.resolve(path.dirname(s), target);
+      if (!fs.existsSync(resolved)) continue;
+      const stat = fs.statSync(resolved);
+      if (stat.isDirectory()) {
+        copyTreeFollowingLinks(resolved, d);
+      } else {
+        fs.copyFileSync(resolved, d);
+      }
+    } else if (e.isDirectory()) {
+      copyTreeFollowingLinks(s, d);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
 const root = process.cwd();
 const targetArch = parseTargetArch();
 
@@ -74,7 +128,7 @@ console.log(`生成去符号链接的 standalone bundle（目标架构 ${targetA
 // 第一步：复制（dereference=true 会跟随 symlink 读文件内容，但对 symlink 目录本身
 // 仍会重建为 symlink —— pnpm 的 .pnpm 结构正是如此，导致 bundle 内残留指向项目源码
 // 目录的绝对路径符号链接，打包到其他机器后全部失效）。
-fs.cpSync(srcStandalone, bundle, { recursive: true, dereference: true });
+safeCpSync(srcStandalone, bundle);
 // 第二步：把残留的符号链接全部物化为真实文件（关键修复）
 const materialized = materializeSymlinks(bundle);
 console.log(
@@ -116,7 +170,7 @@ function copyInto(src: string, destRel: string, label: string) {
     return;
   }
   const dest = path.join(bundle, destRel);
-  fs.cpSync(src, dest, { recursive: true, dereference: true });
+  safeCpSync(src, dest);
   console.log(`  ✓ ${label} → ${destRel}`);
 }
 
@@ -459,7 +513,7 @@ function materializeSymlinks(rootDir: string): number {
     // 先删 symlink，再复制目标内容到原位置
     fs.rmSync(link);
     if (stat.isDirectory()) {
-      fs.cpSync(resolved, link, { recursive: true, dereference: true });
+      safeCpSync(resolved, link);
     } else {
       fs.copyFileSync(resolved, link);
     }
@@ -651,7 +705,7 @@ function hoistMissingTopLevel(): void {
     if (!fs.existsSync(pkgDir)) {
       const srcDep = path.join(bundleVirtualRoot, pkg);
       if (!fs.existsSync(srcDep)) continue;
-      fs.cpSync(srcDep, pkgDir, { recursive: true, dereference: true });
+      safeCpSync(srcDep, pkgDir);
       hoisted++;
     }
     // 读取 dependencies 继续 BFS
@@ -690,7 +744,7 @@ function mergeDir(src: string, dest: string): void {
     } catch {
       /* 路径确实为空，正常走 cpSync */
     }
-    fs.cpSync(src, dest, { recursive: true, dereference: true });
+    safeCpSync(src, dest);
     return;
   }
   let entries: fs.Dirent[];
@@ -1230,7 +1284,7 @@ function pruneBundledNodeModules(): void {
       const virtualPkg = path.join(virtualRoot, pkg);
       if (fs.existsSync(virtualPkg)) {
         fs.mkdirSync(path.dirname(topLevel), { recursive: true });
-        fs.cpSync(virtualPkg, topLevel, { recursive: true, dereference: true });
+        safeCpSync(virtualPkg, topLevel);
       }
     }
   }
@@ -1345,7 +1399,7 @@ function ensureBytenodeInBundle(): void {
     console.error("  ✗ 项目 node_modules/bytenode 不存在，请先 pnpm add -D bytenode");
     process.exit(1);
   }
-  fs.cpSync(src, dest, { recursive: true, dereference: true });
+  safeCpSync(src, dest);
   const sizeKB = (measureSize(dest) / 1024).toFixed(1);
   console.log(`  ✓ bytenode → node_modules/bytenode（${sizeKB} KB）`);
 }
