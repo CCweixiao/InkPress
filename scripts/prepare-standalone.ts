@@ -143,7 +143,8 @@ copyInto(path.join(root, "themes"), "themes", "themes");
 copyInto(path.join(root, "prisma", "migrations"), "migrations", "prisma/migrations");
 
 // 5. better-sqlite3 原生绑定：为 Electron ABI 重新编译（ELECTRON_RUN_AS_NODE 下
-//    Electron 42 的 Node ABI=146，与标准 Node 22 的 prebuilt ABI=127 不匹配）
+//    Electron 42 的 Node ABI=146，与标准 Node 22 的 prebuilt ABI=127 不匹配）。
+//    跨平台分发：darwin 走 Mach-O 校验，win32 跳过（无 file 命令且 .node 是 PE 格式）。
 ensureNativeBindingForElectron();
 
 // 6-10. esbuild bundle + prune + slimBundle + bytecode（esbuild build 异步，用 IIFE 包装）
@@ -175,7 +176,32 @@ void (async () => {
  * 因为 standalone 用 NODE_PATH 指向 app_modules 解析依赖。
  */
 function ensureNativeBindingForElectron() {
-  console.log(`  → 为 Electron 重编译 better-sqlite3 原生绑定（arch=${targetArch}）…`);
+  if (process.platform === "darwin") {
+    ensureNativeBindingForElectronDarwin();
+    return;
+  }
+  if (process.platform === "win32") {
+    ensureNativeBindingForElectronWindows();
+    return;
+  }
+  console.error(
+    `  ✗ 不支持的平台：${process.platform}（prepare-standalone 仅支持 darwin / win32）`
+  );
+  process.exit(1);
+}
+
+/**
+ * macOS：electron-rebuild 重编 + Mach-O 架构校验（依赖 `file` 命令）。
+ *
+ * 必须重编：ELECTRON_RUN_AS_NODE=1 下 Electron 42 内嵌 Node ABI=146，
+ * 而 better-sqlite3 官方 prebuilt 针对标准 Node（ABI=127），两者不匹配。
+ * 用 @electron/rebuild 针对当前 electron 版本重新编译原生绑定。
+ *
+ * 注意：必须在 bundle 的 app_modules 上跑（而非项目 node_modules），
+ * 因为 standalone 用 NODE_PATH 指向 app_modules 解析依赖。
+ */
+function ensureNativeBindingForElectronDarwin() {
+  console.log(`  → 为 Electron 重编译 better-sqlite3 原生绑定（darwin, arch=${targetArch}）…`);
 
   // 在项目根目录用 @electron/rebuild 重编译（需要标准 node_modules 结构）
   const electronVersion = JSON.parse(
@@ -245,6 +271,92 @@ function ensureNativeBindingForElectron() {
   console.log(
     `  ✓ better-sqlite3（Electron ABI，${targetArch}）已刷新 ${refreshed} 处`
   );
+}
+
+/**
+ * Windows：electron-rebuild 重编 + 直接复制到 bundle 副本（不做 Mach-O 校验）。
+ *
+ * 跟 darwin 的差异：
+ * - 不调 detectMachArchs / verifyNodeArch：Windows 上 `file` 命令不存在，
+ *   且 .node 是 PE 格式不是 Mach-O，无法用 Mach-O 检测命令验证架构
+ * - electron-rebuild 调用走 shell（Windows .bin 是 .cmd 包装器，
+ *   spawnSync 默认 shell=false 调用 .cmd 会失败）
+ * - 用 findFirstNativeBinding 找任意一份 .node，信任 electron-rebuild 的产出
+ */
+function ensureNativeBindingForElectronWindows() {
+  console.log(`  → 为 Electron 重编译 better-sqlite3 原生绑定（win32, arch=${targetArch}）…`);
+
+  const electronVersion = JSON.parse(
+    fs.readFileSync(path.join(root, "node_modules", "electron", "package.json"), "utf8")
+  ).version;
+
+  // Windows .bin/electron-rebuild 是 .cmd 包装器，必须 shell:true 让 spawn 解析 .cmd
+  const rebuildBin = path.join(root, "node_modules", ".bin", "electron-rebuild");
+  const result = spawnSync(
+    rebuildBin,
+    [
+      "-f",
+      "-w",
+      "better-sqlite3",
+      "--version",
+      electronVersion,
+      "--arch",
+      targetArch,
+    ],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        npm_config_runtime: "electron",
+        npm_config_target: electronVersion,
+        npm_config_arch: targetArch,
+        npm_config_disturl: "https://electronjs.org/headers",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: true,
+    }
+  );
+
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+
+  if (result.status !== 0) {
+    console.error(
+      `  ✗ electron-rebuild 失败（退出码 ${result.status}，win32-${targetArch}）。` +
+        ` 检查 Windows Build Tools（python3 + VS Build Tools）是否就绪。`
+    );
+    process.exit(1);
+  }
+
+  // 找一份重编后的 .node（不做 Mach-O 校验，Windows 无 file 命令且 PE 格式无法用 lipo 思路）
+  const src = findFirstNativeBinding(path.join(root, "node_modules"));
+  if (!src) {
+    console.error(
+      `  ✗ 项目 node_modules 找不到 better_sqlite3.node（electron-rebuild 应已产出）`
+    );
+    process.exit(1);
+  }
+
+  // 复制到 bundle 的所有 better-sqlite3 副本
+  let refreshed = 0;
+  const targets = findAllFiles(bundle, "better_sqlite3.node");
+  for (const t of targets) {
+    fs.copyFileSync(src, t);
+    refreshed++;
+  }
+  console.log(
+    `  ✓ better-sqlite3（Electron ABI，win32-${targetArch}）已刷新 ${refreshed} 处`
+  );
+}
+
+/**
+ * 在 node_modules 树中找第一份 better_sqlite3.node（不校验架构，用于无 `file` 命令的平台）。
+ *
+ * darwin 走 findNativeBindingForArch（带 Mach-O 架构校验），
+ * win32 / 其他平台走本函数（信任 electron-rebuild 的产出，只按文件名匹配）。
+ */
+function findFirstNativeBinding(nmRoot: string): string | null {
+  return findAllFiles(nmRoot, "better_sqlite3.node")[0] ?? null;
 }
 
 /**
