@@ -153,11 +153,17 @@ async function pickPort(preferred: number): Promise<number> {
 function startServer(port: number): ChildProcess {
   const serverDir = path.dirname(serverFile());
   /**
-   * 打包形态：用 electron-builder 生成并签名好的 LSUIElement Helper 启动 server，
-   * 避免 macOS Dock 显示第二个图标。开发形态：直接用 process.execPath。
+   * 打包形态选择 server runner 可执行文件：
+   * - macOS：用 electron-builder 生成并签名好的 LSUIElement Helper（InkPress Helper.app）
+   *   启动 server，避免 Dock 显示第二个图标。Helper 是 mac 专属机制。
+   * - Windows / Linux：直接用主进程 exe（process.execPath）在 ELECTRON_RUN_AS_NODE=1
+   *   下当 Node 用。Windows 没有 Helper 结构，主进程 exe 即 server runner。
+   * 开发形态：所有平台都用 process.execPath。
    */
   const serverExe = app.isPackaged
-    ? path.join(process.resourcesPath!, "..", "Frameworks", "InkPress Helper.app", "Contents", "MacOS", "InkPress Helper")
+    ? process.platform === "darwin"
+      ? path.join(process.resourcesPath!, "..", "Frameworks", "InkPress Helper.app", "Contents", "MacOS", "InkPress Helper")
+      : process.execPath
     : process.execPath;
   // bundle 内的 node_modules 保留原名（prepare-standalone 已物化 pnpm symlink
   // 为真实文件，且 extraResources 不受 files 规则的 node_modules 剔除影响）。
