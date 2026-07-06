@@ -207,6 +207,21 @@
         }
       ]
     },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "InkPress-${version}-x64.${ext}"
+    },
     "linux": {
       "icon": "build/icon.png",
       "target": [
