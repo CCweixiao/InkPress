@@ -22,8 +22,8 @@ function materializeSymlinks(rootDir: string): number {
 
       if (stat.isSymbolicLink()) {
         const target = fs.realpathSync(full);
-        fs.rmSync(full, { recursive: true, force: true });
         const targetStat = fs.statSync(target);
+        fs.rmSync(full, { recursive: true, force: true });
         if (targetStat.isDirectory()) {
           fs.cpSync(target, full, { recursive: true, dereference: true });
           walk(full);
