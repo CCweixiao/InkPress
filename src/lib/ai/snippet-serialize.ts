@@ -28,7 +28,7 @@ export function serializeComposer(
   if (ids.length === 0) return { message: text, snippetRefs: [] };
   const markers = ids.map((id) => `{{snippet:${id}}}`).join(" ");
   const body = text.replace(/\n+$/, "");
-  const message = body.length
+  const message = body.trim().length
     ? `${body}\n\n${SNIPPET_REFS_MARKER}\n${markers}`
     : `${SNIPPET_REFS_MARKER}\n${markers}`;
   return { message, snippetRefs: ids };
