@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Pin, Trash2, Quote, Link as LinkIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -28,7 +27,6 @@ function formatRelativeTime(dateStr: string) {
 }
 
 export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps) {
-  const [isHovered, setIsHovered] = useState(false);
   const tags: string[] = JSON.parse(snippet.tagsJson || "[]");
 
   const handlePin = async () => {
@@ -42,6 +40,7 @@ export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps)
   };
 
   const handleDelete = async () => {
+    if (!window.confirm("确定删除这条灵感？删除后可在回收站找回。")) return;
     const res = await fetch(`/api/snippets/${snippet.id}`, {
       method: "DELETE",
     });
@@ -53,33 +52,29 @@ export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps)
   return (
     <Card
       className={cn(
-        "relative p-4 transition-all hover:shadow-md cursor-default break-inside-avoid",
+        "group relative p-4 transition-all hover:shadow-md cursor-default break-inside-avoid",
         snippet.pinned && "ring-1 ring-primary/30"
       )}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
       {/* 操作按钮（悬停显示） */}
-      {isHovered && (
-        <div className="absolute top-2 right-2 flex items-center gap-1">
-          <button
-            onClick={handlePin}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-            title={snippet.pinned ? "取消置顶" : "置顶"}
-            aria-label={snippet.pinned ? "取消置顶" : "置顶"}
-          >
-            <Pin className={cn("h-3.5 w-3.5", snippet.pinned && "text-primary fill-primary")} />
-          </button>
-          <button
-            onClick={handleDelete}
-            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-            title="删除"
-            aria-label="删除"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
+      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={handlePin}
+          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title={snippet.pinned ? "取消置顶" : "置顶"}
+          aria-label={snippet.pinned ? "取消置顶" : "置顶"}
+        >
+          <Pin className={cn("h-3.5 w-3.5", snippet.pinned && "text-primary fill-primary")} />
+        </button>
+        <button
+          onClick={handleDelete}
+          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title="删除"
+          aria-label="删除"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       {/* 内容区 */}
       {snippet.kind === "image" && snippet.imageUrl && (
@@ -133,7 +128,14 @@ export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps)
       {/* 底部：标签 + 时间 */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
         {tags.length > 0 && (
-          <span className="text-primary/70">#{tags[0]}</span>
+          <span className="flex flex-wrap gap-1">
+            {tags.slice(0, 3).map((t) => (
+              <span key={t} className="text-primary/70">#{t}</span>
+            ))}
+            {tags.length > 3 && (
+              <span className="text-muted-foreground">+{tags.length - 3}</span>
+            )}
+          </span>
         )}
         <span className="ml-auto">{formatRelativeTime(snippet.createdAt)}</span>
       </div>
