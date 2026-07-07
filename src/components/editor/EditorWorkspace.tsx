@@ -122,6 +122,33 @@ export function EditorWorkspace({
     return e.state.doc.textBetween(from, to, "\n").trim();
   }, []);
 
+  // 摘录反馈内联消息（无 toast 库；2s 后自动清除）
+  const [excerptMsg, setExcerptMsg] = useState<string | null>(null);
+
+  async function handleExcerpt() {
+    const text = getSelectionText();
+    if (!text) {
+      setExcerptMsg("请先选中文字");
+      window.setTimeout(() => setExcerptMsg(null), 2000);
+      return;
+    }
+    try {
+      const res = await fetch("/api/snippets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: text,
+          kind: "text",
+          sourceArticleId: article.id,
+        }),
+      });
+      setExcerptMsg(res.ok ? "✓ 已保存到灵感" : "保存失败");
+    } catch {
+      setExcerptMsg("保存失败");
+    }
+    window.setTimeout(() => setExcerptMsg(null), 2000);
+  }
+
   const currentTheme =
     themes.find((t) => t.id === themeId) ??
     themes.find((t) => t.isDefault) ??
@@ -404,6 +431,18 @@ export function EditorWorkspace({
               ? "已保存"
               : ""}
           </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExcerpt}
+            title="把当前选区文字保存为灵感素材"
+            className="h-8 shrink-0"
+          >
+            保存选区为灵感
+          </Button>
+          {excerptMsg && (
+            <span className="text-xs text-muted-foreground shrink-0">{excerptMsg}</span>
+          )}
           <Popover open={articleActionsOpen} onOpenChange={setArticleActionsOpen}>
             <PopoverTrigger asChild>
               <Button
