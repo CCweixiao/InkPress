@@ -1,6 +1,14 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Send, Square, FileSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -13,6 +21,14 @@ import {
   slashQuery,
   type SlashCommand,
 } from "./slash-commands";
+import {
+  atQuery,
+  filterSnippets,
+  type AtQueryResult,
+  type SnippetSearchItem,
+} from "./at-commands";
+import { SnippetMentionPopover } from "./SnippetMentionPopover";
+import { SnippetRefChip } from "./SnippetRefChip";
 import type { SkillCatalogItem } from "@/lib/ai/skills";
 
 /** Composer 发送载荷。snippetRefs 与 forceSkillIds 互斥（@ 引用 vs /skill 命令）。 */
@@ -41,32 +57,20 @@ interface ChatComposerProps {
  * 隔离的 textarea：memo 化避免流式 chunk 引起的父级重渲染传递到输入框。
  * 父级用 ref 桥接 onKeyDown，使 handler 引用在渲染间稳定。（自 WritingAssistant L1542-1571 原样搬入）
  */
-const ChatTextarea = memo(function ChatTextarea({
-  value,
-  disabled,
-  placeholder,
-  className,
-  onChange,
-  onKeyDown,
-}: {
-  value: string;
-  disabled: boolean;
-  placeholder: string;
-  className: string;
-  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
-}) {
-  return (
-    <textarea
-      value={value}
-      disabled={disabled}
-      onChange={onChange}
-      onKeyDown={onKeyDown}
-      placeholder={placeholder}
-      className={className}
-    />
-  );
-});
+const ChatTextarea = memo(
+  forwardRef<HTMLTextAreaElement, {
+    value: string;
+    disabled: boolean;
+    placeholder: string;
+    className: string;
+    onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+    onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+    onCompositionStart: () => void;
+    onCompositionEnd: () => void;
+  }>(function ChatTextarea(props, ref) {
+    return <textarea ref={ref} {...props} />;
+  })
+);
 
 function ChatComposerImpl({
   disabled,
@@ -125,14 +129,29 @@ function ChatComposerImpl({
   // 斜杠命令反馈
   const [slashNotice, setSlashNotice] = useState("");
 
+  // ── @ 灵感引用 ──
+  type SnippetRef = { id: string; displayText: string };
+  const [snippetRefs, setSnippetRefs] = useState<SnippetRef[]>([]);
+  const [atItems, setAtItems] = useState<SnippetSearchItem[]>([]);
+  const [atActiveIndex, setAtActiveIndex] = useState(0);
+  const [atLoading, setAtLoading] = useState(false);
+  const [atError, setAtError] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
+  const [atQueryResult, setAtQueryResult] = useState<AtQueryResult | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const atOpen = atQueryResult !== null;
+
   // ── 稳定 callback（自 WritingAssistant L1911-1925 原样搬入）──
   // --- 稳定 callback：避免流式重渲染把新函数引用传给 ChatTextarea ---
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setInput(e.target.value);
       setSlashForcedClosed(false);
+      const caret = e.target.selectionStart ?? e.target.value.length;
+      setAtQueryResult(atQuery(e.target.value, caret, isComposing));
+      setAtActiveIndex(0);
     },
-    [] // setInput / setSlashForcedClosed 均为稳定 setState
+    [isComposing]
   );
   // keydown 逻辑复杂、依赖多，用 ref 桥接保持引用稳定
   const chatKeydownRef = useRef<
@@ -156,6 +175,34 @@ function ChatComposerImpl({
     }
     // skill：插入 /skillKey + 空格，保持焦点继续输入参数（空格后菜单自动关闭）
     setInput(`${command.token} `);
+  }
+
+  /** @ 选中：删 textarea 触发文本 + 进托盘去重 + 关闭 popover。 */
+  function selectSnippet(item: SnippetSearchItem) {
+    if (atQueryResult && textareaRef.current) {
+      const next =
+        input.slice(0, atQueryResult.triggerStart) +
+        input.slice(atQueryResult.triggerEnd);
+      setInput(next);
+      const newCaret = atQueryResult.triggerStart;
+      window.setTimeout(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(newCaret, newCaret);
+      }, 0);
+    }
+    setAtQueryResult(null);
+    setAtItems([]);
+    setSnippetRefs((prev) =>
+      prev.some((s) => s.id === item.id)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: item.id,
+              displayText: item.title || item.summary.slice(0, 20),
+            },
+          ]
+    );
   }
 
   async function submit() {
@@ -192,10 +239,11 @@ function ChatComposerImpl({
       setSlashForcedClosed(false);
       return;
     }
-    onSend({ text, snippetRefs: [] });
+    onSend({ text, snippetRefs: snippetRefs.map((s) => s.id) });
     historyIndex.current = null;
     setInput("");
     setSlashForcedClosed(false);
+    setSnippetRefs([]);
   }
 
   // ── keydown（自 WritingAssistant L2068-2128 原样搬入；
@@ -223,6 +271,30 @@ function ChatComposerImpl({
         if (event.key === "Escape") {
           event.preventDefault();
           setSlashForcedClosed(true);
+          return;
+        }
+      } else if (atOpen && !atLoading) {
+        // @ 与 / 互斥：textarea 不可能同时以 / 开头且含未闭合的 @
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setAtActiveIndex((i) => Math.min(atItems.length - 1, i + 1));
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setAtActiveIndex((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          const item = atItems[atActiveIndex] ?? atItems[0];
+          if (item) selectSnippet(item);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setAtQueryResult(null);
+          setAtItems([]);
           return;
         }
       }
@@ -263,6 +335,32 @@ function ChatComposerImpl({
     };
   });
 
+  // @ 面板检索：atQueryResult 变化时 debounce 150ms fetch /api/snippets/search
+  useEffect(() => {
+    if (!atQueryResult) {
+      setAtItems([]);
+      setAtError(false);
+      return;
+    }
+    const q = atQueryResult.query;
+    setAtLoading(true);
+    setAtError(false);
+    const timer = window.setTimeout(async () => {
+      try {
+        const url = `/api/snippets/search?limit=8${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("search failed");
+        const data = (await res.json()) as { items: SnippetSearchItem[] };
+        setAtItems(filterSnippets(data.items ?? [], q));
+      } catch {
+        setAtError(true);
+      } finally {
+        setAtLoading(false);
+      }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [atQueryResult]);
+
   const busy = streaming;
 
   return (
@@ -273,6 +371,16 @@ function ChatComposerImpl({
             commands={slashFiltered}
             activeIndex={slashIndex}
             onSelect={slashSelect}
+          />
+        )}
+        {atOpen && (
+          <SnippetMentionPopover
+            items={atItems}
+            activeIndex={atActiveIndex}
+            loading={atLoading}
+            error={atError}
+            onRetry={() => setAtQueryResult((r) => (r ? { ...r } : r))}
+            onSelect={selectSnippet}
           />
         )}
         {slashNotice && (
@@ -287,16 +395,32 @@ function ChatComposerImpl({
           </div>
         )}
         <ChatTextarea
+          ref={textareaRef}
           value={input}
           disabled={approvalBlocked}
           onChange={handleInputChange}
           onKeyDown={stableChatKeydown}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => setIsComposing(false)}
           placeholder={placeholder}
           className={cn(
             "min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none",
             approvalBlocked && "cursor-not-allowed opacity-60"
           )}
         />
+        {snippetRefs.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 pt-1.5">
+            {snippetRefs.map((ref) => (
+              <SnippetRefChip
+                key={ref.id}
+                displayText={ref.displayText}
+                onDelete={() =>
+                  setSnippetRefs((prev) => prev.filter((s) => s.id !== ref.id))
+                }
+              />
+            ))}
+          </div>
+        )}
         {/* Correction 1: 底栏布局保持原 WritingAssistant——左侧为空占位（aria-hidden），
             右侧 shrink-0 容器承载 children（ModelSelector/TokenMeter）+ 发送/停止按钮。
             按钮（含 title / className）原样复制自 WritingAssistant.tsx。 */}
