@@ -8,6 +8,8 @@ import {
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import { getProjectSnapshotHash } from "@/lib/ai/project-index";
+import { codeSourceProject } from "@/lib/ai/code-source";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 type Params = { params: Promise<{ id: string }> };
 const updateSchema = z.object({
@@ -33,7 +35,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
   }
   const markdown = await readTechnicalDocumentContent(id);
   const config = await getAgentConfig();
-  const project = config.projects.find((item) => item.id === document.projectId);
+  let project = config.projects.find((item) => item.id === document.projectId);
+  if (!project && document.codeSourceJson !== "{}") {
+    try {
+      const source = JSON.parse(document.codeSourceJson) as { id?: string };
+      if (source.id) project = (await codeSourceProject(source.id, config)).project;
+    } catch {
+      // Temporary grants can expire; stale status remains unknown until reauthorization.
+    }
+  }
   let currentSnapshotHash = "";
   if (project) {
     currentSnapshotHash =
@@ -52,7 +62,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   });
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export const PUT = withApiLog("PUT /api/technical-documents/[id]", async (req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const parsed = updateSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -77,12 +87,14 @@ export async function PUT(req: NextRequest, { params }: Params) {
         : {}),
     },
   });
+  logMutation("techdoc", "update", { id });
   return NextResponse.json({ document });
-}
+});
 
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export const DELETE = withApiLog("DELETE /api/technical-documents/[id]", async (_req: NextRequest, { params }: Params) => {
   const { id } = await params;
   await prisma.technicalDocument.delete({ where: { id } }).catch(() => null);
   await deleteTechnicalDocumentContent(id);
+  logMutation("techdoc", "delete", { id });
   return NextResponse.json({ ok: true });
-}
+});

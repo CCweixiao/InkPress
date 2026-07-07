@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Upload,
   Copy,
@@ -14,7 +14,14 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { AssetEditDialog } from "@/components/materials/AssetEditDialog";
-import { UploadDialog } from "@/components/materials/UploadDialog";
+import {
+  UploadDialog,
+  type UploadDialogHandle,
+} from "@/components/materials/UploadDialog";
+import {
+  useClipboardImagePaste,
+  pasteShortcutLabel,
+} from "@/components/materials/useClipboardImagePaste";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { Asset } from "@/types/asset";
 import { parseTags } from "@/lib/asset";
@@ -40,17 +47,39 @@ export function ArticleMaterialsPanel({
   const [copied, setCopied] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState(false);
-  // 上传弹窗：uploadInitial=null 表示点击进入（弹窗内选文件）；非空表示拖拽进入（立即上传）
+  // 上传弹窗：uploadInitial=null 表示点击进入（弹窗内选文件）；非空表示拖拽/粘贴进入（立即上传）
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadInitial, setUploadInitial] = useState<File[] | null>(null);
   // 素材编辑弹窗
   const [editing, setEditing] = useState<Asset | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const { confirm, dialog } = useConfirm();
+  /** 面板根：element-scope 粘贴监听目标（需 tabIndex 才能在该区域聚焦时收到 paste）。 */
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** 弹窗命令式句柄：弹窗已开时粘贴，追加文件而非重开。 */
+  const dialogRef = useRef<UploadDialogHandle>(null);
+
+  /** 粘贴图片：弹窗开→追加；关→用文件打开弹窗（live 模式立即上传）。 */
+  const handlePastedFiles = useCallback((files: File[]) => {
+    if (uploadOpen) {
+      dialogRef.current?.addFiles(files);
+      return;
+    }
+    setUploadInitial(files);
+    setUploadOpen(true);
+  }, [uploadOpen]);
+
+  // element-scope：仅面板区域内粘贴生效，不与文章编辑器自带的图片粘贴打架。
+  // 弹窗打开时禁用（由弹窗内部监听器独占，避免双触）。
+  useClipboardImagePaste(panelRef, {
+    enabled: !uploadOpen,
+    scope: "element",
+    onPaste: handlePastedFiles,
+  });
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/materials?articleId=${articleId}`);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     setAssets(data.assets ?? []);
     setLoading(false);
   }, [articleId]);
@@ -60,6 +89,8 @@ export function ArticleMaterialsPanel({
   }, [refresh]);
 
   function openUploadByClick() {
+    // 聚焦面板，让后续 element-scope 粘贴监听能命中（粘贴图片追加到弹窗批次）。
+    panelRef.current?.focus();
     setUploadInitial(null);
     setUploadOpen(true);
   }
@@ -110,8 +141,12 @@ export function ArticleMaterialsPanel({
   }
 
   return (
-    <div className="space-y-3">
-      {/* 上传区：点击 → 弹窗内选文件；拖拽 → 弹窗立即上传 */}
+    <div
+      ref={panelRef}
+      tabIndex={-1}
+      className="space-y-3 outline-none focus-visible:ring-1 focus-visible:ring-primary/40 rounded-md"
+    >
+      {/* 上传区：点击 → 弹窗内选文件；拖拽 / 粘贴 → 弹窗立即上传 */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -129,7 +164,7 @@ export function ArticleMaterialsPanel({
       >
         <Upload className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
         <p className="text-xs text-muted-foreground">
-          拖拽文件到此处，或点击选择（支持多文件）
+          拖拽文件 / {pasteShortcutLabel()} 粘贴图片，或点击选择（支持多文件）
         </p>
         <p className="text-[11px] text-muted-foreground/70 mt-0.5">
           名称自动生成，可在弹窗里填写描述 / 标签帮助 AI 插图
@@ -238,6 +273,7 @@ export function ArticleMaterialsPanel({
       </div>
 
       <UploadDialog
+        ref={dialogRef}
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         articleId={articleId}

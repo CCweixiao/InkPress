@@ -1,5 +1,6 @@
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
 import { prisma } from "@/lib/db";
+import { decryptConfigValueForUse } from "@/lib/config-secrets";
 
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
 
@@ -29,7 +30,9 @@ export async function getWechatConfig(): Promise<WechatConfig> {
     where: { key: WECHAT_CONFIG_KEY },
   });
   if (!item) throw new Error("尚未配置微信公众号凭证，请先在「设置」中配置。");
-  return parseWechatConfig(item.value);
+  return parseWechatConfig(
+    decryptConfigValueForUse(WECHAT_CONFIG_KEY, item.value) ?? item.value
+  );
 }
 
 /** 微信是否已配置（不抛错，用于状态展示） */
@@ -39,7 +42,9 @@ export async function hasWechatConfig(): Promise<boolean> {
   });
   if (!item) return false;
   try {
-    parseWechatConfig(item.value);
+    parseWechatConfig(
+      decryptConfigValueForUse(WECHAT_CONFIG_KEY, item.value) ?? item.value
+    );
     return true;
   } catch {
     return false;

@@ -21,6 +21,7 @@ model Article {
   coverUrl     String? // 封面可访问 URL（直接读，列表展示用，与 coverAssetId 并存冗余）
   themeId      String? // 关联 Theme
   spaceId      String? // 关联 Space（可为空=未分类）
+  profileId    String? // P3 文章类型 profile（wechat_essay / technical_deep_dive / ...）
   status       String    @default("draft") // draft | ready | pushed
   wxMediaId    String? // draft/add 返回的 media_id（= 草稿箱 id）
   // 软删除 / 回收站
@@ -52,6 +53,18 @@ model AgentChatSession {
   selectedProjectId   String?
   providerId          String?
   modelId             String?
+  // Agent Runtime 标记与 Claude Agent SDK 会话句柄。
+  runtime             String   @default("claude-agent")
+  claudeAgentSessionId String?
+  claudeAgentStoreKey  String?
+  // P2（session PDC §6.1）：Claude SDK 会话健康状态，供前端低存在感提示与中断后「继续」入口。
+  // none|running|ready|interrupted|error|cleared。独立于 usage ledger，/clear 置 cleared（不删 AgentUsageTurn）。
+  // NOT NULL + default 'none'：状态机列恒为合法枚举（PDC §6.1 原文即 @default("none")）。
+  claudeAgentSessionStatus  String   @default("none") // none | running | ready | interrupted | error | cleared
+  claudeAgentLastEventAt    DateTime?
+  claudeAgentLastError      String?
+  claudeAgentInterruptedAt  DateTime?
+  claudeAgentResumeCount    Int       @default(0)
   lastInputTokens     Int      @default(0)
   lastOutputTokens    Int      @default(0)
   lastReasoningTokens Int      @default(0)
@@ -62,9 +75,118 @@ model AgentChatSession {
   article           Article?           @relation(fields: [articleId], references: [id], onDelete: Cascade)
   technicalDocument TechnicalDocument? @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
   messages          AgentChatMessage[]
+  codeSourceGrants  CodeSourceGrant[]
+  toolActionGrants  ToolActionGrant[]
 
   @@index([articleId])
   @@index([technicalDocumentId])
+}
+
+model CodeSourceGrant {
+  id                String    @id @default(cuid())
+  sessionId         String
+  kind              String // local | github | configured
+  sourceKey         String
+  displayName       String
+  locator           String
+  root              String?
+  owner             String?
+  repo              String?
+  ref               String?
+  cacheRoot         String?
+  scope             String    @default("session") // session | trusted
+  status            String    @default("pending") // pending | approved | rejected | revoked
+  approvalTokenHash String?
+  approvedAt        DateTime?
+  lastAccessedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  session AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sourceKey])
+  @@index([sessionId, status])
+  @@index([sourceKey])
+}
+
+// P3 权限闸门：canUseTool 命中 ASK 时落一行 pending grant，外部 /api/ai/agent-approvals 决议。
+model ToolActionGrant {
+  id                String   @id @default(cuid())
+  sessionId         String
+  runtime           String   @default("claude-agent")
+  toolName          String // 裸名（如 set_article_digest）
+  inputHash         String // sha256(JSON.stringify(input))，审计用
+  status            String   @default("pending") // pending | approved | rejected | expired
+  approvalTokenHash String?
+  decisionJson      String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  session AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, status])
+  @@index([toolName])
+}
+
+/// P1.5 Token usage ledger：每个对话轮次的 token/cost 汇总，独立于 AgentChatMessage 生命周期。
+/// 刻意不建到 AgentChatSession 的 Prisma 关系（无 FK）：删除消息/会话/文章不应影响历史消耗统计
+/// （PDC §12.2/§12.6）。sessionId/targetKind/targetId 均为普通字符串，删除目标后仍可聚合，
+/// 大盘可显示「已删除文章/文档」。
+model AgentUsageTurn {
+  id                       String   @id @default(cuid())
+  sessionId                String
+  turnId                   String
+  targetKind               String // article | technical-document
+  targetId                 String
+  providerId               String?
+  modelId                  String?
+  sdkSessionId             String?
+  inputTokens              Int      @default(0)
+  outputTokens             Int      @default(0)
+  cacheReadInputTokens     Int      @default(0)
+  cacheCreationInputTokens Int      @default(0)
+  totalTokens              Int      @default(0)
+  costUsd                  Float    @default(0)
+  status                   String   @default("completed") // completed | partial | error
+  source                   String   @default("sdk-result") // sdk-result | step-fallback
+  modelUsageJson           String   @default("{}")
+  metadataJson             String   @default("{}")
+  startedAt                DateTime @default(now())
+  finishedAt               DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([sessionId, turnId])
+  @@index([sessionId, startedAt])
+  @@index([targetKind, targetId, startedAt])
+  @@index([modelId, startedAt])
+  @@index([status, startedAt])
+}
+
+// P5 Claude Agent SessionStore：SDK transcript 条目镜像（append 写多条 entry），供跨轮/跨进程 resume。
+model ClaudeAgentSessionEntry {
+  id           String   @id @default(cuid())
+  projectKey   String // SDK 从 cwd 派生；透明存储键
+  sdkSessionId String
+  subpath      String   @default("") // 主 transcript=""，子 agent 非空
+  uuid         String? // 幂等键；SQLite unique 对 NULL 不去重 → 无 uuid 条目可多条
+  entryJson    String // 一行 JSONL（SessionStoreEntry 原样）
+  // P1（session PDC §6.2/§7.4）：稳定排序与排障字段。
+  // appendSeq：同 (projectKey,sdkSessionId,subpath) 下单调递增，load 据此保序（createdAt 在 SQLite
+  //   精度不足且 upsert 更新时会乱序）；uuid 重放时仅 create 分支分配，update 不触碰 → 重放不破坏顺序。
+  // entryType / entryTimestamp：从 entry.type / entry.timestamp 冗余，方便排障与按类型清理。
+  appendSeq      Int?
+  entryType      String?
+  entryTimestamp DateTime?
+  createdAt      DateTime @default(now())
+  // updatedAt 可空：SQLite 的 ALTER TABLE ADD COLUMN 不允许非常量默认值（CURRENT_TIMESTAMP），
+  // 故迁移用「add nullable + UPDATE 回填」；@default(now())+@updatedAt 保证新写行恒有值，历史行回填后亦有值。
+  updatedAt      DateTime? @default(now()) @updatedAt
+
+  @@unique([projectKey, sdkSessionId, subpath, uuid])
+  @@index([projectKey, sdkSessionId, subpath])
+  @@index([projectKey, sdkSessionId, subpath, appendSeq])
+  @@index([entryType])
 }
 
 model AgentChatMessage {
@@ -115,6 +237,7 @@ model TechnicalDocument {
   projectId    String
   contentPath  String?
   snapshotHash String   @default("")
+  codeSourceJson String @default("{}")
   status       String   @default("draft")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -125,6 +248,66 @@ model TechnicalDocument {
 
   @@index([projectId])
   @@index([updatedAt])
+}
+
+/// 统一存储对象：只描述文件实际存放位置和完整性。
+/// SQLite 保留元数据；文件可位于本地 storage、阿里云 OSS 或未来的 S3/R2/COS/MinIO。
+model StorageObject {
+  id           String   @id @default(cuid())
+  provider     String // local | aliyun-oss | s3 | r2 | cos | qiniu | minio
+  bucket       String?
+  key          String // provider 内部对象 key；local 时为 storage 根下相对路径
+  localPath    String? // local provider 的相对路径，等同 key；保留字段便于迁移/审计
+  url          String? // 可访问 URL；local provider 通常为 /api/storage/<id>
+  contentType  String   @default("")
+  size         Int      @default(0)
+  sha256       String
+  etag         String?
+  visibility   String   @default("private") // private | public
+  status       String   @default("synced") // local-only | remote-only | synced | failed
+  metadataJson String   @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assets Asset[]
+
+  @@unique([provider, key])
+  @@index([sha256])
+  @@index([provider])
+  @@index([createdAt])
+}
+
+/// 代码知识图谱缓存元数据。
+/// 图谱文件本身落在 InkPress 本地数据目录，不进入文章素材统一存储层。
+model CodeGraphCache {
+  id           String   @id @default(cuid())
+  provider     String   @default("graphify")
+  status       String   @default("pending") // pending | building | ready | failed | stale
+  spaceId      String?
+  articleId    String?
+  sourceKey    String
+  projectName  String   @default("")
+  root         String   @default("")
+  snapshotHash String   @default("")
+  gitHead      String?
+  graphAssetId String?
+  reportAssetId String?
+  htmlAssetId  String?
+  graphPath    String?
+  reportPath   String?
+  htmlPath     String?
+  nodeCount    Int      @default(0)
+  edgeCount    Int      @default(0)
+  lastError    String?
+  metadataJson String   @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([sourceKey])
+  @@index([spaceId])
+  @@index([articleId])
+  @@index([snapshotHash])
+  @@index([status])
 }
 
 model TechnicalDocumentVersion {
@@ -243,16 +426,18 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 }
 
-/// 素材库（OSS 上传的图片 / 视频 / 文件）
+/// 文章素材库（统一存储的图片 / 视频 / 音频 / 文件）
 /// 双重归属：可绑定到 Space（spaceId）和/或 Article（articleId）
 model Asset {
   id          String    @id @default(cuid())
   name        String // 展示名（自动生成的短 UUID，如 a1b2c3d4.png）
-  ossKey      String // OSS 对象 key（删除用）
-  url         String // 可访问 URL（CDN / OSS 默认域名）
-  kind        String // "image" | "video" | "file"
+  ossKey      String // 兼容旧字段：对象 key（OSS 或统一存储 key）
+  url         String // 兼容旧字段：可访问 URL（云 URL 或 /api/storage/<id>）
+  kind        String // "image" | "video" | "audio" | "file" | ...
   size        Int       @default(0) // 字节
   contentType String    @default("") // mime
+  storageObjectId String?
+  metadataJson String    @default("{}")
   // 元数据（供 AI 自动插图判断相关性）
   description String    @default("") // 素材描述
   tagsJson    String    @default("[]") // 标签（JSON 字符串数组）
@@ -263,15 +448,37 @@ model Asset {
   trashed     Boolean   @default(false)
   trashedAt   DateTime?
   expiresAt   DateTime?
+  // 微信公众号素材库同步（仅当上传时勾选了同步才写入；null=未尝试过同步）
+  wxMediaId    String?  // add_material 返回的 media_id（永久素材）
+  wxUrl        String?  // uploadimg 返回的 URL（正文图）或 add_material 的 url
+  wxSyncStatus String?  // "success" | "failed" | null（null=未勾选同步）
+  wxSyncError  String?  // 失败原因（同步失败时填，成功时清空）
+  wxSyncedAt   DateTime? // 最后一次同步时间（成功/失败均更新）
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  storageObject StorageObject? @relation(fields: [storageObjectId], references: [id], onDelete: SetNull)
   space   Space?   @relation(fields: [spaceId], references: [id])
   article Article? @relation(fields: [articleId], references: [id])
 
   @@index([kind])
   @@index([createdAt])
+  @@index([storageObjectId])
   @@index([spaceId])
   @@index([articleId])
   @@index([trashed])
+  @@index([wxSyncStatus])
+}
+
+// P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。
+// 全局用户级（不分 session/space）——是用户偏好，非会话级授权。
+model WebFetchDomainAllowlist {
+  id        String   @id @default(cuid())
+  domain    String   @unique // 小写、去 www.，精确匹配
+  note      String   @default("")
+  riskJson  String   @default("{}") // URL 风险评估缓存（HTTPS/官方来源/权威域名等信号）
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([domain])
 }

@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Download, FileClock, Loader2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Download, Eye, EyeOff, FileClock, RotateCcw, Search, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { WritingAssistant } from "@/components/editor/WritingAssistant";
+import { ArticleDiffDialog, type ProposalDetail } from "@/components/editor/ArticleDiffDialog";
+import { splitLines } from "@/components/editor/article-diff-utils";
 import { MermaidMarkdownPreview } from "./MermaidMarkdownPreview";
 
 type TechnicalDocumentData = {
@@ -19,11 +22,13 @@ type TechnicalDocumentData = {
   stale: boolean;
 };
 
-type Provider = {
+type VersionItem = {
   id: string;
-  name: string;
-  isDefault: boolean;
-  models: Array<{ id: string; name: string; isDefault: boolean }>;
+  version: number;
+  title: string;
+  markdown: string;
+  snapshotHash: string;
+  createdAt: string;
 };
 
 export function TechnicalDocumentWorkspace({
@@ -34,42 +39,18 @@ export function TechnicalDocumentWorkspace({
   const [title, setTitle] = useState(initialDocument.title);
   const [markdown, setMarkdown] = useState(initialDocument.markdown);
   const [snapshotHash, setSnapshotHash] = useState(initialDocument.snapshotHash);
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [providerId, setProviderId] = useState("");
-  const [modelId, setModelId] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
-  const [source, setSource] = useState<{
-    path: string;
-    content: string;
-    startLine: number;
-    endLine: number;
-  } | null>(null);
+  const [preview, setPreview] = useState(true);
   const [versionsOpen, setVersionsOpen] = useState(false);
-  const [versions, setVersions] = useState<Array<{
-    id: string;
-    version: number;
-    title: string;
-    snapshotHash: string;
-    createdAt: string;
-  }>>([]);
+  const [pendingVersionId, setPendingVersionId] = useState<string | null>(null);
+  const [reviewVersion, setReviewVersion] = useState<VersionItem | null>(null);
+  const [versions, setVersions] = useState<VersionItem[]>([]);
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    fetch("/api/ai/providers")
-      .then((response) => response.json())
-      .then((data) => {
-        const list = data.providers ?? [];
-        setProviders(list);
-        const provider = list.find((item: Provider) => item.isDefault) ?? list[0];
-        setProviderId(provider?.id ?? "");
-        setModelId(
-          provider?.models.find((item: { isDefault: boolean }) => item.isDefault)?.id ??
-            provider?.models[0]?.id ??
-            ""
-        );
-      })
-      .catch(() => {});
-  }, []);
+  const editorScrollRef = useRef<HTMLDivElement>(null);
+  const previewScrollRef = useRef<HTMLElement>(null);
+  const scrollSyncFrame = useRef<number | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const flush = useCallback(async () => {
     if (timer.current) clearTimeout(timer.current);
@@ -93,22 +74,53 @@ export function TechnicalDocumentWorkspace({
     };
   }, [flush]);
 
-  async function openSource(input: {
-    path: string;
-    startLine: number;
-    endLine: number;
-  }) {
-    const query = new URLSearchParams({
-      path: input.path,
-      startLine: String(input.startLine),
-      endLine: String(input.endLine),
+  // 编辑区 textarea 自适应高度：让外层容器承担滚动，滚动联动才能生效
+  // 预览区显隐会改变编辑区宽度（换行变化），需一并重新测量
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [markdown, preview]);
+
+  // 编辑区 ↔ 预览区滚动联动（按比例同步，rAF 节流）
+  useEffect(() => {
+    if (!preview) return;
+    const editorScroller = editorScrollRef.current;
+    const previewScroller = previewScrollRef.current;
+    if (!editorScroller || !previewScroller) return;
+
+    const syncPreviewScroll = () => {
+      if (scrollSyncFrame.current !== null) {
+        window.cancelAnimationFrame(scrollSyncFrame.current);
+      }
+      scrollSyncFrame.current = window.requestAnimationFrame(() => {
+        const editorMax =
+          editorScroller.scrollHeight - editorScroller.clientHeight;
+        const previewMax =
+          previewScroller.scrollHeight - previewScroller.clientHeight;
+        if (editorMax <= 0 || previewMax <= 0) return;
+        const ratio = editorScroller.scrollTop / editorMax;
+        previewScroller.scrollTop = Math.max(
+          0,
+          Math.min(previewMax, ratio * previewMax)
+        );
+      });
+    };
+
+    editorScroller.addEventListener("scroll", syncPreviewScroll, {
+      passive: true,
     });
-    const response = await fetch(
-      `/api/technical-documents/${initialDocument.id}/source?${query}`
-    );
-    const data = await response.json().catch(() => ({}));
-    if (response.ok) setSource(data.source);
-  }
+    syncPreviewScroll();
+
+    return () => {
+      editorScroller.removeEventListener("scroll", syncPreviewScroll);
+      if (scrollSyncFrame.current !== null) {
+        window.cancelAnimationFrame(scrollSyncFrame.current);
+        scrollSyncFrame.current = null;
+      }
+    };
+  }, [preview]);
 
   async function openVersions() {
     const response = await fetch(
@@ -119,50 +131,104 @@ export function TechnicalDocumentWorkspace({
     setVersionsOpen(true);
   }
 
+  async function rollbackVersion(version: {
+    id: string;
+    version: number;
+    title: string;
+  }) {
+    const ok = await confirm({
+      title: `回滚到 v${version.version}？`,
+      description: "当前编辑器内容将被替换为该版本的内容。",
+      confirmText: "回滚",
+    });
+    if (!ok) return;
+    setPendingVersionId(version.id);
+    try {
+      const response = await fetch(
+        `/api/technical-documents/${initialDocument.id}/versions/${version.id}/rollback`,
+        { method: "POST" }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error ?? "回滚失败。");
+      const document = data.document;
+      if (document) {
+        setTitle(document.title);
+        setMarkdown(document.markdown);
+        setSnapshotHash(document.snapshotHash ?? "");
+      }
+      setVersionsOpen(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "回滚失败。");
+    } finally {
+      setPendingVersionId(null);
+    }
+  }
+
+  async function deleteVersion(version: { id: string; version: number }) {
+    const ok = await confirm({
+      title: `删除 v${version.version}？`,
+      description: "删除后不可恢复。",
+      variant: "destructive",
+      confirmText: "删除",
+    });
+    if (!ok) return;
+    setPendingVersionId(version.id);
+    try {
+      const response = await fetch(
+        `/api/technical-documents/${initialDocument.id}/versions/${version.id}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok) throw new Error("删除版本失败。");
+      setVersions((items) => items.filter((item) => item.id !== version.id));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "删除版本失败。");
+    } finally {
+      setPendingVersionId(null);
+    }
+  }
+
+  // 历史版本 ↔ 当前版本差异审查：以历史版本为基准，当前内容为对照
+  const reviewProposal: ProposalDetail | null = useMemo(
+    () =>
+      reviewVersion
+        ? {
+            id: reviewVersion.id,
+            proposalKind: "technical-document",
+            targetId: initialDocument.id,
+            baseTitle: reviewVersion.title,
+            baseMarkdown: reviewVersion.markdown,
+            baseDigest: "",
+            title,
+            markdown,
+            digest: null,
+            summary: `v${reviewVersion.version} 与当前版本对比`,
+            status: "applied",
+            stats: {
+              oldLines: splitLines(reviewVersion.markdown).length,
+              newLines: splitLines(markdown).length,
+              changedLines: 0,
+            },
+          }
+        : null,
+    [reviewVersion, title, markdown, initialDocument.id]
+  );
+
+  // 判定“当前版本”：内容与标题均与编辑器当前状态一致的那条（取最新一条匹配）。
+  // 版本列表按 version 倒序返回，故首个匹配即最新。
+  const currentVersionId = useMemo(() => {
+    for (const item of versions) {
+      if (item.markdown === markdown && item.title === title) return item.id;
+    }
+    return null;
+  }, [versions, markdown, title]);
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <aside className="flex w-[400px] shrink-0 flex-col border-r bg-muted/25">
-        <div className="grid grid-cols-2 gap-2 border-b p-3">
-          <select
-            className="h-8 rounded-md border bg-background px-2 text-xs"
-            value={providerId}
-            onChange={(event) => {
-              const next = event.target.value;
-              setProviderId(next);
-              const provider = providers.find((item) => item.id === next);
-              setModelId(
-                provider?.models.find((item) => item.isDefault)?.id ??
-                  provider?.models[0]?.id ??
-                  ""
-              );
-            }}
-          >
-            {providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-8 rounded-md border bg-background px-2 text-xs"
-            value={modelId}
-            onChange={(event) => setModelId(event.target.value)}
-          >
-            {providers
-              .find((provider) => provider.id === providerId)
-              ?.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-          </select>
-        </div>
         <WritingAssistant
           targetKind="technical-document"
           targetId={initialDocument.id}
           currentMarkdown={markdown}
-          providerId={providerId}
-          modelId={modelId}
           onFlushTarget={flush}
           onApplyTechnicalDocument={(document) => {
             setTitle(document.title);
@@ -182,6 +248,14 @@ export function TechnicalDocumentWorkspace({
           <span className="w-14 shrink-0 text-xs text-muted-foreground">
             {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已保存" : ""}
           </span>
+          <Button
+            size="sm"
+            variant={preview ? "secondary" : "outline"}
+            onClick={() => setPreview((value) => !value)}
+          >
+            {preview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            预览
+          </Button>
           <Button size="sm" variant="outline" onClick={openVersions}>
             <FileClock className="h-4 w-4" />
             版本
@@ -199,35 +273,27 @@ export function TechnicalDocumentWorkspace({
             当前文档基于旧代码快照。请让 Agent 重新探索后生成更新提案。
           </div>
         )}
-        <textarea
-          value={markdown}
-          onChange={(event) => setMarkdown(event.target.value)}
-          spellCheck={false}
-          className="min-h-0 flex-1 resize-none border-0 bg-background px-8 py-6 font-mono text-sm leading-7 outline-none"
-          placeholder="让 Agent 探索项目并生成技术文档，或在这里直接编辑 Markdown…"
-        />
+        <div ref={editorScrollRef} className="editor-canvas min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-3xl px-10 py-6">
+            <textarea
+              ref={textareaRef}
+              value={markdown}
+              onChange={(event) => setMarkdown(event.target.value)}
+              placeholder="让 Agent 探索项目并生成技术文档，或在这里直接编辑 Markdown…"
+              className="block min-h-[60vh] w-full resize-none overflow-hidden rounded-md bg-transparent font-mono text-sm leading-6 focus:outline-none"
+            />
+          </div>
+        </div>
       </main>
 
-      <aside className="w-[420px] shrink-0 overflow-y-auto border-l bg-white">
-        <div className="sticky top-0 z-10 border-b bg-white/95 px-4 py-3 text-xs font-medium backdrop-blur">
-          Markdown / Mermaid 预览
-        </div>
-        <MermaidMarkdownPreview markdown={markdown} onOpenSource={openSource} />
-      </aside>
-
-      <Dialog open={Boolean(source)} onOpenChange={(open) => !open && setSource(null)}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between pr-6 text-sm">
-              {source?.path} · L{source?.startLine}-L{source?.endLine}
-              <X className="h-4 w-4 opacity-0" />
-            </DialogTitle>
-          </DialogHeader>
-          <pre className="max-h-[70vh] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-6 text-slate-100">
-            {source?.content}
-          </pre>
-        </DialogContent>
-      </Dialog>
+      {preview && (
+        <aside ref={previewScrollRef} className="w-[420px] shrink-0 overflow-y-auto border-l bg-background">
+          <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 text-xs font-medium text-muted-foreground backdrop-blur">
+            Markdown / Mermaid 预览
+          </div>
+          <MermaidMarkdownPreview markdown={markdown} />
+        </aside>
+      )}
 
       <Dialog open={versionsOpen} onOpenChange={setVersionsOpen}>
         <DialogContent>
@@ -242,16 +308,65 @@ export function TechnicalDocumentWorkspace({
             )}
             {versions.map((version) => (
               <div key={version.id} className="rounded-lg border p-3 text-sm">
-                <div className="font-medium">v{version.version} · {version.title}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {new Date(version.createdAt).toLocaleString("zh-CN")} ·{" "}
-                  {version.snapshotHash ? version.snapshotHash.slice(0, 10) : "无代码快照"}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      v{version.version} · {version.title}
+                      {version.id === currentVersionId && (
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                          当前
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {new Date(version.createdAt).toLocaleString("zh-CN")} ·{" "}
+                      {version.snapshotHash ? version.snapshotHash.slice(0, 10) : "无代码快照"}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    {version.id !== currentVersionId && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setReviewVersion(version)}
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                        查看
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={pendingVersionId === version.id}
+                      onClick={() => rollbackVersion(version)}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      回滚
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      disabled={pendingVersionId === version.id}
+                      onClick={() => deleteVersion(version)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      删除
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </DialogContent>
       </Dialog>
+
+      <ArticleDiffDialog
+        open={!!reviewVersion}
+        onOpenChange={(open) => !open && setReviewVersion(null)}
+        proposal={reviewProposal}
+      />
+      {confirmDialog}
     </div>
   );
 }

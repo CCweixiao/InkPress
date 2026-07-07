@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Tailwind v4 dark: 变体
+   - .dark / .light：用户显式选择
+   - auto（无类）：prefers-color-scheme + :root:not(.light) 跟随系统，避免首帧 FOUC
+   不再使用阻塞 <script>（React 19 禁止在组件树内渲染可执行 script）。 */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light), :root:not(.light) *) {
+      @slot;
+    }
+  }
+}
+
 /* 简洁大气的主题色板（shadcn slate 风格） */
 :root {
   --background: #ffffff;
@@ -18,6 +33,87 @@
   --accent-foreground: #1d4ed8;
   --ring: #2563eb;
   --radius: 0.625rem;
+  /* 写作画布专用变量（浅色） */
+  --editor-canvas-bg: radial-gradient(circle at 50% 0, rgba(37, 99, 235, 0.035), transparent 30rem), #f8fafc;
+  --editor-paper-bg: #ffffff;
+  --editor-text: #263244;
+  --editor-heading: #0f172a;
+  --editor-heading-2: #172033;
+  --editor-heading-3: #1e293b;
+  --editor-border: #e2e8f0;
+  --editor-blockquote-text: #526078;
+  --editor-strong: #111827;
+  --editor-hr: #cbd5e1;
+  --editor-code-bg: var(--muted);
+  --editor-code-color: #d94660;
+  --editor-li-marker: #2563eb;
+}
+
+/* 夜间模式：中性暗灰基调（参考 Codex / VS Code Dark+，去除蓝色调） */
+.dark {
+  --background: #191919;
+  --foreground: #e6e6e6;
+  --card: #1e1e1e;
+  --card-foreground: #e6e6e6;
+  --muted: #242424;
+  --muted-foreground: #a0a0a0;
+  --border: #2e2e2e;
+  --input: #2e2e2e;
+  --primary: #4d94ff;
+  --primary-foreground: #ffffff;
+  --secondary: #242424;
+  --secondary-foreground: #e6e6e6;
+  --accent: #2a2a30;
+  --accent-foreground: #7eb6ff;
+  --ring: #4d94ff;
+  /* 写作画布专用变量（深色） */
+  --editor-canvas-bg: radial-gradient(circle at 50% 0, rgba(77, 148, 255, 0.05), transparent 30rem), #191919;
+  --editor-paper-bg: #1e1e1e;
+  --editor-text: #c8c8c8;
+  --editor-heading: #f0f0f0;
+  --editor-heading-2: #e0e0e0;
+  --editor-heading-3: #c8c8c8;
+  --editor-border: #2e2e2e;
+  --editor-blockquote-text: #a0a0a0;
+  --editor-strong: #f5f5f5;
+  --editor-hr: #3a3a3a;
+  --editor-code-bg: #242424;
+  --editor-code-color: #f08080;
+  --editor-li-marker: #4d94ff;
+}
+
+/* auto 模式 + 系统深色：无 .dark 类时也应用深色变量（与 .dark 保持一致） */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #191919;
+    --foreground: #e6e6e6;
+    --card: #1e1e1e;
+    --card-foreground: #e6e6e6;
+    --muted: #242424;
+    --muted-foreground: #a0a0a0;
+    --border: #2e2e2e;
+    --input: #2e2e2e;
+    --primary: #4d94ff;
+    --primary-foreground: #ffffff;
+    --secondary: #242424;
+    --secondary-foreground: #e6e6e6;
+    --accent: #2a2a30;
+    --accent-foreground: #7eb6ff;
+    --ring: #4d94ff;
+    --editor-canvas-bg: radial-gradient(circle at 50% 0, rgba(77, 148, 255, 0.05), transparent 30rem), #191919;
+    --editor-paper-bg: #1e1e1e;
+    --editor-text: #c8c8c8;
+    --editor-heading: #f0f0f0;
+    --editor-heading-2: #e0e0e0;
+    --editor-heading-3: #c8c8c8;
+    --editor-border: #2e2e2e;
+    --editor-blockquote-text: #a0a0a0;
+    --editor-strong: #f5f5f5;
+    --editor-hr: #3a3a3a;
+    --editor-code-bg: #242424;
+    --editor-code-color: #f08080;
+    --editor-li-marker: #4d94ff;
+  }
 }
 @theme inline {
   --color-background: var(--background);
@@ -55,21 +151,19 @@ body {
 
 /* Tiptap 编辑区：接近成稿的舒适写作纸张 */
 .editor-canvas {
-  background:
-    radial-gradient(circle at 50% 0, rgba(37, 99, 235, 0.035), transparent 30rem),
-    #f8fafc;
+  background: var(--editor-canvas-bg);
 }
 
 .editor-canvas > div {
   min-height: 100%;
-  background: #fff;
+  background: var(--editor-paper-bg);
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
 }
 
 .tiptap {
   outline: none;
   min-height: 60vh;
-  color: #263244;
+  color: var(--editor-text);
   font-size: 16.5px;
   line-height: 1.76;
   letter-spacing: 0.012em;
@@ -80,7 +174,7 @@ body {
 }
 .tiptap h1 {
   margin: 1.35em 0 0.62em;
-  color: #0f172a;
+  color: var(--editor-heading);
   font-size: 1.92em;
   font-weight: 750;
   line-height: 1.3;
@@ -92,8 +186,8 @@ body {
 .tiptap h2 {
   margin: 1.85em 0 0.58em;
   padding-bottom: 0.34em;
-  border-bottom: 1px solid #e2e8f0;
-  color: #172033;
+  border-bottom: 1px solid var(--editor-border);
+  color: var(--editor-heading-2);
   font-size: 1.4em;
   font-weight: 720;
   line-height: 1.38;
@@ -103,7 +197,7 @@ body {
   position: relative;
   margin: 1.38em 0 0.46em;
   padding-left: 0.72em;
-  color: #1e293b;
+  color: var(--editor-heading-3);
   font-size: 1.16em;
   font-weight: 680;
   line-height: 1.45;
@@ -144,17 +238,17 @@ body {
   margin: 0.22em 0;
 }
 .tiptap li::marker {
-  color: #2563eb;
+  color: var(--editor-li-marker);
   font-weight: 650;
 }
 .tiptap blockquote {
   margin: 1em 0;
   padding: 0.68em 1em;
-  border: 1px solid #dbeafe;
+  border: 1px solid var(--editor-border);
   border-left: 4px solid var(--primary);
   border-radius: 0 10px 10px 0;
-  background: linear-gradient(135deg, #f8fbff, #eff6ff);
-  color: #526078;
+  background: var(--muted);
+  color: var(--editor-blockquote-text);
 }
 .tiptap blockquote p {
   margin: 0;
@@ -164,11 +258,11 @@ body {
   margin: 1.12em 0;
   padding: 2.6em 1.2em 1.08em;
   overflow-x: auto;
-  border: 1px solid #1e293b;
+  border: 1px solid #2a2a2a;
   border-radius: 12px;
-  background: #0d1424;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.15);
-  color: #d9e2f1;
+  background: #161616;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+  color: #d0d0d0;
   font-family: var(--font-mono);
   font-size: 0.82em;
   line-height: 1.62;
@@ -192,35 +286,54 @@ body {
   font-size: inherit;
 }
 .tiptap :not(pre) > code {
-  background: var(--muted);
+  background: var(--editor-code-bg);
   padding: 0.18em 0.42em;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--editor-border);
   border-radius: 0.35em;
-  color: #d94660;
+  color: var(--editor-code-color);
   font-family: var(--font-mono);
   font-size: 0.86em;
 }
 .tiptap img {
-  display: block;
+  display: inline-block;
   max-width: 100%;
-  margin: 1.18em auto;
+  height: auto;
+  margin: 1.18em 0.45em 1.18em 0;
+  vertical-align: top;
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+.tiptap img.ProseMirror-selectednode {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.tiptap p:has(> img:first-child:last-child) {
+  text-align: center;
+}
+.tiptap p:has(> img + img) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+  gap: 0.8em;
+  align-items: start;
+}
+.tiptap p:has(> img + img) img {
+  width: 100%;
+  margin: 0;
 }
 .tiptap hr {
-  width: 32%;
+  width: 33.333%;
   margin: 1.85em auto;
   border: 0;
-  border-top: 1px solid #cbd5e1;
+  border-top: 1px solid var(--editor-hr);
 }
 .tiptap a {
-  color: #2563eb;
+  color: var(--primary);
   text-decoration: underline;
-  text-decoration-color: #bfdbfe;
+  text-decoration-color: var(--accent);
   text-underline-offset: 3px;
 }
 .tiptap strong {
-  color: #111827;
+  color: var(--editor-strong);
   font-weight: 720;
 }
 .tiptap .is-empty:first-child::before {
@@ -229,6 +342,79 @@ body {
   color: var(--muted-foreground);
   pointer-events: none;
   height: 0;
+}
+.tiptap .tableWrapper {
+  margin: 1.1em 0;
+  overflow-x: auto;
+}
+.tiptap table,
+.tiptap-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  min-width: 28rem;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--editor-border);
+  border-radius: 8px;
+  font-size: 0.92em;
+}
+.tiptap-table .selectedCell::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(77, 148, 255, 0.12);
+  content: "";
+}
+.tiptap table th,
+.tiptap table td,
+.tiptap-table th,
+.tiptap-table td {
+  position: relative;
+  border-right: 1px solid var(--editor-border);
+  border-bottom: 1px solid var(--editor-border);
+  padding: 0.5em 0.72em;
+  text-align: left;
+  vertical-align: top;
+}
+.tiptap table th:last-child,
+.tiptap table td:last-child,
+.tiptap-table th:last-child,
+.tiptap-table td:last-child {
+  border-right: 0;
+}
+.tiptap table tr:last-child td,
+.tiptap-table tr:last-child td {
+  border-bottom: 0;
+}
+.tiptap table th,
+.tiptap-table th {
+  background: var(--muted);
+  font-weight: 650;
+}
+.tiptap table td > p,
+.tiptap table th > p,
+.tiptap-table td > p,
+.tiptap-table th > p {
+  margin: 0;
+}
+.tiptap .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--primary);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.tiptap.resize-cursor,
+.tiptap .resize-cursor {
+  cursor: col-resize;
+}
+.tiptap table:hover .column-resize-handle {
+  opacity: 0.9;
 }
 
 /* 滚动条 */
@@ -245,7 +431,6 @@ body {
 }
 
 /* 技能表单：清晰聚焦边框（替代默认的模糊 ring） */
-/* 同时美化对话框表单的输入框、文本域、下拉触发器，统一聚焦态 */
 .skill-form input,
 .skill-form textarea,
 .skill-form [role="combobox"],
@@ -265,6 +450,573 @@ body {
   outline: none;
   border-color: var(--primary);
   /* 清晰的实心边框 + 内侧浅色光晕（非外发光），边缘锐利不模糊 */
-  box-shadow: inset 0 0 0 1px var(--primary), 0 0 0 3px rgba(37, 99, 235, 0.1);
-  background-color: #fff;
+  box-shadow: inset 0 0 0 1px var(--primary), 0 0 0 3px rgba(77, 148, 255, 0.12);
+  background-color: var(--background);
+}
+
+/* 对话区 Markdown 渲染：紧凑、适配小字号气泡 */
+.markdown-chat {
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.markdown-chat p {
+  margin: 0.4em 0;
+}
+.markdown-chat p:first-child {
+  margin-top: 0;
+}
+.markdown-chat p:last-child {
+  margin-bottom: 0;
+}
+.markdown-chat h1,
+.markdown-chat h2,
+.markdown-chat h3 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.markdown-chat h1 {
+  font-size: 1.18em;
+}
+.markdown-chat h2 {
+  font-size: 1.08em;
+}
+.markdown-chat h3 {
+  font-size: 1em;
+}
+.markdown-chat ul,
+.markdown-chat ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.markdown-chat ul {
+  list-style: disc;
+}
+.markdown-chat ol {
+  list-style: decimal;
+}
+.markdown-chat li {
+  margin: 0.18em 0;
+}
+.markdown-chat a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-chat code {
+  background: var(--muted);
+  padding: 0.1em 0.32em;
+  border-radius: 0.3em;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--editor-code-color);
+}
+.markdown-chat pre {
+  margin: 0.5em 0;
+  padding: 0.7em 0.9em;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: #161616;
+  color: #d0d0d0;
+  font-size: 0.82em;
+  line-height: 1.6;
+}
+.markdown-chat pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.markdown-chat blockquote {
+  margin: 0.5em 0;
+  padding: 0.3em 0.8em;
+  border-left: 3px solid var(--primary);
+  background: var(--accent);
+  border-radius: 0 6px 6px 0;
+  color: var(--muted-foreground);
+}
+.markdown-chat blockquote p {
+  margin: 0.2em 0;
+}
+.markdown-chat table {
+  width: 100%;
+  margin: 0.5em 0;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.markdown-chat th,
+.markdown-chat td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.55em;
+  text-align: left;
+}
+.markdown-chat th {
+  background: var(--muted);
+  font-weight: 600;
+}
+.markdown-chat hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.markdown-chat strong {
+  font-weight: 680;
+}
+.markdown-chat img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* 全屏 Markdown 查看弹窗：放宽字号与行距，接近成稿阅读体验 */
+.markdown-fullscreen {
+  font-size: 15px;
+  line-height: 1.85;
+}
+.markdown-fullscreen p {
+  margin: 0.8em 0;
+}
+.markdown-fullscreen h1 {
+  font-size: 1.6em;
+  margin: 1.3em 0 0.6em;
+}
+.markdown-fullscreen h2 {
+  font-size: 1.32em;
+  margin: 1.4em 0 0.55em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+.markdown-fullscreen h3 {
+  font-size: 1.12em;
+  margin: 1.1em 0 0.45em;
+}
+.markdown-fullscreen pre {
+  font-size: 0.88em;
+}
+
+/* 技术文档 / 代码图谱 Markdown 预览 */
+.technical-markdown {
+  --md-bg: var(--background);
+  --md-surface: var(--card);
+  --md-surface-soft: var(--muted);
+  --md-text: var(--foreground);
+  --md-muted: var(--muted-foreground);
+  --md-border: var(--border);
+  --md-heading: var(--editor-heading);
+  --md-heading-2: var(--editor-heading-2);
+  --md-code-bg: var(--editor-code-bg);
+  --md-code-color: var(--editor-code-color);
+  --md-table-head: color-mix(in srgb, var(--muted) 78%, var(--background));
+  --md-table-row: color-mix(in srgb, var(--muted) 28%, transparent);
+  --md-table-row-hover: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--md-text);
+  word-break: break-word;
+}
+
+.technical-markdown-preview {
+  min-height: calc(100vh - 3rem);
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--primary) 8%, transparent), transparent 22rem),
+    var(--md-bg);
+}
+
+.technical-markdown > :first-child {
+  margin-top: 0;
+}
+
+.technical-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.technical-markdown p {
+  margin: 0.8em 0;
+  color: var(--md-text);
+}
+
+.technical-markdown h1,
+.technical-markdown h2,
+.technical-markdown h3,
+.technical-markdown h4 {
+  color: var(--md-heading);
+  font-weight: 720;
+  letter-spacing: 0;
+}
+
+.technical-markdown h1 {
+  margin: 0.2em 0 0.85em;
+  font-size: 1.55em;
+  line-height: 1.32;
+}
+
+.technical-markdown h2 {
+  margin: 1.75em 0 0.8em;
+  padding-bottom: 0.42em;
+  border-bottom: 1px solid var(--md-border);
+  color: var(--md-heading-2);
+  font-size: 1.24em;
+  line-height: 1.38;
+}
+
+.technical-markdown h3 {
+  position: relative;
+  margin: 1.35em 0 0.58em;
+  padding-left: 0.75em;
+  font-size: 1.08em;
+  line-height: 1.45;
+}
+
+.technical-markdown h3::before {
+  position: absolute;
+  top: 0.25em;
+  bottom: 0.25em;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  content: "";
+}
+
+.technical-markdown h4 {
+  margin: 1.15em 0 0.5em;
+  font-size: 1em;
+}
+
+.technical-markdown a {
+  color: var(--primary);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+.technical-markdown a:hover {
+  border-bottom-color: var(--primary);
+}
+
+.technical-markdown strong {
+  color: var(--editor-strong);
+  font-weight: 700;
+}
+
+.technical-markdown ul,
+.technical-markdown ol {
+  margin: 0.75em 0;
+  padding-left: 1.45em;
+}
+
+.technical-markdown li {
+  margin: 0.3em 0;
+  padding-left: 0.12em;
+}
+
+.technical-markdown li::marker {
+  color: var(--primary);
+  font-weight: 650;
+}
+
+.technical-markdown blockquote {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border: 1px solid var(--md-border);
+  border-left: 4px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  background: var(--md-surface-soft);
+  color: var(--editor-blockquote-text);
+}
+
+.technical-markdown blockquote p {
+  margin: 0.25em 0;
+}
+
+.technical-markdown hr {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: 1px solid var(--editor-hr);
+}
+
+.technical-markdown code {
+  font-family: var(--font-mono), Menlo, Monaco, Consolas, monospace;
+}
+
+.technical-markdown :not(pre) > code {
+  padding: 0.16em 0.42em;
+  border: 1px solid color-mix(in srgb, var(--md-border) 78%, transparent);
+  border-radius: 5px;
+  background: var(--md-code-bg);
+  color: var(--md-code-color);
+  font-size: 0.9em;
+}
+
+.technical-markdown pre {
+  margin: 1.05em 0;
+  padding: 1em 1.1em;
+  overflow-x: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: #0d1117;
+  color: #d6deeb;
+  font-size: 0.92em;
+  line-height: 1.72;
+}
+
+.technical-markdown pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+}
+
+.technical-markdown .code-block {
+  margin: 1.05em 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--md-border) 70%, transparent);
+  border-radius: 8px;
+  background: #0d1117;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+}
+
+.technical-markdown .code__header {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #161b22;
+}
+
+.technical-markdown .code__dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.technical-markdown .code__dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ff5f57;
+}
+
+.technical-markdown .code__dots i:nth-child(2) {
+  background: #febc2e;
+}
+
+.technical-markdown .code__dots i:nth-child(3) {
+  background: #28c840;
+}
+
+.technical-markdown .code__lang {
+  color: #8b949e;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.technical-markdown .code-block pre {
+  margin: 0;
+  padding: 1.05em 1.15em 1.15em;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.technical-markdown .hljs-comment,
+.technical-markdown .hljs-quote {
+  color: #8b949e;
+}
+
+.technical-markdown .hljs-keyword,
+.technical-markdown .hljs-selector-tag,
+.technical-markdown .hljs-subst {
+  color: #ff7b72;
+}
+
+.technical-markdown .hljs-literal,
+.technical-markdown .hljs-number,
+.technical-markdown .hljs-tag .hljs-attr,
+.technical-markdown .hljs-template-variable,
+.technical-markdown .hljs-variable {
+  color: #79c0ff;
+}
+
+.technical-markdown .hljs-doctag,
+.technical-markdown .hljs-string,
+.technical-markdown .hljs-title,
+.technical-markdown .hljs-section,
+.technical-markdown .hljs-selector-id {
+  color: #a5d6ff;
+}
+
+.technical-markdown .hljs-type,
+.technical-markdown .hljs-class .hljs-title,
+.technical-markdown .hljs-built_in,
+.technical-markdown .hljs-builtin-name {
+  color: #ffa657;
+}
+
+.technical-markdown .hljs-symbol,
+.technical-markdown .hljs-bullet,
+.technical-markdown .hljs-link,
+.technical-markdown .hljs-meta,
+.technical-markdown .hljs-selector-attr,
+.technical-markdown .hljs-selector-pseudo {
+  color: #d2a8ff;
+}
+
+.technical-markdown .hljs-deletion {
+  color: #ffdcd7;
+  background: rgba(248, 81, 73, 0.24);
+}
+
+.technical-markdown .hljs-addition {
+  color: #aff5b4;
+  background: rgba(46, 160, 67, 0.24);
+}
+
+.technical-markdown table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 1.15em 0;
+  overflow-x: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  border-spacing: 0;
+  border-collapse: separate;
+  background: var(--md-surface);
+  font-size: 0.94em;
+  line-height: 1.6;
+}
+
+.technical-markdown thead {
+  background: var(--md-table-head);
+}
+
+.technical-markdown th,
+.technical-markdown td {
+  min-width: 7.5rem;
+  padding: 0.72em 0.9em;
+  border-right: 1px solid var(--md-border);
+  border-bottom: 1px solid var(--md-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.technical-markdown th {
+  color: var(--md-heading);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.technical-markdown td {
+  color: var(--md-text);
+}
+
+.technical-markdown th:last-child,
+.technical-markdown td:last-child {
+  border-right: 0;
+}
+
+.technical-markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.technical-markdown tbody tr:nth-child(even) {
+  background: var(--md-table-row);
+}
+
+.technical-markdown tbody tr:hover {
+  background: var(--md-table-row-hover);
+}
+
+.technical-markdown img,
+.technical-markdown svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.technical-markdown .mermaid {
+  margin: 1.1em 0;
+  padding: 1em;
+  overflow-x: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-surface);
+  text-align: center;
+}
+
+.technical-markdown .mermaid svg {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.technical-markdown .katex-display {
+  margin: 1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
+}
+
+.technical-markdown .katex {
+  color: var(--md-text);
+  font-size: 1.02em;
+}
+
+/* 公众号预览夜间模式：文章正文是 juice 内联的样式（高 specificity），
+   需用 !important 覆盖内联颜色，使深色下文字/背景适配。
+   注意：内联样式代表微信实际渲染结果，此处覆盖仅用于本地预览观感，
+   不影响发布到草稿箱的真实内容。代码块（.code-block 已是深色）保持不变。 */
+.dark .wechat-article-content {
+  background: #1e1e1e;
+  color: #c8c8c8 !important;
+}
+.dark .wechat-article-content p,
+.dark .wechat-article-content li,
+.dark .wechat-article-content span,
+.dark .wechat-article-content td,
+.dark .wechat-article-content blockquote {
+  color: #c8c8c8 !important;
+}
+.dark .wechat-article-content strong {
+  color: #f0f0f0 !important;
+}
+.dark .wechat-article-content blockquote {
+  background: #242424 !important;
+  border-left-color: #4a4a4a !important;
+}
+.dark .wechat-article-content h1,
+.dark .wechat-article-content h2,
+.dark .wechat-article-content h3,
+.dark .wechat-article-content h4 {
+  color: #f0f0f0 !important;
+}
+.dark .wechat-article-content a {
+  color: #7eb6ff !important;
+  border-bottom-color: #7eb6ff !important;
+}
+.dark .wechat-article-content hr {
+  border-top-color: #3a3a3a !important;
+}
+.wechat-article-content hr {
+  width: 33.333% !important;
+  margin-right: auto !important;
+  margin-left: auto !important;
+}
+.dark .wechat-article-content table th {
+  background: #242424 !important;
+  color: #e0e0e0 !important;
+}
+.dark .wechat-article-content table th,
+.dark .wechat-article-content table td {
+  border-color: #3a3a3a !important;
+}
+.wechat-article-content .mermaid-preview {
+  margin: 1.05em 0;
+  overflow-x: auto;
+  text-align: center;
+}
+.wechat-article-content .mermaid-preview svg {
+  max-width: 100%;
+  height: auto;
 }

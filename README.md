@@ -1,4 +1,4 @@
-# InkPress · AI 公众号写作台
+# InkPress · 数字文刊工坊
 
 AI 驱动的微信公众号文章编写与发布系统：**主题/要求/素材 → AI 流式生成 → 实时预览 → 一键推送草稿箱**。
 
@@ -159,6 +159,18 @@ pnpm db:generate    # 生成 Prisma Client
 pnpm db:seed        # 种子内置主题
 pnpm db:studio      # Prisma Studio 可视化数据
 ```
+
+## 发布流程
+
+发布由 `pnpm release`（`scripts/release.mjs`）驱动：它会自动收集自上个 tag 以来的提交，按 **Conventional Commits** 分组（新功能 / 修复 / 性能 / 重构 / 文档 / 破坏性变更等）生成 Release Notes，据规则（含 `feat` → minor、含 breaking → major、其余 patch）自增版本号，更新 `package.json`、提交 `chore(release)` 并打 annotated tag。
+
+```bash
+pnpm release --dry-run     # 预览将生成的 Release Notes 与目标版本，不做改动
+pnpm release               # 交互确认后更新版本 + commit + 打 tag
+pnpm release --minor --push  # 强制 minor 增量并自动推送 commit + tag
+```
+
+tag 推送后会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)：在 macOS arm64 / x64 双 runner 上分别构建 DMG，自动创建 GitHub Release 并附带双架构安装包。如需签名分发，在仓库 Settings → Secrets 配置 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`。
 
 ## 许可
 

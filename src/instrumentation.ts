@@ -17,8 +17,72 @@ export async function register() {
       await ensureDataHome();
       log.info("数据目录初始化完成");
     } catch (e) {
-      // 初始化失败不阻塞启动，但记录错误
+      // B2 版本守卫：DB schema 比当前 app 新 → 致命，拒绝启动（exit 1）。
+      // Electron 主进程 waitForServer 会因 server 退出而快速失败，弹出错误窗口提示升级。
+      if (e instanceof Error && e.name === "DatabaseVersionError") {
+        log.fatal({ err: e }, "数据库版本不兼容，拒绝启动");
+        process.exit(1);
+      }
+      // 其它初始化失败不阻塞启动，但记录错误
       log.error({ err: e }, "数据目录初始化失败");
+    }
+
+    // B10：应用持久化的日志级别（覆盖构建/env 默认）。
+    try {
+      const { applyPersistedLogLevel } = await import("./lib/log-level");
+      await applyPersistedLogLevel();
+    } catch (e) {
+      log.warn({ err: e }, "应用持久化日志级别失败");
+    }
+
+    // B8：启动缓存 GC（立即跑一次 + 每日定时）。
+    try {
+      const { startCacheGcScheduler } = await import("./lib/cache-gc");
+      startCacheGcScheduler();
+    } catch (e) {
+      log.warn({ err: e }, "启动缓存 GC 失败");
+    }
+
+    // 全局异常兜底：捕获未处理的 Promise 拒绝与未捕获异常，写入日志。
+    // 避免这些错误静默丢失（Next.js 默认只在控制台打印，不落日志文件）。
+    process.on("unhandledRejection", (reason) => {
+      log.fatal(
+        { err: reason instanceof Error ? reason : { reason: String(reason) } },
+        "未处理的 Promise 拒绝（unhandledRejection）"
+      );
+    });
+    process.on("uncaughtException", (err) => {
+      log.fatal({ err }, "未捕获异常（uncaughtException）");
+      // 不主动 exit：让 Next.js / Node 默认行为接管，仅确保日志已落盘
+    });
+
+    // 注入 gate HMAC 密钥（从 ~/.inkpress/.secret 读取，供 Edge middleware 使用）
+    try {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const { inkpressHomeDir } = await import("./lib/paths");
+      const secretPath = path.join(inkpressHomeDir(), ".secret");
+      if (fs.existsSync(secretPath)) {
+        const raw = fs.readFileSync(secretPath, "utf8").trim();
+        if (raw) {
+          process.env.__INKPRESS_GATE_KEY = raw;
+          log.debug("已注入 gate HMAC 密钥");
+        }
+      }
+    } catch (e) {
+      log.warn({ err: e }, "注入 gate 密钥失败，middleware 将使用回退密钥");
+    }
+
+    // License 每小时后台探测（trial 登记 / license validate 凭证刷新）
+    try {
+      const { isLicenseRequired } = await import("./lib/license/store");
+      if (isLicenseRequired()) {
+        const { startLicenseSyncScheduler } = await import("./lib/license/sync-scheduler");
+        startLicenseSyncScheduler();
+        log.info("License 后台同步调度器已启动");
+      }
+    } catch (e) {
+      log.warn({ err: e }, "启动 License 同步调度器失败");
     }
   }
 }

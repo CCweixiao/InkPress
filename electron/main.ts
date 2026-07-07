@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import net from "node:net";
+import { SPLASH_LOGO_DATA_URL } from "./splash-logo";
 
 /**
  * InkPress Electron 主进程（自包含，不依赖 src/lib，便于 electron-builder 打包）。
@@ -21,6 +22,8 @@ const PREFERRED_PORT = 17391;
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let serverPort = PREFERRED_PORT;
+let isQuitting = false;
+let splash: BrowserWindow | null = null;
 
 /**
  * 是否处于打包形态。
@@ -30,9 +33,28 @@ function isPackaged(): boolean {
   return app.isPackaged || process.env.INKPRESS_PACKAGED_TEST === "1";
 }
 
-/** 用户数据根目录：打包=~/.inkpress，开发=null（用项目目录） */
+/** 用户数据根目录：打包=平台默认数据目录，开发=null（用项目目录） */
 function dataHome(): string | null {
-  return isPackaged() ? path.join(os.homedir(), ".inkpress") : null;
+  return isPackaged() ? defaultDataHome() : null;
+}
+
+/**
+ * 默认用户数据根（按平台约定）。mac= ~/.inkpress（不破坏存量）；Windows=%APPDATA%\InkPress；
+ * Linux=$XDG_DATA_HOME/inkpress。与 src/lib/paths.ts 同构（main.ts 自包含、不依赖 src/lib）。
+ */
+function defaultDataHome(): string {
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA?.trim();
+    return path.join(
+      appdata || path.join(os.homedir(), "AppData", "Roaming"),
+      "InkPress"
+    );
+  }
+  if (process.platform === "linux") {
+    const xdg = process.env.XDG_DATA_HOME?.trim();
+    return path.join(xdg || path.join(os.homedir(), ".local", "share"), "inkpress");
+  }
+  return path.join(os.homedir(), ".inkpress");
 }
 /** SQLite db 路径：打包=~/.inkpress/database/inkpress.db，开发=项目根/dev.db */
 function dbFile(): string {
@@ -60,6 +82,26 @@ function serverFile(): string {
 
 /* ============ 首次启动初始化 ============ */
 
+/**
+ * B9：恢复出厂兑现。若用户经 /api/settings/data/reset 写入 .reset 标记，
+ * 主进程启动时（server 尚未打开 DB）清空数据目录全部内容（含标记自身），随后正常初始化。
+ * 仅打包形态执行；开发模式无主进程，需手动清理。
+ */
+function performResetIfMarked() {
+  const home = dataHome();
+  if (!home) return;
+  const marker = path.join(home, ".reset");
+  if (!fs.existsSync(marker)) return;
+  try {
+    for (const entry of fs.readdirSync(home)) {
+      fs.rmSync(path.join(home, entry), { recursive: true, force: true });
+    }
+    console.log("[electron] 已执行恢复出厂：清空用户数据目录");
+  } catch (e) {
+    console.error("[electron] 恢复出厂失败：", e);
+  }
+}
+
 /** 确保 ~/.inkpress 目录结构存在（仅打包形态） */
 function ensureDirs() {
   const home = dataHome();
@@ -86,6 +128,7 @@ function ensureDirs() {
  * 主进程不直接加载 better-sqlite3，规避 Electron Node ABI 与标准 Node ABI 的不匹配。
  */
 function bootstrapData() {
+  performResetIfMarked();
   ensureDirs();
 }
 
@@ -109,17 +152,31 @@ async function pickPort(preferred: number): Promise<number> {
 
 function startServer(port: number): ChildProcess {
   const serverDir = path.dirname(serverFile());
-  // 打包后 bundle 内的 node_modules 已重命名为 app_modules（绕过 electron-builder 剔除），
-  // 通过 NODE_PATH 让 Node 模块解析能找到这些依赖。
-  const appModules = path.join(serverDir, "app_modules");
+  /**
+   * 打包形态选择 server runner 可执行文件：
+   * - macOS：用 electron-builder 生成并签名好的 LSUIElement Helper（InkPress Helper.app）
+   *   启动 server，避免 Dock 显示第二个图标。Helper 是 mac 专属机制。
+   * - Windows / Linux：直接用主进程 exe（process.execPath）在 ELECTRON_RUN_AS_NODE=1
+   *   下当 Node 用。Windows 没有 Helper 结构，主进程 exe 即 server runner。
+   * 开发形态：所有平台都用 process.execPath。
+   */
+  const serverExe = app.isPackaged
+    ? process.platform === "darwin"
+      ? path.join(process.resourcesPath!, "..", "Frameworks", "InkPress Helper.app", "Contents", "MacOS", "InkPress Helper")
+      : process.execPath
+    : process.execPath;
+  // bundle 内的 node_modules 保留原名（prepare-standalone 已物化 pnpm symlink
+  // 为真实文件，且 extraResources 不受 files 规则的 node_modules 剔除影响）。
+  // Node 标准 require 解析天然从 server.js 同级的 node_modules 查找，无需 NODE_PATH。
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(port),
     HOSTNAME: "127.0.0.1",
     NODE_ENV: "production",
-    NODE_PATH: appModules,
     // 以纯 Node 模式运行 Electron 内置 Node（server 进程用此 ABI 加载 better-sqlite3）
     ELECTRON_RUN_AS_NODE: "1",
+    // 构建期版本透传：server 读 APP_VERSION 而非 process.cwd()/package.json（后者在打包态依赖 cwd，脆弱）。
+    APP_VERSION: app.getVersion(),
   };
   const home = dataHome();
   if (home) {
@@ -130,7 +187,7 @@ function startServer(port: number): ChildProcess {
     env.RESOURCE_ROOT = resourcesDir();
     env.INKPRESS_RESOURCES_DIR = resourcesDir();
   }
-  const proc = spawn(process.execPath, [serverFile()], {
+  const proc = spawn(serverExe, [serverFile()], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
     cwd: serverDir,
@@ -139,6 +196,45 @@ function startServer(port: number): ChildProcess {
   proc.stderr?.on("data", (d) => process.stderr.write(`[next] ${d}`));
   proc.on("exit", (code) => console.log(`[next] server exited code=${code}`));
   return proc;
+}
+
+/**
+ * 优雅关闭 server 子进程：SIGTERM → 等 exit → 兜底 SIGKILL。
+ * 返回的 Promise 在 server 真正退出后 resolve，杜绝孤儿进程。
+ */
+function killServer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!serverProc || serverProc.killed) {
+      resolve();
+      return;
+    }
+    const pid = serverProc.pid;
+    let settled = false;
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    serverProc.once("exit", done);
+    try {
+      serverProc.kill("SIGTERM");
+    } catch {
+      done();
+      return;
+    }
+    // 5 秒后兜底 SIGKILL（直接用 pid，确保即便 ChildProcess 句柄失效也能杀掉）
+    setTimeout(() => {
+      if (!settled && pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* 进程已退出，忽略 */
+        }
+        setTimeout(done, 500);
+      }
+    }, 5000);
+  });
 }
 
 function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
@@ -165,6 +261,73 @@ function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
   });
 }
 
+/* ============ 启动 splash ============ */
+
+/**
+ * 启动过渡页 HTML：logo + 「正在启动 InkPress…」+ CSS 旋转 loading。
+ * logo 以 base64 data URL 内嵌（splash 在 Next server 起来前显示，无法从 public/ 取；
+ * 打包后 build/icon.png 也不进 app bundle）。dev / packaged 两种形态都稳。
+ */
+function splashHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #ffffff; color: #334155;
+    -webkit-user-select: none; user-select: none;
+  }
+  .logo { width: 128px; height: 128px; }
+  .title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid #e2e8f0; border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: ip-spin 0.8s linear infinite;
+  }
+  @keyframes ip-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <img class="logo" src="${SPLASH_LOGO_DATA_URL}" alt="InkPress" />
+  <div class="title">正在启动 InkPress…</div>
+  <div class="spinner"></div>
+</body>
+</html>`;
+}
+
+function showSplash() {
+  splash = new BrowserWindow({
+    width: 480,
+    height: 360,
+    frame: false,
+    center: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: true,
+    backgroundColor: "#ffffff",
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  splash.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(splashHTML()));
+  splash.on("closed", () => {
+    splash = null;
+  });
+}
+
+function closeSplash() {
+  if (splash && !splash.isDestroyed()) splash.close();
+  splash = null;
+}
+
 async function createWindow(port: number) {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -186,43 +349,99 @@ async function createWindow(port: number) {
 }
 
 async function bootstrap() {
+  showSplash();
   try {
     bootstrapData();
     serverPort = await pickPort(PREFERRED_PORT);
     serverProc = startServer(serverPort);
-    await waitForServer(serverPort);
+    // B2 快速失败：server 若在启动期（waitForServer 完成前）退出，立即拒绝，
+    // 不必等 30s 超时。常见于版本守卫 exit(1)（DB schema 比当前 app 新）。
+    const earlyExit = new Promise<never>((_, reject) => {
+      const onExit = (code: number | null) => {
+        reject(
+          new Error(
+            `server 子进程启动期间退出（code=${code}）。可能原因：数据库版本不兼容（请升级 InkPress）、原生模块 ABI 不匹配、端口占用。详见 ~/.inkpress/logs/inkpress.log`
+          )
+        );
+      };
+      serverProc?.once("exit", onExit);
+    });
+    try {
+      await Promise.race([waitForServer(serverPort), earlyExit]);
+    } finally {
+      // 启动成功后剥离 earlyExit 监听，避免正常运行期的 exit 触发未捕获 rejection。
+      serverProc?.removeAllListeners("exit");
+      serverProc?.on("exit", (code) =>
+        console.log(`[next] server exited code=${code}`)
+      );
+    }
     await createWindow(serverPort);
+    closeSplash();
   } catch (e) {
     console.error("[electron] 启动失败：", e);
+    // 失败时清理 server 子进程，避免孤儿进程占用端口
+    // （waitForServer 超时、createWindow 抛异常等情况下 serverProc 可能已 spawn）
+    await killServer();
+    closeSplash();
     mainWindow = new BrowserWindow({ width: 600, height: 400 });
     const msg = e instanceof Error ? e.message : String(e);
     mainWindow.loadURL(
       "data:text/html;charset=utf-8," +
         encodeURIComponent(
-          `<body style="font-family:system-ui;padding:40px;color:#b91c1c"><h2>InkPress 启动失败</h2><pre>${msg}</pre></body>`
+          `<body style="font-family:system-ui;padding:40px;color:#b91c1c"><img src="${SPLASH_LOGO_DATA_URL}" style="width:56px;height:56px;display:block;margin:0 auto 16px" alt="InkPress" /><h2>InkPress 启动失败</h2><pre>${msg}</pre></body>`
         )
     );
   }
 }
 
-app.whenReady().then(() => {
-  void bootstrap();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0 && serverProc && !serverProc.killed) {
-      void createWindow(serverPort);
+// B1 单实例锁：避免双开两进程写同一 SQLite（last-write-wins / SQLITE_BUSY / 数据损坏风险）。
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  // 已有实例运行 → 直接退出。
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    // 二次启动：聚焦已有主窗口（而非再起一个 server）。
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
     }
   });
-});
+
+  app.whenReady().then(() => {
+    void bootstrap();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0 && serverProc && !serverProc.killed) {
+        void createWindow(serverPort);
+      }
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  if (serverProc && !serverProc.killed) {
-    serverProc.kill("SIGTERM");
-    setTimeout(() => serverProc?.kill("SIGKILL"), 3000);
-  }
+/**
+ * 退出流程：阻止默认退出，先优雅 kill server 并等待其真正退出，再退出主进程。
+ * isQuitting 标志防止重入（Cmd+Q 多次点击 / app.quit() 递归）。
+ */
+app.on("before-quit", (e) => {
+  if (isQuitting) return;
+  isQuitting = true;
+  e.preventDefault();
+  void killServer().then(() => {
+    app.quit();
+  });
 });
 
-process.on("uncaughtException", (e) => console.error("[electron] uncaughtException:", e));
+// 捕获终端信号（Ctrl-C / kill），走统一退出流程清理 server
+process.on("SIGINT", () => app.quit());
+process.on("SIGTERM", () => app.quit());
+
+process.on("uncaughtException", (e) => {
+  console.error("[electron] uncaughtException:", e);
+  // 异常时也尝试清理 server，避免孤儿进程
+  void killServer().finally(() => process.exit(1));
+});

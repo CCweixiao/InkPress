@@ -3,13 +3,15 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentProjectConfig } from "@/lib/ai/agent-config";
+import { moduleLogger } from "@/lib/logger";
 
+const log = moduleLogger("project-access");
 const execFileAsync = promisify(execFile);
 const MAX_READ_BYTES = 256 * 1024;
 const MAX_READ_LINES = 240;
 const MAX_SEARCH_RESULTS = 50;
-const MAX_GLOB_RESULTS = 500;
-const MAX_TREE_RESULTS = 800;
+const MAX_GLOB_RESULTS = 50_000;
+const MAX_TREE_RESULTS = 2_000;
 const BLOCKED_SEGMENTS = new Set([
   ".git",
   "node_modules",
@@ -19,6 +21,17 @@ const BLOCKED_SEGMENTS = new Set([
   "coverage",
   "target",
   "vendor",
+  // 包管理器缓存/产物目录：体积巨大，单是 .pnpm-store 就可能数万文件，
+  // 会把 MAX_INDEX_FILES 配额占满导致真正的 src 源码进不了索引。必须在遍历阶段就排除。
+  ".pnpm-store",
+  ".yarn",
+  ".turbo",
+  ".parcel-cache",
+  ".svelte-kit",
+  ".nuxt",
+  ".vercel",
+  "out",
+  "tmp",
 ]);
 const BLOCKED_FILE_PATTERNS = [
   /^\.env(?:\.|$)/i,
@@ -39,13 +52,14 @@ export function isBlockedRelativePath(relative: string) {
 
 export async function listProjectFiles(
   project: AgentProjectConfig,
-  input: { glob?: string; limit?: number } = {}
+  input: { glob?: string; limit?: number; offset?: number } = {}
 ) {
   const root = await resolveProjectRoot(project);
   const limit = Math.min(
     MAX_GLOB_RESULTS,
     Math.max(1, input.limit ?? MAX_GLOB_RESULTS)
   );
+  const offset = Math.max(0, input.offset ?? 0);
   const args = [
     "--files",
     "--hidden",
@@ -66,30 +80,71 @@ export async function listProjectFiles(
     "-g",
     "!vendor/**",
     "-g",
+    "!.pnpm-store/**",
+    "-g",
+    "!.yarn/**",
+    "-g",
+    "!.turbo/**",
+    "-g",
+    "!.parcel-cache/**",
+    "-g",
+    "!.svelte-kit/**",
+    "-g",
+    "!.nuxt/**",
+    "-g",
+    "!out/**",
+    "-g",
+    "!tmp/**",
+    "-g",
     "!**/.env*",
     "-g",
     "!**/*.{pem,key,p12,pfx,jks,keystore}",
   ];
   if (input.glob?.trim()) args.push("-g", input.glob.trim());
   let all: string[];
+  let rgFailed: { code?: string; message?: string } | undefined;
   try {
     const { stdout } = await execFileAsync("rg", [...args, "."], {
       cwd: root,
-      maxBuffer: 4 * 1024 * 1024,
+      maxBuffer: 16 * 1024 * 1024,
       timeout: 15_000,
     });
     all = stdout
       .split("\n")
       .filter(Boolean)
       .map((item) => item.replace(/^\.\//, "").replaceAll("\\", "/"))
-      .filter((item) => !isBlockedRelativePath(item));
-  } catch {
+      .filter((item) => !isBlockedRelativePath(item))
+      .sort();
+  } catch (error) {
+    // rg 不可用（ENOENT：系统无独立 ripgrep，shell alias 不被 execFile 解析）
+    // 或被沙箱/超时拒绝时，退回 Node 原生遍历。记录原因，避免"文件列表为空"变成无声黑洞。
+    const err = error as { code?: string; message?: string };
+    rgFailed = { code: err?.code, message: err?.message?.split("\n")[0] };
+    log.warn(
+      { project: project.name, root, code: err?.code },
+      err?.code === "ENOENT"
+        ? "ripgrep 不可用（execFile 找不到 rg），退回 Node 遍历"
+        : "ripgrep 执行失败，退回 Node 遍历"
+    );
     all = await walkProjectFiles(root, input.glob);
   }
+  if (all.length === 0) {
+    // 空文件列表会让 buildProjectIndex 产生 0 符号 0 关系，且空快照哈希会自洽锁定缓存。
+    // 必须留痕，便于定位是权限/沙箱/cwd 漂移还是项目本身无源码。
+    log.error(
+      { project: project.name, root, rgFailed },
+      "listProjectFiles 返回空文件列表（后续将得到 0 符号 0 关系）"
+    );
+  }
+  const page = all.slice(offset, offset + limit);
   return {
     project: project.name,
-    files: all.slice(0, limit),
-    truncated: all.length > limit,
+    total: all.length,
+    offset,
+    limit,
+    nextOffset: offset + page.length < all.length ? offset + page.length : null,
+    files: page,
+    truncated: offset + page.length < all.length,
   };
 }
 
@@ -219,7 +274,7 @@ export async function resolveProjectFile(
   const candidate = path.resolve(root, relativePath);
   const real = await fs.realpath(candidate);
   if (real !== root && !real.startsWith(`${root}${path.sep}`)) {
-    throw new Error("拒绝读取项目白名单之外的路径。");
+    throw new Error("拒绝读取已授权代码源根目录之外的路径。");
   }
   const relative = path.relative(root, real);
   if (isBlockedRelativePath(relative)) throw new Error("该文件属于敏感或排除路径。");
@@ -228,10 +283,17 @@ export async function resolveProjectFile(
 
 export async function searchProject(
   project: AgentProjectConfig,
-  input: { query: string; glob?: string; limit?: number; regex?: boolean }
+  input: {
+    query: string;
+    glob?: string;
+    limit?: number;
+    offset?: number;
+    regex?: boolean;
+  }
 ) {
   const root = await resolveProjectRoot(project);
   const limit = Math.min(MAX_SEARCH_RESULTS, Math.max(1, input.limit ?? 30));
+  const offset = Math.max(0, input.offset ?? 0);
   const args = [
     "--line-number",
     "--no-heading",
@@ -268,15 +330,35 @@ export async function searchProject(
       maxBuffer: 2 * 1024 * 1024,
       timeout: 12_000,
     });
-    const matches = stdout
+    const allMatches = stdout
       .split("\n")
       .filter(Boolean)
       .filter((line) => !isBlockedRelativePath(line.split(":")[0] ?? ""))
-      .slice(0, limit);
-    return { project: project.name, matches, truncated: matches.length >= limit };
+      .sort();
+    const matches = allMatches.slice(offset, offset + limit);
+    return {
+      project: project.name,
+      total: allMatches.length,
+      offset,
+      limit,
+      nextOffset:
+        offset + matches.length < allMatches.length ? offset + matches.length : null,
+      matches,
+      truncated: offset + matches.length < allMatches.length,
+    };
   } catch (error) {
     const candidate = error as { code?: number; stdout?: string };
-    if (candidate.code === 1) return { project: project.name, matches: [], truncated: false };
+    if (candidate.code === 1) {
+      return {
+        project: project.name,
+        total: 0,
+        offset,
+        limit,
+        nextOffset: null,
+        matches: [],
+        truncated: false,
+      };
+    }
     const listed = await listProjectFiles(project, {
       glob: input.glob,
       limit: MAX_GLOB_RESULTS,
@@ -284,8 +366,12 @@ export async function searchProject(
     const matcher = input.regex
       ? new RegExp(input.query, "i")
       : null;
-    const matches: string[] = [];
-    for (const relative of listed.files) {
+    // 先收集全部匹配（受 MAX_SEARCH_RESULTS 上限保护），再按 offset/limit 切片。
+    // 此前用 scanLimit = offset + limit 提前中断收集，会让 total 反映被截断的
+    // 收集量而非真实匹配数，分页 nextOffset/truncated 也跟着失真。
+    const allMatches: string[] = [];
+    let truncated = listed.truncated;
+    outer: for (const relative of listed.files) {
       const absolute = path.join(root, relative);
       const stat = await fs.stat(absolute).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_READ_BYTES) continue;
@@ -296,15 +382,25 @@ export async function searchProject(
         const hit = matcher
           ? matcher.test(lines[index])
           : lines[index].toLowerCase().includes(input.query.toLowerCase());
-        if (hit) matches.push(`${relative}:${index + 1}:${lines[index].slice(0, 500)}`);
-        if (matches.length >= limit) break;
+        if (hit) {
+          allMatches.push(`${relative}:${index + 1}:${lines[index].slice(0, 500)}`);
+          if (allMatches.length >= MAX_SEARCH_RESULTS) {
+            truncated = true;
+            break outer;
+          }
+        }
       }
-      if (matches.length >= limit) break;
     }
+    const page = allMatches.slice(offset, offset + limit);
     return {
       project: project.name,
-      matches,
-      truncated: matches.length >= limit || listed.truncated,
+      total: allMatches.length,
+      offset,
+      limit,
+      nextOffset:
+        offset + page.length < allMatches.length ? offset + page.length : null,
+      matches: page,
+      truncated,
     };
   }
 }

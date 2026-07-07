@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   Upload,
   Copy,
@@ -11,10 +11,20 @@ import {
   VideoIcon,
   FileIcon,
   FolderOpen,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  UploadDialog,
+  type UploadDialogHandle,
+} from "@/components/materials/UploadDialog";
+import {
+  useClipboardImagePaste,
+  pasteShortcutLabel,
+} from "@/components/materials/useClipboardImagePaste";
 
 type Asset = {
   id: string;
@@ -25,6 +35,9 @@ type Asset = {
   size: number;
   contentType: string;
   createdAt: string;
+  // 公众号素材库同步状态（可选，旧数据为 undefined）
+  wxSyncStatus?: "success" | "failed" | null;
+  wxSyncError?: string | null;
 };
 
 type Filter = "all" | "image" | "video" | "file";
@@ -52,10 +65,35 @@ export function MaterialLibrary({
 }) {
   const [items, setItems] = useState(assets);
   const [filter, setFilter] = useState<Filter>("all");
-  const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  /** 正在重试公众号同步的 asset id */
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  // 上传弹窗：uploadInitial=null 表示点击进入；非空表示拖拽/粘贴进入（立即上传）
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadInitial, setUploadInitial] = useState<File[] | null>(null);
+  const dialogRef = useRef<UploadDialogHandle>(null);
+
+  /** 粘贴图片：弹窗开→追加；关→用文件打开弹窗（live 模式立即上传）。 */
+  const handlePastedFiles = useCallback(
+    (files: File[]) => {
+      if (uploadOpen) {
+        dialogRef.current?.addFiles(files);
+        return;
+      }
+      setUploadInitial(files);
+      setUploadOpen(true);
+    },
+    [uploadOpen]
+  );
+
+  // document-scope：整页粘贴图片都进上传弹窗。弹窗打开时禁用（弹窗内部监听器独占）。
+  useClipboardImagePaste(null, {
+    enabled: ossConfigured && !uploadOpen,
+    scope: "document",
+    onPaste: handlePastedFiles,
+  });
 
   useEffect(() => {
     setItems(assets);
@@ -73,26 +111,19 @@ export function MaterialLibrary({
     await refresh(kind);
   }
 
-  async function handleUpload(files: FileList) {
-    if (!ossConfigured) return;
-    setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          throw new Error(d.error || "上传失败");
-        }
-      }
-      await refresh(filter);
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "上传失败");
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = "";
+  /** 拖拽文件：打开弹窗立即上传（与粘贴同走 live 模式）。 */
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length) {
+      setUploadInitial(Array.from(e.dataTransfer.files));
+      setUploadOpen(true);
     }
+  }
+
+  function openUploadByClick() {
+    setUploadInitial(null);
+    setUploadOpen(true);
   }
 
   function copyUrl(url: string) {
@@ -114,18 +145,46 @@ export function MaterialLibrary({
     });
   }
 
-  return (
-    <div className="space-y-6">
-      {!ossConfigured && (
-        <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
-          尚未配置 OSS，素材上传不可用。请先到{" "}
-          <a href="/settings" className="underline font-medium">
-            设置 → OSS 配置
-          </a>{" "}
-          完成配置。
-        </div>
-      )}
+  /** 重试公众号素材库同步（仅 wxSyncStatus=failed 的素材） */
+  async function retryWxSync(asset: Asset) {
+    setSyncingId(asset.id);
+    try {
+      const res = await fetch(`/api/materials/${asset.id}/sync-wechat`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      setItems((cur) =>
+        cur.map((a) =>
+          a.id === asset.id
+            ? {
+                ...a,
+                wxSyncStatus: res.ok ? "success" : "failed",
+                wxSyncError: res.ok ? null : data.error || "同步失败",
+              }
+            : a
+        )
+      );
+      if (!res.ok) window.alert(data.error || "同步失败");
+    } catch {
+      window.alert("网络错误，同步失败");
+    } finally {
+      setSyncingId(null);
+    }
+  }
 
+  return (
+    <div
+      className={cn(
+        "space-y-6 rounded-lg transition-colors",
+        dragOver && "ring-2 ring-primary/40 bg-accent/30"
+      )}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={onDrop}
+    >
       {/* 工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-md bg-muted p-1">
@@ -145,24 +204,12 @@ export function MaterialLibrary({
           ))}
         </div>
 
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          className="hidden"
-          disabled={!ossConfigured || uploading}
-          onChange={(e) => e.target.files && handleUpload(e.target.files)}
-        />
         <Button
           size="sm"
-          disabled={!ossConfigured || uploading}
-          onClick={() => fileInput.current?.click()}
+          disabled={!ossConfigured}
+          onClick={openUploadByClick}
         >
-          {uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4" />
-          )}
+          <Upload className="h-4 w-4" />
           上传素材
         </Button>
       </div>
@@ -173,8 +220,13 @@ export function MaterialLibrary({
           <CardContent className="flex flex-col items-center justify-center py-20 text-center">
             <FolderOpen className="h-12 w-12 text-muted-foreground/40 mb-4" />
             <p className="text-muted-foreground">
-              {ossConfigured ? "还没有素材，点击右上角上传" : "配置 OSS 后即可上传素材"}
+              还没有素材，点击右上角上传
             </p>
+            {ossConfigured && (
+              <p className="mt-1 text-[11px] text-muted-foreground/70">
+                也可直接 {pasteShortcutLabel()} 粘贴图片，或拖拽到此处
+              </p>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -206,6 +258,22 @@ export function MaterialLibrary({
                   <span>{formatSize(asset.size)}</span>
                   <span>{new Date(asset.createdAt).toLocaleDateString()}</span>
                 </div>
+                {asset.wxSyncStatus === "failed" && (
+                  <div className="flex items-center gap-1">
+                    <Badge variant="warning">公众号同步失败</Badge>
+                    <span
+                      className="text-[10px] text-amber-700/80 truncate"
+                      title={asset.wxSyncError ?? ""}
+                    >
+                      {asset.wxSyncError}
+                    </span>
+                  </div>
+                )}
+                {asset.wxSyncStatus === "success" && (
+                  <div>
+                    <Badge variant="success">已同步公众号</Badge>
+                  </div>
+                )}
                 <div className="flex items-center gap-1 pt-1">
                   <Button
                     size="sm"
@@ -223,6 +291,22 @@ export function MaterialLibrary({
                       </>
                     )}
                   </Button>
+                  {asset.wxSyncStatus === "failed" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-7 p-0 text-amber-600 hover:text-amber-700"
+                      title="重试同步到公众号"
+                      disabled={syncingId === asset.id}
+                      onClick={() => retryWxSync(asset)}
+                    >
+                      {syncingId === asset.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -237,6 +321,19 @@ export function MaterialLibrary({
           ))}
         </div>
       )}
+
+      <UploadDialog
+        ref={dialogRef}
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        initialFiles={uploadInitial}
+        onUploaded={() => {
+          void refresh(filter);
+        }}
+        onAllDone={() => {
+          void refresh(filter);
+        }}
+      />
     </div>
   );
 }

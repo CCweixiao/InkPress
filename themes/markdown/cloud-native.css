@@ -6,8 +6,8 @@
 
 h1 {
   display: block;
-  margin: 2.5em 0 1.35em;
-  padding: 0 0 0.65em;
+  margin: 1.66em 0 0.92em;
+  padding: 0 0 0.72em;
   border-bottom: 1px solid #e7e7e7;
   color: #252525;
   font-size: calc(var(--md-font-size) * 1.42);
@@ -19,7 +19,7 @@ h1 {
 
 h2 {
   display: table;
-  margin: 2.65em auto 1.5em;
+  margin: 1.92em auto 0.95em;
   padding: 0 0.5em 0.45em;
   border-bottom: 6px solid #ebf1dd;
   color: #3f3f3f;
@@ -34,7 +34,7 @@ h2 {
 }
 
 h3 {
-  margin: 1.9em 0 1.05em;
+  margin: 1.42em 0 0.78em;
   padding: 0 0 0 0.75em;
   border-left: 4px solid var(--md-primary-color);
   color: #3f3f3f;
@@ -45,7 +45,7 @@ h3 {
 }
 
 h4 {
-  margin: 1.75em 0 0.9em;
+  margin: 1.15em 0 0.6em;
   color: var(--md-primary-color);
   font-size: calc(var(--md-font-size) * 0.94);
   font-weight: 700;
@@ -53,7 +53,7 @@ h4 {
 }
 
 h5, h6 {
-  margin: 1.55em 0 0.8em;
+  margin: 1.05em 0 0.55em;
   color: #3f3f3f;
   font-size: calc(var(--md-font-size) * 0.9);
   font-weight: 700;
@@ -61,7 +61,7 @@ h5, h6 {
 }
 
 p {
-  margin: 0 0 1.6em;
+  margin: 0 0 1.18em;
   color: #3f3f3f;
   font-size: calc(var(--md-font-size) * 0.94);
   line-height: 1.75;
@@ -86,7 +86,7 @@ a {
 }
 
 blockquote {
-  margin: 1.55em 0 1.7em;
+  margin: 1.05em 0 1.15em;
   padding: 0.85em 1em;
   border: 0;
   border-left: 4px solid var(--md-primary-color);
@@ -103,13 +103,13 @@ blockquote p {
 }
 
 ul, ol {
-  margin: 0.4em 0 1.6em;
+  margin: 0.35em 0 1.16em;
   padding-left: 1.4em;
   color: #3f3f3f;
 }
 
 li {
-  margin: 0 0 0.52em;
+  margin: 0 0 0.34em;
   color: #3f3f3f;
   font-size: calc(var(--md-font-size) * 0.94);
   line-height: 1.75;
@@ -118,7 +118,7 @@ li {
 hr {
   width: 36%;
   height: 1px;
-  margin: 2.4em auto;
+  margin: 2em auto;
   border: 0;
   background: #dedede;
 }
@@ -160,7 +160,7 @@ pre.code__pre,
 img {
   display: block;
   max-width: 100%;
-  margin: 1.55em auto 1.7em;
+  margin: 1.05em auto 1.15em;
   border-radius: 0;
   box-shadow: none;
 }
@@ -175,7 +175,7 @@ figcaption, .md-figcaption {
 }
 
 table {
-  margin: 1.55em 0 1.8em;
+  margin: 1.05em 0 1.2em;
   border: 1px solid #dedede;
   border-radius: 0;
   color: #3f3f3f;

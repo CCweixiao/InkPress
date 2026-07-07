@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { wxUpload, ensureOk } from "@/lib/wechat/client";
+import { ensureWechatCompatibleImage } from "@/lib/wechat/svg-to-png";
 import { prisma } from "@/lib/db";
 import { createHash } from "node:crypto";
 
@@ -19,9 +20,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const blob = new Blob([await file.arrayBuffer()], { type: file.type });
+    // 第二层兜底：SVG → PNG（公众号不支持 SVG）
+    const { buf: wxBuf, contentType: wxType, filename: wxFilename } =
+      await ensureWechatCompatibleImage({
+        buf: await file.arrayBuffer(),
+        contentType: file.type,
+        filename: file.name,
+      });
+    const blob = new Blob([wxBuf], { type: wxType });
     const fd = new FormData();
-    fd.append("media", blob, file.name);
+    fd.append("media", blob, wxFilename);
 
     if (kind === "cover") {
       const data = await wxUpload("/material/add_material", fd, {
