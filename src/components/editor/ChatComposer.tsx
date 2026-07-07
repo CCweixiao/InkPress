@@ -117,6 +117,11 @@ function ChatComposerImpl({
     setSlashIndex(0);
   }, [slashQ]);
 
+  // 数据重载（refresh / 清空 / 发送）时复位历史索引，对齐原 WritingAssistant 行为。
+  useEffect(() => {
+    historyIndex.current = null;
+  }, [inputHistory]);
+
   // 斜杠命令反馈
   const [slashNotice, setSlashNotice] = useState("");
 
@@ -283,7 +288,7 @@ function ChatComposerImpl({
         )}
         <ChatTextarea
           value={input}
-          disabled={disabled}
+          disabled={approvalBlocked}
           onChange={handleInputChange}
           onKeyDown={stableChatKeydown}
           placeholder={placeholder}
