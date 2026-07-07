@@ -6,11 +6,9 @@ import { cn } from "@/lib/utils";
 /** 托盘里的灵感引用 chip（不可编辑，× 可删）。 */
 export function SnippetRefChip({
   displayText,
-  color,
   onDelete,
 }: {
   displayText: string;
-  color: string | null;
   onDelete: () => void;
 }) {
   return (

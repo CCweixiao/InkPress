@@ -1,6 +1,5 @@
 "use client";
 
-import { Fragment } from "react";
 import { Sparkles, Image as ImageIcon, Quote, Link as LinkIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SnippetSearchItem } from "./at-commands";
