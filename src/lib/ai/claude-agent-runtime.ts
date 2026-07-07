@@ -228,6 +228,7 @@ async function runOnce(
     preferredSkillIds: input.preferredSkillIds,
     providerId: input.providerId,
     modelId: input.modelId,
+    lastUserText: prompt,
     emit: (part) => writer.write(part),
   });
 

@@ -28,10 +28,23 @@ export type InkPressSystemPromptInput = {
   codeSource?: CodeSourceReference;
   /** P2：Tavily key 非空时启用 web_search 说明（web_fetch 始终可用）。 */
   tavilyApiKey?: string;
+  /** P1：消息含 {{snippet:id}} 引用灵感素材时注入的融入规则文本（无引用则缺省）。 */
+  snippetsHint?: string;
 };
 
 /** 正文注入预算（超长则截断，避免撑爆上下文；逐字改写长文后续可换更长上下文模型）。 */
 const ARTICLE_BODY_BUDGET = 12_000;
+
+/** P1：消息含 {{snippet:id}} 时注入的灵感融入指令。 */
+export const SNIPPET_FUSION_HINT = `## 灵感素材融入
+用户消息中的 {{snippet:xxx}} 引用了灵感素材，你已通过 load_snippets 加载其完整内容。融入规则：
+1. 保持素材核心观点与事实不变，不歪曲原意。
+2. 表述风格对齐当前文章的语气与用词习惯。
+3. 在文章中自然融入，找到逻辑上最合适的位置，不生硬拼接。
+4. 按 {{snippet:xxx}} 在用户消息中的顺序对应融入文章前后结构。
+5. 图文素材：保留图片引用，调整配文风格。
+6. 引用素材：以 blockquote 形式保留，可调整引入语。
+7. 不要把 {{snippet:id}} 标记回显进正文；加载失败/不存在的素材静默跳过。`;
 
 /** 技术文档子类型 → 中文名（PDC §7.3，补 documentType 现成缺陷）。 */
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
@@ -121,6 +134,9 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
       ]
     : [];
 
+  // P1：灵感素材融入规则（消息含 {{snippet:id}} 时由调用方注入 snippetsHint）。
+  const snippetsSection = input.snippetsHint?.trim() ? ["", input.snippetsHint.trim()] : [];
+
   const tavilyApiKey = input.tavilyApiKey?.trim() ?? "";
   const webSection = [
     "",
@@ -161,6 +177,7 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
     ...codeSection,
     ...webSection,
     ...typeSection,
+    ...snippetsSection,
     ...subagentSection,
     "",
     "## 写作约定",
