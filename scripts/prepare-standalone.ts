@@ -16,6 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { copyStandaloneTree } from "./standalone-copy";
 
 const root = process.cwd();
 const srcStandalone = path.join(root, ".next", "standalone");
@@ -31,9 +32,13 @@ if (!fs.existsSync(srcStandalone)) {
 fs.rmSync(bundle, { recursive: true, force: true });
 
 console.log("生成去符号链接的 standalone bundle…");
-// 核心：dereference=true 把 pnpm 的 .pnpm 符号链接解析为真实文件
-fs.cpSync(srcStandalone, bundle, { recursive: true, dereference: true });
-console.log(`  ✓ standalone → ${path.relative(root, bundle)}（已解析符号链接）`);
+// 核心：复制 standalone。Windows 上使用 fallback，避免 fs.cpSync(dereference=true) 触发崩溃（0xC0000409）
+const materializedSymlinks = copyStandaloneTree(srcStandalone, bundle);
+const copyDetail =
+  process.platform === "win32" && materializedSymlinks > 0
+    ? `（Windows fallback：物化 ${materializedSymlinks} 处符号链接）`
+    : "（已解析符号链接）";
+console.log(`  ✓ standalone → ${path.relative(root, bundle)}${copyDetail}`);
 
 // electron-builder 会从 extraResources 中剔除名为 node_modules 的目录（误判为 app 依赖）。
 // 将其重命名为 app_modules，运行时由 Electron 主进程通过 NODE_PATH 指向它。
