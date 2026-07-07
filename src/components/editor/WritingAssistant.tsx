@@ -2321,6 +2321,14 @@ export function WritingAssistant({
         onSend={({ text, snippetRefs, forceSkillIds }) => {
           if (snippetRefs.length) {
             const { message } = serializeComposer(text, snippetRefs);
+            // fire-and-forget：记录被引用素材的 usageCount++（@面板按热度排序的依据），不阻塞发送、失败静默。
+            void Promise.all(
+              snippetRefs.map((id) =>
+                fetch(`/api/snippets/${id}/usage`, { method: "POST" }).catch(
+                  () => undefined
+                )
+              )
+            );
             return sendText(text, forceSkillIds, message);
           }
           return sendText(text, forceSkillIds);
