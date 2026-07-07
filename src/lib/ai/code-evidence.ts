@@ -35,6 +35,47 @@ export type CodeRelation = {
   evidence: SourceEvidence;
 };
 
+export type CodeGraphModule = {
+  id: string;
+  name: string;
+  pathPrefix: string;
+  language: string;
+  fileCount: number;
+  symbolCount: number;
+  inboundImports: number;
+  outboundImports: number;
+  internalCalls: number;
+  externalCalls: number;
+  responsibilities: string[];
+  entrySymbols: SymbolEvidence[];
+  topSymbols: SymbolEvidence[];
+  dependencies: Array<{
+    moduleId: string;
+    pathPrefix: string;
+    count: number;
+  }>;
+  dependents: Array<{
+    moduleId: string;
+    pathPrefix: string;
+    count: number;
+  }>;
+  evidence: SourceEvidence[];
+};
+
+export type ProjectLanguageStat = {
+  language: string;
+  files: number;
+  bytes: number;
+};
+
+export type ProjectEdgeIndex = {
+  callsByFrom: Record<string, number[]>;
+  callsByTo: Record<string, number[]>;
+  importsByFrom: Record<string, number[]>;
+  importsByTo: Record<string, number[]>;
+  edgesByPath: Record<string, number[]>;
+};
+
 export type CallFlow = {
   name: string;
   steps: Array<{
@@ -58,6 +99,19 @@ export type CodeEvidencePackage = {
   openQuestions: string[];
   filesRead: string[];
   truncated: boolean;
+  mode?: "agent" | "fallback-index";
+  indexStats?: {
+    files: number;
+    symbols: number;
+    edges: number;
+    modules: number;
+    languages: ProjectLanguageStat[];
+    parseErrors: number;
+    indexTruncated: boolean;
+    evidenceSymbols: number;
+    evidenceEdges: number;
+    evidenceTruncated: boolean;
+  };
 };
 
 export type ProjectIndex = {
@@ -76,5 +130,9 @@ export type ProjectIndex = {
   symbols: SymbolEvidence[];
   edges: CodeRelation[];
   parseErrors: Array<{ path: string; message: string }>;
+  modules?: CodeGraphModule[];
+  languageStats?: ProjectLanguageStat[];
+  edgeIndex?: ProjectEdgeIndex;
+  buildMode?: "fast" | "deep";
   truncated: boolean;
 };

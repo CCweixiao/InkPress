@@ -1,11 +1,9 @@
 import matter from "front-matter";
-import juice from "juice";
 import { JSDOM } from "jsdom";
-import { renderMarkdown } from "@/lib/markdown/renderer";
-import {
-  resolveCssVariables,
-  readCodeThemeCss,
-} from "@/lib/themes/loader";
+import { renderInlineHtml } from "./render-inline";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("convert.wechat");
 
 export type ConvertThemeInput = {
   cssContent: string;
@@ -13,9 +11,16 @@ export type ConvertThemeInput = {
   primaryColor: string;
 };
 
+/** 单张图片上传失败的记录（url + 原因），供上层向用户回显 */
+export type FailedImage = {
+  url: string;
+  reason: string;
+};
+
 export type ConvertResult = {
   html: string; // 微信安全 HTML（全内联 style）
   title: string; // 从 front-matter 提取的标题（可选）
+  failedImages: FailedImage[]; // 上传失败的图片（已跳过替换，原外链保留 → 公众号会因防盗链裂图）
 };
 
 /** 微信公众号正文图片上传器（正文图必须走 uploadimg 换 wx_src） */
@@ -24,15 +29,13 @@ export type ImageUploader = (
 ) => Promise<string | null>;
 
 /**
- * Markdown → 公众号 inline HTML 全流水线（8 步）
+ * Markdown → 公众号 inline HTML 全流水线
  *
- * 1. 剥离 front-matter
- * 2. 图片 URL 预处理（外链 → wx_src）
- * 3. markdown-it 渲染（含 hljs/katex/footnote/task-lists）
- * 4. 拼装：<div id="nice"> + 4 段 <style>（基础/主题/代码/字体）
- * 5. 解析 CSS 变量 var(--md-*)
- * 6. juice 内联全部 CSS 到 style 属性
- * 7. 微信专项清洗（script/style 残留、锚点链接、列表兼容、img 尺寸、首尾空 p）
+ * 1-2.  剥 front-matter + 图片 URL 预处理（外链 → wx_src）
+ * 3-6.  renderInlineHtml 通用前置：markdown-it 渲染 + 拼装 <div id="nice">
+ *       + 4 段 <style> + 解析 CSS 变量 + juice 全内联（见 render-inline.ts）
+ * 7.    微信专项 finalize（finalizeForWeChat）：删 <style> 残留、锚点清理、
+ *       列表 section 化、img 尺寸内联、首尾空 p 占位
  */
 export async function convertToWeChat(
   markdown: string,
@@ -44,51 +47,41 @@ export async function convertToWeChat(
   const body = fm.body || markdown;
   const fmTitle = typeof fm.attributes?.title === "string" ? fm.attributes.title : "";
 
-  // 2. 图片 URL 预处理
+  // 2. 图片 URL 预处理（外链 → wx_src，失败保留原 URL 并记录）
   let processedMd = body;
+  let failedImages: FailedImage[] = [];
   if (options.uploadImage) {
-    processedMd = await replaceImageUrls(body, options.uploadImage);
+    const r = await replaceImageUrls(body, options.uploadImage);
+    processedMd = r.md;
+    failedImages = r.failed;
   }
 
-  // 3. markdown-it 渲染
-  const innerHtml = renderMarkdown(processedMd);
+  // 3-6. 通用渲染（renderInlineHtml 内部会再剥一次 front-matter；
+  //      processedMd 已无 fm 故为 no-op；返回的 title 为空，沿用上面 fmTitle）
+  const { html: inlined } = await renderInlineHtml(processedMd, theme);
 
-  // 4. 拼装 + 5. 解析变量
-  const themeCss = resolveCssVariables(theme.cssContent, theme.primaryColor);
-  const codeCss = await readCodeThemeCss(theme.codeTheme);
-  const fontCss = `*{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}`;
+  // 7. 微信专项 finalize（基于 jsdom）
+  const cleaned = finalizeForWeChat(inlined, theme.primaryColor);
 
-  const wrappedHtml = `
-    <div id="nice">
-      <style id="basic-theme">${BASE_CSS}</style>
-      <style id="markdown-theme">${themeCss}</style>
-      <style id="code-theme">${codeCss}</style>
-      <style id="font-theme">${fontCss}</style>
-      ${innerHtml}
-    </div>
-  `;
-
-  // 6. juice 内联
-  const inlined = juice(wrappedHtml, {
-    inlinePseudoElements: true,
-    preserveImportant: true,
-    resolveCSSVariables: false,
-  });
-
-  // 7. 微信专项清洗（基于 jsdom）
-  const cleaned = cleanForWeChat(inlined, theme.primaryColor);
-
-  return { html: cleaned, title: fmTitle };
+  return { html: cleaned, title: fmTitle, failedImages };
 }
 
-/** 提取所有 ![](url) 并替换为微信素材 URL（并发上传，带限流） */
+/**
+ * 提取所有 ![](url) 并替换为微信素材 URL（并发上传，带限流）。
+ *
+ * 返回替换后的 markdown + 失败列表。失败 URL 原样保留在 markdown 中
+ * （公众号会因防盗链裂图），上层据此向用户提示哪些图需要修复。
+ *
+ * 本地伪协议（blob:/data:）无法在服务端下载，直接记为失败跳过上传，
+ * 避免无意义的 fetch 报错噪声。
+ */
 async function replaceImageUrls(
   md: string,
   upload: ImageUploader
-): Promise<string> {
+): Promise<{ md: string; failed: FailedImage[] }> {
   const pattern = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   const matches = [...md.matchAll(pattern)];
-  if (matches.length === 0) return md;
+  if (matches.length === 0) return { md, failed: [] };
 
   // 去重 URL
   const uniqueUrls = [...new Set(matches.map((m) => m[1]))];
@@ -96,55 +89,51 @@ async function replaceImageUrls(
   // 并发上传（最多 3 个同时），避免长文几十张图串行等待
   const CONCURRENCY = 3;
   const urlMap = new Map<string, string>();
+  const failed: FailedImage[] = [];
   for (let i = 0; i < uniqueUrls.length; i += CONCURRENCY) {
     const batch = uniqueUrls.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       batch.map(async (url) => {
-        const wx = await upload(url).catch(() => null);
-        return [url, wx] as const;
+        // 本地伪协议：服务端无法下载，注定失败，跳过上传
+        if (/^(blob:|data:)/i.test(url)) {
+          const reason = "本地占位 URL（blob/data），请重新插入图片";
+          log.warn({ url, reason }, "跳过不可下载的本地图片");
+          return [url, null, reason] as const;
+        }
+        // 失败原因透传：upload 内部已记录详细日志，这里只收口
+        const wx = await upload(url).catch((e) => {
+          const reason = e instanceof Error ? e.message : "上传失败";
+          log.warn({ url, reason }, "正文图上传失败，原外链保留");
+          return null;
+        });
+        return [url, wx, ""] as const;
       })
     );
-    for (const [url, wx] of results) {
-      if (wx) urlMap.set(url, wx);
+    for (const [url, wx, reason] of results) {
+      if (wx) {
+        urlMap.set(url, wx);
+      } else {
+        failed.push({ url, reason: reason || "上传失败" });
+      }
     }
   }
 
-  return md.replace(pattern, (full, url: string) => {
+  if (failed.length > 0) {
+    log.warn(
+      { total: uniqueUrls.length, failed: failed.length, urls: failed.map((f) => f.url) },
+      "部分正文图片上传失败，将以原外链推送（公众号可能因防盗链裂图）"
+    );
+  }
+
+  const replaced = md.replace(pattern, (full, url: string) => {
     const wx = urlMap.get(url);
     return wx ? full.replace(url, wx) : full;
   });
+  return { md: replaced, failed };
 }
 
-/** 微信公众号基础排版下限样式（与 doocs base 类似） */
-const BASE_CSS = `
-#nice{font-size:16px;color:#2b2f36;line-height:1.82;letter-spacing:0.035em;word-break:break-word;text-align:left;}
-#nice p{margin:1.05em 0;}
-#nice a{color:#576b95;text-decoration:none;border-bottom:1px solid #576b95;}
-#nice strong{font-weight:bold;}
-#nice hr{border:none;border-top:1px solid #e5e7eb;margin:2.2em 0;}
-#nice ul,#nice ol{padding-left:1.4em;margin:0.85em 0;}
-#nice li{margin:0.38em 0;line-height:1.75;}
-#nice li>p{margin:0.2em 0;}
-#nice blockquote{margin:1.4em 0;padding:0.9em 1.1em;border-left:4px solid #d1d5db;color:#606875;background:#f8fafc;}
-#nice table{border-collapse:separate;border-spacing:0;width:100%;margin:1.5em 0;display:table;overflow:hidden;}
-#nice th,#nice td{border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:0.65em 0.8em;text-align:left;}
-#nice th{background:#f6f8fa;font-weight:600;}
-#nice img{display:block;max-width:100%;height:auto;margin:1.5em auto;}
-#nice .code-block{display:block;margin:1.5em 0;border-radius:10px;overflow:hidden;background:#0d1117;box-shadow:0 8px 24px rgba(15,23,42,.14);}
-#nice .code__header{display:flex;align-items:center;justify-content:space-between;height:34px;padding:0 14px;background:#161b22;border-bottom:1px solid rgba(255,255,255,.08);}
-#nice .code__dots{display:inline-block;line-height:0;}
-#nice .code__dots i{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%;background:#ff5f57;}
-#nice .code__dots i:nth-child(2){background:#febc2e;}
-#nice .code__dots i:nth-child(3){background:#28c840;}
-#nice .code__lang{font-size:10px;line-height:1;color:#8b949e;letter-spacing:.12em;font-weight:600;}
-#nice pre{margin:0;padding:1.05em 1.2em 1.2em;border-radius:0;overflow-x:auto;font-size:13px;line-height:1.72;letter-spacing:0;}
-#nice code{font-family:Menlo,Monaco,Consolas,monospace;}
-#nice pre code{background:none;padding:0;}
-#nice .codespan{padding:.15em .42em;border-radius:4px;font-size:.88em;letter-spacing:0;word-break:break-all;}
-`;
-
-/** 微信专项清洗 */
-function cleanForWeChat(html: string, primaryColor: string): string {
+/** 微信专项 finalize（基于 jsdom）。导出供电台注册表 wechat 渠道复用。 */
+export function finalizeForWeChat(html: string, primaryColor: string): string {
   const dom = new JSDOM(html);
   const doc = dom.window.document;
   const root = doc.getElementById("nice") ?? doc.body;
@@ -175,6 +164,9 @@ function cleanForWeChat(html: string, primaryColor: string): string {
     if (extra) img.setAttribute("style", `${existing};${extra}`.replace(/^;/, ""));
   });
 
+  normalizeImageRowsForWeChat(root);
+  normalizeHorizontalRulesForWeChat(root);
+
   // 微信会重写 ul / ol / li，原生 marker 在嵌套列表、松散列表中很容易变成
   // 独立空圆点。发布前改为纯 section + 文本 marker，不再依赖平台列表样式。
   normalizeListsForWeChat(root, primaryColor);
@@ -186,6 +178,101 @@ function cleanForWeChat(html: string, primaryColor: string): string {
   const placeholder =
     '<p style="font-size:0;line-height:0;margin:0;visibility:hidden;">&nbsp;</p>';
   return placeholder + cleaned + placeholder;
+}
+
+function normalizeHorizontalRulesForWeChat(root: Element): void {
+  root.querySelectorAll("hr").forEach((hr: Element) => {
+    hr.setAttribute(
+      "style",
+      mergeInlineStyle(hr.getAttribute("style"), [
+        "width:33.333%",
+        "margin-left:auto",
+        "margin-right:auto",
+      ])
+    );
+  });
+}
+
+function normalizeImageRowsForWeChat(root: Element): void {
+  const paragraphs = Array.from(root.querySelectorAll("p"));
+
+  for (const paragraph of paragraphs) {
+    const images = Array.from(paragraph.children).filter(
+      (child) => child.tagName.toLowerCase() === "img"
+    );
+    if (images.length < 2 || !isImageOnlyParagraph(paragraph)) continue;
+
+    const doc = paragraph.ownerDocument;
+    const row = doc.createElement("section");
+    row.setAttribute("data-wx-image-row", "true");
+    row.setAttribute(
+      "style",
+      [
+        "display:table",
+        "width:100%",
+        "table-layout:fixed",
+        "border-collapse:separate",
+        "border-spacing:8px 0",
+        "margin:1.05em 0",
+      ].join(";")
+    );
+
+    images.forEach((image) => {
+      const cell = doc.createElement("section");
+      cell.setAttribute(
+        "style",
+        [
+          "display:table-cell",
+          "width:" + (100 / images.length).toFixed(4) + "%",
+          "vertical-align:top",
+        ].join(";")
+      );
+      image.setAttribute(
+        "style",
+        mergeInlineStyle(image.getAttribute("style"), [
+          "display:block",
+          "width:100%",
+          "max-width:100%",
+          "height:auto",
+          "margin:0",
+          "box-sizing:border-box",
+        ])
+      );
+      cell.appendChild(image);
+      row.appendChild(cell);
+    });
+
+    paragraph.replaceWith(row);
+  }
+}
+
+function isImageOnlyParagraph(paragraph: Element): boolean {
+  return Array.from(paragraph.childNodes).every((node) => {
+    if (node.nodeType === node.TEXT_NODE) {
+      return (node.textContent ?? "").trim() === "";
+    }
+    if (node.nodeType !== node.ELEMENT_NODE) return false;
+    const tagName = (node as Element).tagName.toLowerCase();
+    return tagName === "img" || tagName === "br";
+  });
+}
+
+function mergeInlineStyle(
+  existing: string | null,
+  additions: string[]
+): string {
+  const rules = new Map<string, string>();
+  for (const declaration of (existing ?? "").split(";")) {
+    const [property, ...valueParts] = declaration.split(":");
+    const value = valueParts.join(":").trim();
+    if (property?.trim() && value) rules.set(property.trim(), value);
+  }
+  for (const declaration of additions) {
+    const [property, ...valueParts] = declaration.split(":");
+    const value = valueParts.join(":").trim();
+    if (property?.trim() && value) rules.set(property.trim(), value);
+  }
+  return Array.from(rules, ([property, value]) => `${property}:${value}`).join(";");
 }
 
 /**

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { decryptConfigValueForUse } from "@/lib/config-secrets";
 
 export const AGENT_CONFIG_KEY = "inkpress.agent";
 
@@ -10,6 +11,7 @@ export type AgentProjectConfig = {
 
 export type AgentConfig = {
   tavilyApiKey: string;
+  githubToken?: string;
   projects: AgentProjectConfig[];
   maxSteps: number;
   contextBudgetTokens: number;
@@ -17,6 +19,7 @@ export type AgentConfig = {
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   tavilyApiKey: "",
+  githubToken: "",
   projects: [],
   maxSteps: 12,
   contextBudgetTokens: 32_000,
@@ -57,6 +60,8 @@ export function parseAgentConfig(value?: string | null): AgentConfig {
   return {
     tavilyApiKey:
       typeof raw.tavilyApiKey === "string" ? raw.tavilyApiKey.trim() : "",
+    githubToken:
+      typeof raw.githubToken === "string" ? raw.githubToken.trim() : "",
     projects,
     maxSteps: Math.min(20, Math.max(3, requestedSteps)),
     contextBudgetTokens: Math.min(200_000, Math.max(8_000, requestedBudget)),
@@ -67,5 +72,5 @@ export async function getAgentConfig(): Promise<AgentConfig> {
   const row = await prisma.systemConfig.findUnique({
     where: { key: AGENT_CONFIG_KEY },
   });
-  return parseAgentConfig(row?.value);
+  return parseAgentConfig(decryptConfigValueForUse(AGENT_CONFIG_KEY, row?.value));
 }

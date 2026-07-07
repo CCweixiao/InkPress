@@ -7,22 +7,50 @@ import {
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
-  readContent,
+  readContentAt,
   readTechnicalDocumentContent,
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import {
+  runClaudeAgentRuntime,
+  readUsageFromError,
+  readSessionFromError,
+} from "@/lib/ai/claude-agent-runtime";
+import { chooseLlmConfig } from "@/lib/ai/llm-config";
+import { upsertUsageTurn } from "@/lib/ai/usage-ledger";
+import { getArticleProfile } from "@/lib/ai/article-type-profile";
+import { createAgentEventWriter } from "@/lib/ai/agent-event-writer";
+import {
+  findAgentSession,
   getOrCreateAgentSession,
   loadAgentMessages,
-  saveAgentMessages,
+  mergeAndPersistMessages,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
-import { createWritingAgent } from "@/lib/ai/writing-agent";
-import { getModel } from "@/lib/ai/provider";
-import { listSkills, loadSkill } from "@/lib/ai/skills";
-import { routeAgentRequest } from "@/lib/ai/agent-orchestrator";
-import { prepareAgentContext } from "@/lib/ai/context-manager";
-import { parseTags } from "@/lib/asset";
+import { abortApproval } from "@/lib/ai/pending-approvals";
+import { classifyError } from "@/lib/ai/error-classify";
+import {
+  CAPABILITY_REPLY,
+  CLARIFY_REPLY,
+  isAccidentalInput,
+  isCapabilityQuestion,
+} from "@/lib/ai/capability-reply";
+import {
+  EMPTY_ARTICLE_REPLY,
+  referencesCurrentArticle,
+} from "@/lib/ai/current-article";
+import { estimateTokens } from "@/lib/ai/context-manager";
+import {
+  codeSourceProject,
+  createOrReuseCodeSourceGrant,
+  extractCodeSourceCandidate,
+  type CodeSourceReference,
+} from "@/lib/ai/code-source";
+import { moduleLogger } from "@/lib/logger";
+import { withApiLog } from "@/lib/api-log";
+import { requireLicenseForApi } from "@/lib/license/guard";
+
+const log = moduleLogger("ai.chat");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +68,10 @@ const postSchema = z
     providerId: z.string().optional().nullable(),
     modelId: z.string().optional().nullable(),
     messages: z.array(z.unknown()).min(1),
+    // 斜杠命令 /<skill> 强制建议 Claude Agent 优先加载的 Skill（最多 4 个）。
+    forceSkillIds: z.array(z.string().min(1)).max(4).optional(),
+    // 实时编辑区正文：权威来源，覆盖 DB 读取，避免 flush 时序导致 Agent 拿到空/旧正文。
+    currentMarkdown: z.string().nullable().optional(),
   })
   .refine((value) => value.target || value.articleId, {
     message: "缺少对话目标",
@@ -52,6 +84,7 @@ type LoadedTarget = {
   digest?: string;
   documentType?: string;
   snapshotHash?: string;
+  profileId?: string | null;
 };
 
 function normalizeTarget(input: {
@@ -69,9 +102,10 @@ async function loadTarget(target: AgentTarget): Promise<LoadedTarget | null> {
       target,
       title: article.title,
       markdown: article.contentPath
-        ? await readContent(article.id)
+        ? await readContentAt(article.contentPath)
         : article.contentMd,
       digest: article.digest ?? "",
+      profileId: article.profileId,
     };
   }
   const document = await prisma.technicalDocument.findUnique({
@@ -111,17 +145,23 @@ function lastUserText(messages: UIMessage[]) {
     .trim();
 }
 
+/** 用户取消 / 断连触发的中止：不是真正的错误，单独识别以免当作异常展示或记错误日志。 */
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
+}
+
 function errorMessage(error: unknown) {
-  const message =
-    error instanceof Error ? error.message : "写作助手执行失败，请稍后重试。";
-  if (
-    /tool.?call|function.?call|tools?.+(unsupported|not supported)|不支持.+工具/i.test(
-      message
-    )
-  ) {
-    return "当前模型不支持 Agent 所需的工具调用，请切换到支持 Tool Calling 的模型。";
-  }
-  return message;
+  // 中止（用户取消/断连）：返回中性文案。此时客户端通常已断开，不会展示；仅用于流内收尾。
+  if (isAbortError(error)) return "对话已取消。";
+  // 统一委托 classifyError（前后端共享同一份归类规则，含厂商中文限流文案与 statusCode 探测）。
+  // 注意：streamText 的 onError 返回值会被忽略；真正面向用户的归类展示由前端
+  // AgentErrorBlock 对 useChat 转发的 error 调用同一份 classifyError 完成。
+  return classifyError(error).label;
 }
 
 function writeStep(
@@ -141,6 +181,44 @@ function writeStep(
   } as never);
 }
 
+function looksLikeGitHistoryRequest(text: string): boolean {
+  return /git\s*(?:diff|log)|commit|提交(?:记录|历史)?|版本区间|更新日志|变更记录|release\s*note|pr\b|pull\s*request|v?\d+(?:\.\d+)+\s*(?:到|至|~|～|→|\.\.)\s*v?\d+(?:\.\d+)+/i.test(
+    text
+  );
+}
+
+function estimateUiMessagesTokens(messages: UIMessage[]): number {
+  return messages.reduce((total, message) => {
+    const text = (message.parts ?? [])
+      .map((part) => {
+        const p = part as Record<string, unknown>;
+        if (p.type === "text" && typeof p.text === "string") return p.text;
+        if (
+          (typeof p.type === "string" && p.type.startsWith("tool-")) ||
+          p.type === "dynamic-tool"
+        ) {
+          return ["input", "output"]
+            .map((key) => {
+              const value = p[key];
+              if (typeof value === "string") return value;
+              if (value && typeof value === "object") {
+                try {
+                  return JSON.stringify(value);
+                } catch {
+                  return "";
+                }
+              }
+              return "";
+            })
+            .join("\n");
+        }
+        return "";
+      })
+      .join("\n");
+    return total + estimateTokens(text);
+  }, 0);
+}
+
 export async function GET(req: NextRequest) {
   const target = targetFromQuery(req);
   if (!target) {
@@ -148,8 +226,23 @@ export async function GET(req: NextRequest) {
   }
   const loaded = await loadTarget(target);
   if (!loaded) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
-  const session = await getOrCreateAgentSession(target);
-  const messages = await loadAgentMessages(session.id);
+  const session = await findAgentSession(target);
+  const search = new URL(req.url).searchParams;
+  const beforeRaw = search.get("before");
+  const beforePosition =
+    beforeRaw && Number.isFinite(Number(beforeRaw))
+      ? Number(beforeRaw)
+      : undefined;
+  const limitRaw = search.get("limit");
+  const limit =
+    limitRaw && Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : undefined;
+  const page = session
+    ? await loadAgentMessages(session.id, { limit, beforePosition })
+    : { messages: [], hasMore: false, oldestPosition: null };
+  // 分页追加请求（带 before）：只返回消息页，避免重复拉 proposals/session/userInputs
+  if (beforePosition !== undefined) {
+    return NextResponse.json(page);
+  }
   const proposals =
     target.kind === "article"
       ? await prisma.agentArticleProposal.findMany({
@@ -178,17 +271,49 @@ export async function GET(req: NextRequest) {
             decidedAt: true,
           },
         });
+  // 用户历史输入缓存（仅取 user 消息文本，供对话框上下键导航）。
+  // 限最近 50 条（position 倒序取后再翻正）：上下键历史足够用，避免长会话每次 refresh 全量扫描。
+  const userMessages = session
+    ? (
+        await prisma.agentChatMessage.findMany({
+          where: { sessionId: session.id, role: "user" },
+          orderBy: { position: "desc" },
+          take: 50,
+          select: { partsJson: true },
+        })
+      ).reverse()
+    : [];
+  const userInputs = userMessages.flatMap((row) => {
+    try {
+      const parts = JSON.parse(row.partsJson) as Array<{
+        type?: string;
+        text?: unknown;
+      }>;
+      return parts
+        .filter((p) => p.type === "text")
+        .map((p) => (typeof p.text === "string" ? p.text : ""))
+        .filter((t) => t.trim() !== "");
+    } catch {
+      return [];
+    }
+  });
+
   return NextResponse.json({
     session,
-    messages,
+    messages: page.messages,
+    hasMore: page.hasMore,
+    oldestPosition: page.oldestPosition,
     proposals: proposals.map((proposal) => ({
       ...proposal,
       proposalKind: target.kind,
     })),
+    userInputs,
   });
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => {
+  const licenseBlocked = await requireLicenseForApi();
+  if (licenseBlocked) return licenseBlocked;
   const parsed = postSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "Agent 请求参数无效。" }, { status: 400 });
@@ -197,232 +322,583 @@ export async function POST(req: NextRequest) {
   const loaded = await loadTarget(target);
   if (!loaded) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
 
+  // 权威正文：优先用前端实时编辑区内容（currentMarkdown），避免 flush 时序导致读取到空/旧正文，
+  // 也避免「当前文章从上下文消失」。前端未传（如个别调用方）时回落到 DB 读取。
+  const articleMarkdown =
+    typeof parsed.data.currentMarkdown === "string"
+      ? parsed.data.currentMarkdown
+      : (loaded.markdown ?? "");
+
   const uiMessages = parsed.data.messages as UIMessage[];
+  const userText = lastUserText(uiMessages);
+  const referencesArticle = referencesCurrentArticle(userText);
   const session = await getOrCreateAgentSession(target);
   const config = await getAgentConfig();
-  await saveAgentMessages(session.id, uiMessages);
+  // 合并前端（可能因 remount/分页截断）与 DB 历史，避免 delete-all-recreate 永久丢失旧消息。
+  const mergedMessages = await mergeAndPersistMessages(session.id, uiMessages);
 
-  try {
-    const { model } = await getModel(parsed.data.providerId, parsed.data.modelId);
-    const skills = await listSkills();
-    const route = await routeAgentRequest({
-      model,
-      message: lastUserText(uiMessages),
-      skills,
-      config,
-      previousProjectId: session.selectedProjectId,
-      targetKind: target.kind,
-    });
-    const loadedSkills = await Promise.all(
-      route.skillIds.map((id) => loadSkill(id))
-    );
-    const assets =
-      target.kind === "article" && route.needsAssets
-        ? await prisma.asset.findMany({
-            where: { articleId: target.id, trashed: false },
-            select: {
-              id: true,
-              name: true,
-              url: true,
-              kind: true,
-              description: true,
-              tagsJson: true,
-            },
-            orderBy: { createdAt: "desc" },
-            take: 50,
-          })
-        : [];
-    const assetCatalog = assets.map((asset) => ({
-      id: asset.id,
-      name: asset.name,
-      url: asset.url,
-      kind: asset.kind,
-      description: asset.description,
-      tags: parseTags(asset.tagsJson),
-    }));
-
-    await prisma.agentChatSession.update({
-      where: { id: session.id },
-      data: {
-        selectedProjectId: route.project?.id ?? session.selectedProjectId,
-        providerId: parsed.data.providerId ?? null,
-        modelId: parsed.data.modelId ?? null,
-      },
-    });
-
-    const context = await prepareAgentContext({
-      model,
+  log.info(
+    {
       sessionId: session.id,
-      sessionSummary: session.summary,
-      summaryUpToPosition: session.summaryUpToPosition,
-      uiMessages,
-      articleText: `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${loaded.markdown}`,
-      contextBudgetTokens: config.contextBudgetTokens,
-    });
+      targetKind: target.kind,
+      targetId: target.id,
+      messages: mergedMessages.length,
+      providerId: parsed.data.providerId ?? null,
+      modelId: parsed.data.modelId ?? null,
+    },
+    "Agent 对话开始"
+  );
 
-    let turnUsage:
-      | {
-          inputTokens: number;
-          outputTokens: number;
-          reasoningTokens: number;
-          totalTokens: number;
-        }
-      | undefined;
+  // 能力/身份介绍类询问：本地短路，直接回精简能力清单。
+  // 省 token、零延迟、文案稳定；未命中则交给 Claude Agent 自行判断。
+  if (isCapabilityQuestion(userText)) {
     const stream = createUIMessageStream<UIMessage>({
-      originalMessages: uiMessages,
+      originalMessages: mergedMessages,
       onFinish: async ({ messages }) => {
-        const persisted = messages.map((message, index) => {
-          if (
-            !turnUsage ||
-            message.role !== "assistant" ||
-            messages.slice(index + 1).some((item) => item.role === "assistant")
-          ) {
-            return message;
-          }
-          return {
-            ...message,
-            metadata: {
-              ...((message as { metadata?: Record<string, unknown> }).metadata ??
-                {}),
-              usage: turnUsage,
-            },
-          };
-        });
-        await saveAgentMessages(session.id, persisted);
+        try {
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, messages);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
       },
       onError: errorMessage,
       execute: async ({ writer }) => {
-        writeStep(writer, {
-          id: "intent",
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "inkpress-runtime",
+        });
+        writeStep(ew, {
+          id: "capability",
           kind: "intent",
-          title: "识别任务意图",
-          detail: `${route.intent} · ${route.rationale}`,
+          title: "能力介绍",
+          detail: "列出 Agent 可提供的能力范围",
         });
-        writeStep(writer, {
-          id: "project",
-          kind: "project",
-          title: "识别本地项目",
-          detail: route.project
-            ? `已选择 ${route.project.name}（严格只读）`
-            : route.needsProject
-              ? "需要确认项目"
-              : "本轮无需读取本地项目",
+        const textId = crypto.randomUUID();
+        ew.write({ type: "text-start", id: textId } as never);
+        ew.write({
+          type: "text-delta",
+          id: textId,
+          delta: CAPABILITY_REPLY,
+        } as never);
+        ew.write({ type: "text-end", id: textId } as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  // 误触/乱码输入（纯符号、空内容、误触特殊字符）：本地短路，反问引导补充。
+  if (isAccidentalInput(userText)) {
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: mergedMessages,
+      onFinish: async ({ messages }) => {
+        try {
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, messages);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
+      },
+      onError: errorMessage,
+      execute: async ({ writer }) => {
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "inkpress-runtime",
         });
-        writeStep(writer, {
-          id: "skills",
-          kind: "skill",
-          title: "加载专业 Skill",
-          detail: loadedSkills.length
-            ? loadedSkills.map((skill) => skill.name).join("、")
-            : "本轮无需额外 Skill",
+        writeStep(ew, {
+          id: "clarify",
+          kind: "intent",
+          title: "需要补充信息",
+          detail: "输入不够明确，引导用户补充需求细节",
         });
-        if (target.kind === "article") {
-          writeStep(writer, {
-            id: "assets",
-            kind: "assets",
-            title: "扫描文章素材",
-            detail: route.needsAssets
-              ? `已注入 ${assetCatalog.length} 项素材`
-              : "本轮无需扫描素材",
+        const textId = crypto.randomUUID();
+        ew.write({ type: "text-start", id: textId } as never);
+        ew.write({
+          type: "text-delta",
+          id: textId,
+          delta: CLARIFY_REPLY,
+        } as never);
+        ew.write({ type: "text-end", id: textId } as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  // 用户指代「当前文章/本文」但实时正文为空：直接明确提示，不让 Agent 反问「文章在哪里」或臆断。
+  // 兼顾两种成因（编辑区确实空 / 内容尚未同步过来），都引导用户先写入或粘贴。
+  if (referencesArticle && articleMarkdown.trim() === "") {
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: mergedMessages,
+      onFinish: async ({ messages }) => {
+        try {
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, messages);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
+      },
+      onError: errorMessage,
+      execute: async ({ writer }) => {
+        const ew = createAgentEventWriter(writer, {
+          turnId: crypto.randomUUID(),
+          source: "inkpress-runtime",
+        });
+        writeStep(ew, {
+          id: "empty-article",
+          kind: "intent",
+          title: "当前文章为空",
+          detail: "编辑区还没有可处理的正文，引导用户先写入或粘贴",
+        });
+        const textId = crypto.randomUUID();
+        ew.write({ type: "text-start", id: textId } as never);
+        ew.write({
+          type: "text-delta",
+          id: textId,
+          delta: EMPTY_ARTICLE_REPLY,
+        } as never);
+        ew.write({ type: "text-end", id: textId } as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  let turnUsage:
+    | {
+        inputTokens: number;
+        outputTokens: number;
+        reasoningTokens: number;
+        totalTokens: number;
+        cacheReadInputTokens?: number;
+        cacheCreationInputTokens?: number;
+        // P1.5：附加估算成本与状态，供聊天窗口 token chip 渲染（partial/error 可识别）。
+        costUsd?: number;
+        status?: "completed" | "partial" | "error";
+        source?: "sdk-result" | "step-fallback";
+      }
+    | undefined;
+  try {
+    // 先开流再做重活：路由（LLM）与代码源解析（含可能的 git clone/拉取历史）都放进 execute 内，
+    // 避免在打开流之前同步阻塞导致长 TTFB 与「假死」；客户端断连时已发送的步骤也得以保留。
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: mergedMessages,
+      onFinish: async ({ messages }) => {
+        try {
+          const persisted = messages.map((message, index) => {
+            if (
+              !turnUsage ||
+              message.role !== "assistant" ||
+              messages.slice(index + 1).some((item) => item.role === "assistant")
+            ) {
+              return message;
+            }
+            return {
+              ...message,
+              metadata: {
+                ...((message as { metadata?: Record<string, unknown> }).metadata ??
+                  {}),
+                usage: turnUsage,
+              },
+            };
+          });
+          // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
+          await mergeAndPersistMessages(session.id, persisted);
+        } catch (error) {
+          // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
+          log.error(
+            { err: error, sessionId: session.id },
+            "onFinish 持久化失败（下次发送可自愈）"
+          );
+        }
+      },
+      onError: errorMessage,
+      execute: async ({ writer }) => {
+        // P0：包一层 seq 注入器，为本 turn 的 data/tool part 打上单调 seq + turnId + source。
+        // 下游 runtime/adapter/MCP/canUseTool/工具 execute 都汇流到 ew，保证无断号。
+        // P1.5：turnId 同时作为 AgentUsageTurn 的应用级轮次键（按 (sessionId, turnId) upsert）。
+        const turnId = crypto.randomUUID();
+        const turnStartedAt = new Date();
+        const ew = createAgentEventWriter(writer, {
+          turnId,
+          source: "claude-agent-sdk",
+        });
+        const messageText = lastUserText(mergedMessages);
+        const articleBodyTokens = estimateTokens(
+          `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
+        );
+        const articleBodyTooLarge = articleBodyTokens > config.contextBudgetTokens * 0.65;
+        // P3：斜杠命令 forceSkillIds 在前 + 文章 profile 的 defaultSkills 在后，合并去重。
+        const profile = getArticleProfile(loaded.profileId);
+        const preferredSkillIds = Array.from(
+          new Set([...(parsed.data.forceSkillIds ?? []), ...profile.defaultSkills])
+        ).slice(0, 8);
+        const needsGitHistory = looksLikeGitHistoryRequest(messageText);
+        let codeSource: CodeSourceReference | undefined;
+        let approval:
+          | {
+              id: string;
+              displayName: string;
+              locator: string;
+              approvalToken: string;
+            }
+          | undefined;
+        /** 本地代码源仍待用户授权（含复用 pending grant、无新 token 下发的情况）。 */
+        let awaitingApproval = false;
+        const codeSourceCandidate = extractCodeSourceCandidate(
+          messageText,
+          config.projects
+        );
+
+        if (codeSourceCandidate) {
+          const resolved = await createOrReuseCodeSourceGrant({
+            sessionId: session.id,
+            candidate: codeSourceCandidate,
+          });
+          if (resolved.grant.status === "approved") {
+            const source = await codeSourceProject(resolved.grant.id, config, {
+              historyDepth: needsGitHistory ? 200 : 1,
+            });
+            codeSource = source.source;
+          } else if (resolved.grant.status === "pending") {
+            awaitingApproval = true;
+            if (resolved.approvalToken) {
+              approval = {
+                id: resolved.grant.id,
+                displayName: resolved.grant.displayName,
+                locator: resolved.grant.locator,
+                approvalToken: resolved.approvalToken,
+              };
+            }
+          }
+        } else {
+          const previous = await prisma.codeSourceGrant.findFirst({
+            where: { sessionId: session.id, status: "approved" },
+            orderBy: { lastAccessedAt: "desc" },
+          });
+          if (previous) {
+            const source = await codeSourceProject(previous.id, config, {
+              historyDepth: needsGitHistory ? 200 : 1,
+            });
+            codeSource = source.source;
+          }
+        }
+
+        const context = {
+          estimatedTokens:
+            articleBodyTokens +
+            estimateTokens(session.summary) +
+            estimateUiMessagesTokens(mergedMessages),
+          articleTokens: articleBodyTokens,
+          compressed: false,
+          retainedMessages: mergedMessages.length,
+        };
+        if (codeSourceCandidate) {
+          ew.write({
+            type: "data-code-source-detected",
+            id: "code-source-detected",
+            data: {
+              kind: codeSourceCandidate.kind,
+              displayName: codeSourceCandidate.displayName,
+              locator: codeSourceCandidate.locator,
+            },
+          } as never);
+        }
+        if (approval) {
+          ew.write({
+            type: "data-code-source-approval",
+            id: `code-source-approval-${approval.id}`,
+            data: approval,
+          } as never);
+        } else if (codeSource) {
+          ew.write({
+            type: "data-code-source-ready",
+            id: `code-source-ready-${codeSource.id}`,
+            data: {
+              id: codeSource.id,
+              kind: codeSource.kind,
+              displayName: codeSource.displayName,
+              locator: codeSource.locator,
+              ref: codeSource.ref,
+            },
+          } as never);
+        }
+        // 按需载入正文时，显式提示已注入实时编辑区正文（含字数），让用户确认上下文已就位。
+        if (articleMarkdown.trim() !== "") {
+          writeStep(ew, {
+            id: "current-article",
+            kind: "intent",
+            title: "已载入当前文章",
+            detail: `已注入实时编辑区正文（约 ${articleMarkdown.length.toLocaleString()} 字）`,
+          });
+          if (articleBodyTooLarge) {
+            // 系统提示会截断超长正文；完整跨轮上下文由 Claude Agent SDK session/autocompact 管理。
+            writeStep(ew, {
+              id: "current-article-digest",
+              kind: "intent",
+              title: "正文较长，已按预算截断注入",
+              detail: `当前文章约 ${articleBodyTokens.toLocaleString()} tokens，Claude Agent 会结合会话上下文与工具继续处理`,
+            });
+          }
+        } else if (articleBodyTooLarge) {
+          writeStep(ew, {
+            id: "current-article-digest",
+            kind: "intent",
+            title: "正文较长",
+            detail: `当前文章约 ${articleBodyTokens.toLocaleString()} tokens`,
           });
         }
-        writer.write({
+        ew.write({
           type: "data-context-usage",
           id: "context",
           data: {
             estimatedTokens: context.estimatedTokens,
-            budgetTokens: config.contextBudgetTokens,
             articleTokens: context.articleTokens,
             compressed: context.compressed,
             retainedMessages: context.retainedMessages,
           },
         } as never);
 
-        if (route.ambiguityQuestion) {
-          const textId = crypto.randomUUID();
-          writer.write({ type: "text-start", id: textId } as never);
-          writer.write({
-            type: "text-delta",
-            id: textId,
-            delta: route.ambiguityQuestion,
-          } as never);
-          writer.write({ type: "text-end", id: textId } as never);
+        if (awaitingApproval) {
+          // 授权交互由 data-code-source-approval → CodeSourceApprovalCard 承载；
+          // 复用 pending grant 时不重复下发 part（客户端仍持有首次 token）。
           return;
         }
 
-        const agent = await createWritingAgent({
-          target: {
-            kind: target.kind,
-            id: target.id,
-            title: loaded.title,
-            markdown: loaded.markdown,
-            digest: loaded.digest,
-            documentType: loaded.documentType,
-            snapshotHash: loaded.snapshotHash,
+        const requestedProviderId = parsed.data.providerId ?? null;
+        const requestedModelId = parsed.data.modelId ?? null;
+        const selectedLlm = await chooseLlmConfig(
+          requestedProviderId,
+          requestedModelId
+        );
+        if (!selectedLlm) {
+          throw new Error(
+            "未配置 AI 模型：请在「设置 → 系统配置 → AI 模型」中添加至少一个 Anthropic 兼容供应商并填入 API Key。"
+          );
+        }
+
+        // 跨模型 resume 风险处理：若本轮最终生效的 provider/model 与上一轮不同，
+        // 且已有 SDK 会话，则强制开启新会话（SDK transcript 跨厂商回放有风险）。
+        const newProviderId = selectedLlm.id;
+        const newModelId = selectedLlm.model.id;
+        log.info(
+          {
+            sessionId: session.id,
+            requestedProviderId,
+            requestedModelId,
+            providerId: newProviderId,
+            modelId: newModelId,
           },
-          sessionId: session.id,
-          providerId: parsed.data.providerId ?? undefined,
-          modelId: parsed.data.modelId ?? undefined,
-          project: route.project,
-          config,
-          route,
-          loadedSkills,
-          assetCatalog,
-          conversationSummary: context.summary,
-          onCodeExploreStep: async (step) => {
-            writer.write({
-              type: "data-code-explore-step",
-              id: crypto.randomUUID(),
-              data: { ...step, status: "completed" },
-            } as never);
-          },
-          onCodeEvidence: async (evidence) => {
-            writer.write({
-              type: "data-project-snapshot",
-              id: crypto.randomUUID(),
-              data: {
-                projectId: evidence.projectId,
-                snapshotHash: evidence.snapshotHash,
-                symbols: evidence.symbols.length,
-                edges: evidence.edges.length,
-                truncated: evidence.truncated,
-              },
-            } as never);
-            for (const source of evidence.entryPoints.slice(0, 12)) {
-              writer.write({
-                type: "data-source-evidence",
-                id: crypto.randomUUID(),
-                data: source,
-              } as never);
-            }
-          },
-          onFinishUsage: async (usage) => {
-            turnUsage = usage;
-            await prisma.agentChatSession.update({
-              where: { id: session.id },
-              data: {
-                lastInputTokens: usage.inputTokens,
-                lastOutputTokens: usage.outputTokens,
-                lastReasoningTokens: usage.reasoningTokens,
-                lastTotalTokens: usage.totalTokens,
-              },
-            });
+          "已解析本轮 AI 模型"
+        );
+        const previousProviderId = session.providerId ?? newProviderId;
+        const previousModelId = session.modelId ?? newModelId;
+        const modelChanged =
+          !!session.claudeAgentSessionId &&
+          (previousProviderId !== newProviderId || previousModelId !== newModelId);
+        let effectiveClaudeAgentSessionId =
+          session.claudeAgentSessionId ?? undefined;
+        if (modelChanged) {
+          effectiveClaudeAgentSessionId = undefined;
+          writeStep(ew, {
+            id: "model-switched",
+            kind: "intent",
+            title: "模型已切换，开启新的 Agent 会话",
+            detail: "切换模型后无法回放上一模型的上下文，已自动开启新会话",
+          });
+        }
+
+        await prisma.agentChatSession.update({
+          where: { id: session.id },
+          data: {
+            selectedProjectId: session.selectedProjectId,
+            providerId: newProviderId,
+            modelId: newModelId,
+            ...(modelChanged
+              ? { claudeAgentSessionId: null, claudeAgentStoreKey: null }
+              : {}),
+            // P2 状态机：本轮开跑 → running。若上一轮已落 claudeAgentSessionId，本轮即 resume（PDC §5）。
+            claudeAgentSessionStatus: "running",
+            claudeAgentLastError: null,
+            ...(effectiveClaudeAgentSessionId
+              ? { claudeAgentResumeCount: { increment: 1 } }
+              : {}),
           },
         });
-        const result = await agent.stream({ messages: context.messages });
-        writer.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-            sendSources: true,
-          }) as never
-        );
+
+        try {
+          const outcome = await runClaudeAgentRuntime(
+            {
+              target: {
+                kind: target.kind,
+                id: target.id,
+                title: loaded.title,
+                markdown: articleMarkdown,
+                digest: loaded.digest,
+                documentType: loaded.documentType,
+                snapshotHash: loaded.snapshotHash,
+                profileId: loaded.profileId ?? undefined,
+              },
+              sessionId: session.id,
+              codeSource,
+              claudeAgentSessionId: effectiveClaudeAgentSessionId,
+              preferredSkillIds,
+              providerId: newProviderId,
+              modelId: newModelId,
+              messages: mergedMessages,
+              abortSignal: req.signal,
+            },
+            ew
+          );
+          const completedSessionId =
+            outcome.sessionId ?? effectiveClaudeAgentSessionId ?? null;
+          if (outcome.usage) {
+            turnUsage = {
+              ...outcome.usage,
+              totalTokens: outcome.usageSummary?.totalTokens ?? outcome.usage.totalTokens,
+              cacheReadInputTokens: outcome.usageSummary?.cacheReadInputTokens,
+              cacheCreationInputTokens: outcome.usageSummary?.cacheCreationInputTokens,
+              costUsd: outcome.usageSummary?.costUsd,
+              status: outcome.usageSummary?.status,
+              source: outcome.usageSummary?.source,
+            };
+            ew.write({
+              type: "data-turn-usage",
+              id: "turn-usage",
+              data: turnUsage,
+            } as never);
+          }
+          // 成功结束时无论 SDK 是否返回 usage，都要保存 sessionId/status（PDC §5.1/§7.3）。
+          // last*Tokens 仅作 composer 计量快捷显示，不是历史统计事实源（PDC §12.3）。
+          await prisma.agentChatSession.update({
+            where: { id: session.id },
+            data: {
+              ...(outcome.usage
+                ? {
+                    lastInputTokens: outcome.usage.inputTokens,
+                    lastOutputTokens: outcome.usage.outputTokens,
+                    lastReasoningTokens: outcome.usage.reasoningTokens,
+                    lastTotalTokens: outcome.usage.totalTokens,
+                  }
+                : {}),
+              runtime: "claude-agent",
+              ...(completedSessionId
+                ? { claudeAgentSessionId: completedSessionId }
+                : {}),
+              // P2 状态机：成功 → ready，可继续；清掉中断/错误痕迹。
+              claudeAgentSessionStatus: "ready",
+              claudeAgentLastEventAt: new Date(),
+              claudeAgentLastError: null,
+              claudeAgentInterruptedAt: null,
+            },
+          });
+          // 独立 usage ledger：正常完成也写入（status=completed）。
+          if (outcome.usageSummary) {
+            await upsertUsageTurn(
+              {
+                sessionId: session.id,
+                turnId,
+                targetKind: target.kind,
+                targetId: target.id,
+                providerId: newProviderId,
+                modelId: newModelId,
+                sdkSessionId: completedSessionId,
+                startedAt: turnStartedAt,
+              },
+              outcome.usageSummary
+            ).catch((error) =>
+              log.warn({ err: error, sessionId: session.id }, "AgentUsageTurn 写入失败（不阻断对话）")
+            );
+          }
+        } catch (error) {
+          // 失败/中断轮次：runtime 已把 usage summary + sessionId 挂到 error 上（PDC §7.2/§7.3）。
+          // 即便 result 前 abort（仅收到 system/init），只要有 SDK session id 就落库，保证下一轮可 resume。
+          const summary = readUsageFromError(error);
+          const sdkSessionId =
+            readSessionFromError(error) ?? effectiveClaudeAgentSessionId ?? null;
+          // 状态必须在错误/中断三路都落库；即便 sessionId 与旧值相同，也要从 running 收口到
+          // interrupted/error（PDC §7.3），否则 UI 会误判为仍在运行。
+          await prisma.agentChatSession
+            .update({
+              where: { id: session.id },
+              data: {
+                ...(sdkSessionId ? { claudeAgentSessionId: sdkSessionId } : {}),
+                // P2 状态机：中断 → interrupted（可继续）；错误 → error（可能可继续）。
+                claudeAgentSessionStatus: isAbortError(error)
+                  ? "interrupted"
+                  : "error",
+                claudeAgentLastEventAt: new Date(),
+                ...(isAbortError(error)
+                  ? { claudeAgentInterruptedAt: new Date() }
+                  : { claudeAgentLastError: errorMessage(error) }),
+              },
+            })
+            .catch((writeError) =>
+              log.warn(
+                { err: writeError, sessionId: session.id },
+                sdkSessionId
+                  ? "claudeAgentSessionId 写入失败（不阻断对话）"
+                  : "会话状态写入失败（不阻断对话）"
+              )
+            );
+          if (summary) {
+            // 仍记入 ledger（PDC §12.4：成功、错误 result 都要记录 usage；中断用 step fallback 兜底）。
+            turnUsage = {
+              inputTokens: summary.inputTokens,
+              outputTokens: summary.outputTokens,
+              reasoningTokens: 0,
+              totalTokens: summary.totalTokens,
+              cacheReadInputTokens: summary.cacheReadInputTokens,
+              cacheCreationInputTokens: summary.cacheCreationInputTokens,
+              costUsd: summary.costUsd,
+              status: summary.status,
+              source: summary.source,
+            };
+            ew.write({
+              type: "data-turn-usage",
+              id: "turn-usage",
+              data: turnUsage,
+            } as never);
+            await upsertUsageTurn(
+              {
+                sessionId: session.id,
+                turnId,
+                targetKind: target.kind,
+                targetId: target.id,
+                providerId: newProviderId,
+                modelId: newModelId,
+                sdkSessionId,
+                startedAt: turnStartedAt,
+              },
+              summary
+            ).catch((writeError) =>
+              log.warn({ err: writeError, sessionId: session.id }, "AgentUsageTurn 写入失败（不阻断对话）")
+            );
+          }
+          throw error;
+        }
+        return;
       },
     });
     return createUIMessageStreamResponse({ stream });
   } catch (error) {
+    log.error(
+      { err: error, sessionId: session.id, targetId: target.id },
+      "Agent 对话失败"
+    );
     return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
-}
+});
 
 export async function DELETE(req: NextRequest) {
   const target = targetFromQuery(req);
@@ -436,16 +912,22 @@ export async function DELETE(req: NextRequest) {
         : { technicalDocumentId: target.id },
   });
   if (session) {
+    const pendingToolGrants = await prisma.toolActionGrant.findMany({
+      where: { sessionId: session.id, status: "pending" },
+      select: { id: true },
+    });
+    for (const grant of pendingToolGrants) abortApproval(grant.id);
+
+    const sdkSessionId = session.claudeAgentSessionId;
     await prisma.$transaction([
       prisma.agentChatMessage.deleteMany({ where: { sessionId: session.id } }),
+      // 提案硬删（防 DB 膨胀）：应用过的正文已在文章文件/技术文档版本里，不依赖提案行
       target.kind === "article"
-        ? prisma.agentArticleProposal.updateMany({
-            where: { sessionId: session.id, status: "pending" },
-            data: { status: "rejected", decidedAt: new Date() },
+        ? prisma.agentArticleProposal.deleteMany({
+            where: { sessionId: session.id },
           })
-        : prisma.agentTechnicalDocumentProposal.updateMany({
-            where: { sessionId: session.id, status: "pending" },
-            data: { status: "rejected", decidedAt: new Date() },
+        : prisma.agentTechnicalDocumentProposal.deleteMany({
+            where: { sessionId: session.id },
           }),
       prisma.agentChatSession.update({
         where: { id: session.id },
@@ -455,12 +937,29 @@ export async function DELETE(req: NextRequest) {
           selectedProjectId: null,
           providerId: null,
           modelId: null,
+          claudeAgentSessionId: null,
+          claudeAgentStoreKey: null,
+          // P2：清空当前 Claude resume 入口 → 下一轮开新 SDK session（PDC §5.4/§9）。
+          // 状态置 cleared 让前端提示「将开启新会话」；绝不清 AgentUsageTurn（重点目标 #8）。
+          claudeAgentSessionStatus: "cleared",
+          claudeAgentLastEventAt: null,
+          claudeAgentLastError: null,
+          claudeAgentInterruptedAt: null,
           lastInputTokens: 0,
           lastOutputTokens: 0,
           lastReasoningTokens: 0,
           lastTotalTokens: 0,
         },
       }),
+      prisma.codeSourceGrant.deleteMany({ where: { sessionId: session.id } }),
+      prisma.toolActionGrant.deleteMany({ where: { sessionId: session.id } }),
+      ...(sdkSessionId
+        ? [
+            prisma.claudeAgentSessionEntry.deleteMany({
+              where: { sdkSessionId },
+            }),
+          ]
+        : []),
     ]);
   }
   return NextResponse.json({ ok: true });

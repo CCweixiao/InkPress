@@ -105,7 +105,29 @@ async function listResourcePaths(root: string) {
   return paths.sort();
 }
 
+// 短 TTL 缓存：单次对话请求里 listSkills 会被 Claude system prompt / MCP 工具 /
+// readSkillResource 反复调用，每次都全量遍历 user+system 两个目录、
+// 逐个读 SKILL.md。缓存后同一请求内（秒级）只扫描一次磁盘；技能增删改通过
+// invalidateSkillsCache 即时失效（skills-manager 各写入路径调用），TTL 兜底自愈。
+const SKILLS_CACHE_TTL_MS = 5_000;
+let skillsCache: { value: SkillCatalogItem[]; expires: number } | null = null;
+
+/** 使 listSkills 缓存失效（技能创建/更新/删除/上传后调用，保证 Agent 立即可见）。 */
+export function invalidateSkillsCache() {
+  skillsCache = null;
+}
+
 export async function listSkills(): Promise<SkillCatalogItem[]> {
+  const now = Date.now();
+  if (skillsCache && skillsCache.expires > now) {
+    return skillsCache.value;
+  }
+  const value = await listSkillsUncached();
+  skillsCache = { value, expires: now + SKILLS_CACHE_TTL_MS };
+  return value;
+}
+
+async function listSkillsUncached(): Promise<SkillCatalogItem[]> {
   const entriesByKey = new Map<string, "user" | "system">();
   for (const { root, source } of [...SKILL_ROOTS].reverse()) {
     const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);

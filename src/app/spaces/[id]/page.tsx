@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
-import { previewSnippet } from "@/lib/content-store";
+import { getUiPreferences } from "@/lib/ui-preferences";
+import { previewSnippetAt } from "@/lib/content-store";
 import { NewArticleButton } from "@/components/articles/NewArticleButton";
 import { SpaceDetail } from "@/components/spaces/SpaceDetail";
 import type { ArticleListItem } from "@/components/articles/ArticleCard";
@@ -15,6 +16,9 @@ export default async function SpaceDetailPage({ params }: Params) {
   const { id } = await params;
   const space = await prisma.space.findUnique({ where: { id } });
   if (!space || space.trashed) notFound();
+
+  // SSR 读回 UI 偏好（网格/列表）作为首帧值，避免闪烁
+  const uiPreferences = await getUiPreferences();
 
   const [articles, coverAssets] = await Promise.all([
     prisma.article.findMany({
@@ -34,7 +38,7 @@ export default async function SpaceDetailPage({ params }: Params) {
       id: a.id,
       title: a.title,
       contentMd: a.contentPath
-        ? await previewSnippet(a.id)
+        ? await previewSnippetAt(a.contentPath)
         : (a.contentMd ?? ""),
       digest: a.digest,
       status: a.status,
@@ -68,7 +72,11 @@ export default async function SpaceDetailPage({ params }: Params) {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
-        <SpaceDetail space={space} articles={items} />
+        <SpaceDetail
+          space={space}
+          articles={items}
+          initialViewMode={uiPreferences.viewMode}
+        />
       </main>
     </div>
   );

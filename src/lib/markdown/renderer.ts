@@ -31,15 +31,16 @@ export function getRenderer(): MarkdownIt {
     const token = tokens[idx];
     const info = token.info.trim();
     const requestedLanguage = info.split(/\s+/)[0] || "text";
-    const language = hljs.getLanguage(requestedLanguage)
+    const highlightLanguage = hljs.getLanguage(requestedLanguage)
       ? requestedLanguage
       : "plaintext";
+    const languageClass = requestedLanguage || highlightLanguage;
     const languageLabel = getLanguageLabel(requestedLanguage);
     let highlighted = escapeHtml(token.content);
 
     try {
       highlighted = hljs.highlight(token.content, {
-        language,
+        language: highlightLanguage,
         ignoreIllegals: true,
       }).value;
     } catch {
@@ -52,7 +53,7 @@ export function getRenderer(): MarkdownIt {
       '<span class="code__dots"><i></i><i></i><i></i></span>',
       `<span class="code__lang">${escapeHtml(languageLabel)}</span>`,
       "</div>",
-      `<pre class="hljs code__pre"><code class="language-${escapeHtml(language)}">${highlighted}</code></pre>`,
+      `<pre class="hljs code__pre"><code class="language-${escapeHtml(languageClass)}">${highlighted}</code></pre>`,
       "</section>\n",
     ].join("");
   };

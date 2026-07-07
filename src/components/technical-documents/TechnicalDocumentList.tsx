@@ -87,7 +87,7 @@ export function TechnicalDocumentList({
           />
           <Select value={projectId} onValueChange={setProjectId}>
             <SelectTrigger>
-              <SelectValue placeholder="选择白名单项目" />
+              <SelectValue placeholder="选择长期信任项目" />
             </SelectTrigger>
             <SelectContent>
               {projects.map((project) => (
@@ -116,7 +116,7 @@ export function TechnicalDocumentList({
         </div>
         {!projects.length && (
           <p className="mt-3 text-xs text-amber-700">
-            请先在设置页添加本地项目白名单。
+            请先在设置页添加长期信任项目；也可以先创建文章，再在写作助手中临时授权代码源。
           </p>
         )}
       </div>

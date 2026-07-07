@@ -19,23 +19,62 @@ import path from "node:path";
  */
 
 /**
- * 是否使用独立用户数据目录（~/.inkpress）。
+ * 是否使用独立用户数据目录（即不在项目目录运行）。
  *
  * 判定依据：显式设置 INKPRESS_HOME（最可靠，Electron 主进程与 Docker 均通过此变量告知 server 子进程）。
+ * 历史上这里曾用 `isPackaged` 在 dataHome() 中回落到 ~/.inkpress，但 isPackaged ⟺ 已设 INKPRESS_HOME，
+ * 那个分支永不执行（死代码）——已移除。常量保留供 migrationsDir() 区分 dev/prisma 原位 vs 打包/资源根。
  */
 const isPackaged = !!process.env.INKPRESS_HOME && process.env.INKPRESS_HOME.trim().length > 0;
 
 /**
+ * 默认用户数据根（按平台约定）。
+ * - macOS：`~/.inkpress`（保持存量行为，不破坏已有用户数据）
+ * - Windows：`%APPDATA%\InkPress`
+ * - Linux：`$XDG_DATA_HOME/inkpress`（回落 `~/.local/share/inkpress`）
+ *
+ * 当前仅 macOS 打包；Windows/Linux 供未来跨平台。
+ */
+export function defaultDataHome(): string {
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA?.trim();
+    return path.join(
+      appdata || path.join(os.homedir(), "AppData", "Roaming"),
+      "InkPress"
+    );
+  }
+  if (process.platform === "linux") {
+    const xdg = process.env.XDG_DATA_HOME?.trim();
+    return path.join(
+      xdg || path.join(os.homedir(), ".local", "share"),
+      "inkpress"
+    );
+  }
+  // darwin（默认，含未来未知平台兜底）
+  return path.join(os.homedir(), ".inkpress");
+}
+
+/**
+ * InkPress 用户数据主目录。
+ *
+ * 与 dataHome() 不同：这个函数在开发模式也返回默认数据根（mac = ~/.inkpress），供必须与项目工作区
+ * 和第三方默认目录完全隔离的运行时使用（例如 Claude Agent SDK）。
+ */
+export function inkpressHomeDir(): string {
+  if (process.env.INKPRESS_HOME && process.env.INKPRESS_HOME.trim()) {
+    return path.resolve(process.env.INKPRESS_HOME.trim());
+  }
+  return defaultDataHome();
+}
+
+/**
  * 用户数据根目录。
  * - 开发模式：返回 null，调用方据此回落到项目目录（保持 pnpm dev 行为不变）。
- * - 打包/INKPRESS_HOME 设置：返回绝对路径（INKPRESS_HOME 或默认 ~/.inkpress）。
+ * - 打包/INKPRESS_HOME 设置：返回绝对路径。
  */
 export function dataHome(): string | null {
   if (process.env.INKPRESS_HOME && process.env.INKPRESS_HOME.trim()) {
     return path.resolve(process.env.INKPRESS_HOME.trim());
-  }
-  if (isPackaged) {
-    return path.join(os.homedir(), ".inkpress");
   }
   return null;
 }
@@ -79,6 +118,28 @@ export function dbPath(): string {
     : path.join(process.cwd(), "dev.db");
 }
 
+/**
+ * 实际使用的 SQLite 数据库文件路径。
+ *
+ * `DATABASE_URL` 是更高优先级的运行时入口（Electron 主进程注入 / 用户自定义部署）。
+ * 迁移 runner 与 Prisma 客户端必须共用这个解析结果，否则会出现「迁移跑默认库，
+ * Prisma 读写 env 库」的数据错位。
+ */
+export function resolveDbPath(): { path: string; source: string } {
+  const envUrl = process.env.DATABASE_URL?.trim();
+  if (envUrl) {
+    const raw = envUrl.startsWith("file:") ? envUrl.slice("file:".length) : envUrl;
+    return {
+      path: path.resolve(raw),
+      source: "env:DATABASE_URL",
+    };
+  }
+  return {
+    path: dbPath(),
+    source: "paths.dbPath()",
+  };
+}
+
 /** DATABASE_URL（Prisma 适配器消费） */
 export function databaseUrl(): string {
   return `file:${dbPath()}`;
@@ -118,6 +179,20 @@ export function storageDir(): string {
 export function cacheDir(): string {
   const home = dataHome();
   return home ? path.join(home, "cache") : path.join(process.cwd(), "storage", "tmp");
+}
+
+/**
+ * Claude Agent SDK 专用目录：不读写用户 ~/.claude，也不落到项目工作区。
+ *
+ * 覆盖入口：`INKPRESS_CLAUDE_RUNTIME_DIR`（测试 / 想把 SDK 数据放项目内的开发者可 opt-in）。
+ * 默认落在 inkpressHomeDir()/cache/claude-agent（mac 开发态亦为 ~/.inkpress，刻意与项目仓库隔离）。
+ */
+export function claudeAgentRuntimeDir(): string {
+  const override = process.env.INKPRESS_CLAUDE_RUNTIME_DIR;
+  if (override && override.trim()) {
+    return path.resolve(override.trim());
+  }
+  return path.join(inkpressHomeDir(), "cache", "claude-agent");
 }
 
 /** 日志目录：~/.inkpress/logs（打包）或 项目根/logs（开发） */

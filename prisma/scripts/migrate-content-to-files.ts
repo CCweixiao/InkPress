@@ -7,7 +7,10 @@
 import "dotenv/config";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "../../src/generated/prisma/client";
-import { writeContent, relativePath } from "../../src/lib/content-store";
+import {
+  writeContentAt,
+  legacyArticlePath,
+} from "../../src/lib/content-store";
 
 async function main() {
   const url = process.env.DATABASE_URL ?? "file:./dev.db";
@@ -29,10 +32,12 @@ async function main() {
       continue;
     }
     const md = a.contentMd ?? "";
-    await writeContent(a.id, md);
+    // 迁移到平铺 articles/<id>.md（与历史布局一致，读取以 contentPath 为准）
+    const rel = legacyArticlePath(a.id);
+    await writeContentAt(rel, md);
     await prisma.article.update({
       where: { id: a.id },
-      data: { contentPath: relativePath(a.id) },
+      data: { contentPath: rel },
     });
     migrated++;
   }

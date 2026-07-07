@@ -1,0 +1,358 @@
+// InkPress 用户服务平台 — 数据模型（Phase 1：认证 / 用户 / 邀请码）
+//
+// 说明：SQLite 不支持 Prisma enum，因此所有「枚举」字段均用 String 表示，
+// 取值集合在 src/lib/validation 与 TS 联合类型中约束（语义与 PDC §6 完全一致）。
+// 字段命名与 PDC 对齐，便于 Phase 2（License）平滑扩展。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ===== 用户 =====
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  emailVerified      DateTime?
+  name               String?
+  image              String?
+  passwordHash       String? // argon2id 哈希，OAuth 用户为 null
+  role               String           @default("USER") // UserRole: USER | ADMIN
+  status             String           @default("ACTIVE") // UserStatus: ACTIVE | DISABLED | DELETED
+  mustChangePassword Boolean          @default(false) // 管理员首次初始化后强制改密
+  invitationCode     InvitationCode?
+  accounts           Account[]
+  sessions           Session[]
+  orders             Order[]
+  tickets            Ticket[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([role])
+  @@index([status])
+}
+
+// ===== NextAuth Prisma Adapter 标准表 =====
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ===== 邮箱验证码（自定义业务表，不复用 VerificationToken） =====
+model EmailVerificationCode {
+  id          String    @id @default(cuid())
+  email       String
+  purpose     String    @default("REGISTER") // EmailCodePurpose: REGISTER | RESET_PASSWORD | CHANGE_EMAIL
+  codeHash    String // 仅存哈希，明文只出现在邮件
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdIp   String?
+  createdUa   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([email, purpose, expiresAt])
+  @@index([createdAt])
+}
+
+// ===== 邀请码（每用户唯一） =====
+model InvitationCode {
+  id        String   @id @default(cuid())
+  code      String   @unique // 6 位大小写敏感字母数字
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    String   @default("ACTIVE") // InvitationStatus: ACTIVE | DISABLED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ===== License Key（Phase 2） =====
+model LicenseKey {
+  id                 String             @id @default(cuid())
+  keyHash            String             @unique // peppered SHA-256，精确匹配
+  keyFingerprint     String             @unique // 明文短指纹，用于日志/展示/排障
+  displayKeySuffix   String // 仅末 4-6 位，避免列表泄露完整 key
+  keyCiphertext      String? // AES-256-GCM 加密后的明文 key，仅管理员输查看密码后解密展示
+  durationKind       String // LicenseDurationKind: YEAR_1 | YEAR_3 | YEAR_5 | CUSTOM_YEARS | CUSTOM_DAYS | PERMANENT
+  durationYears      Int?
+  durationDays       Int?
+  effectiveExpiresAt DateTime? // 首次激活后写入，所有设备统一过期；永久=null
+  maxDevices         Int                @default(1)
+  status             String             @default("ENABLED") // LicenseKeyStatus: ENABLED | DISABLED | REVOKED
+  ownerEmail         String? // 归属用户邮箱（创建时绑定，用户登录后可见自己的 License）
+  inviterUserId      String? // 邀请归因（创建时绑定，不在激活端绑定）
+  inviterCode        String?
+  note               String?
+  batchNo            String?
+  createdByUserId    String
+  firstActivatedAt   DateTime?
+  disabledAt         DateTime?
+  revokedAt          DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  activations        LicenseActivation[]
+
+  @@index([status])
+  @@index([ownerEmail])
+  @@index([inviterUserId])
+  @@index([batchNo])
+  @@index([createdAt])
+}
+
+// ===== License 激活记录（Phase 3 写入，Phase 2 管理端可查看/解绑） =====
+model LicenseActivation {
+  id                  String     @id @default(cuid())
+  licenseKeyId        String
+  licenseKey          LicenseKey @relation(fields: [licenseKeyId], references: [id], onDelete: Cascade)
+  deviceIdHash        String
+  macHash             String?
+  machineIdHash       String?
+  hostnameHash        String?
+  os                  String?
+  arch                String?
+  appVersion          String?
+  status              String     @default("ACTIVE") // ActivationStatus: ACTIVE | DEACTIVATED | REVOKED
+  activationSecretHash String? // sha256(secret) 指纹，仅日志关联，非密钥
+  activationSecretEnc String? // AES-256-GCM 密文（iv‖tag‖ciphertext），验签时解密还原
+  activatedAt         DateTime   @default(now())
+  lastValidatedAt     DateTime?
+  deactivatedAt       DateTime?
+  revokedAt           DateTime?
+  revokedReason       String?
+  ipFirst             String?
+  ipLast              String?
+  userAgentLast       String?
+  metadataJson        String     @default("{}")
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  @@unique([licenseKeyId, deviceIdHash])
+  @@index([deviceIdHash])
+  @@index([status])
+  @@index([lastValidatedAt])
+}
+
+// ===== License 校验日志（Phase 3 写入，Phase 2 管理端可查看） =====
+model LicenseValidationLog {
+  id           String   @id @default(cuid())
+  licenseKeyId String?
+  activationId String?
+  deviceIdHash String?
+  action       String // LicenseApiAction: ACTIVATE | VALIDATE | DEACTIVATE
+  result       String // LicenseApiResult: ALLOWED | DENIED | RATE_LIMITED | ERROR
+  reason       String?
+  ip           String?
+  userAgent    String?
+  appVersion   String?
+  createdAt    DateTime @default(now())
+
+  @@index([licenseKeyId, createdAt])
+  @@index([activationId, createdAt])
+  @@index([deviceIdHash, createdAt])
+  @@index([action, result, createdAt])
+  // TTL 清理：deleteMany({ createdAt: { lt: cutoff } }) 跨 licenseKeyId 全表扫描，需单列索引
+  @@index([createdAt])
+}
+
+// ===== 设备试用登记（7 天免费试用，服务端权威） =====
+model DeviceTrial {
+  id             String   @id @default(cuid())
+  deviceIdHash   String   @unique
+  machineIdHash  String?
+  macHash        String?
+  hostnameHash   String?
+  os             String?
+  arch           String?
+  appVersion     String?
+  trialStartedAt DateTime // 服务端权威试用起点
+  trialExpiresAt DateTime // = trialStartedAt + 7d
+  status         String   @default("TRIAL") // TrialStatus: TRIAL | EXPIRED | CONVERTED
+  ipFirst        String?
+  ipLast         String?
+  userAgentLast  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status])
+  @@index([trialExpiresAt])
+}
+
+// ===== 审计日志（管理变更） =====
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actorRole   String?
+  action      String
+  targetType  String?
+  targetId    String?
+  beforeJson  String?
+  afterJson   String?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+}
+
+// ===== 订阅计划（首页价格展示 + 后续下单引用） =====
+model SubscriptionPlan {
+  id                 String   @id @default(cuid())
+  slug               String   @unique // year_1 / year_3 / year_5 / lifetime，URL 与外部引用
+  name               String // "1年版" / "终身版" 等展示名
+  tagline            String? // 卡片副标题，例如"最适合个人创作者"
+  durationKind       String // 复用 LicenseDurationKind: YEAR_1 | YEAR_3 | YEAR_5 | PERMANENT
+  durationYears      Int? // CUSTOM_YEARS 时填，便于派生"年单价"
+  maxDevices         Int
+  priceCents         Int // 原价（分），¥99 → 9900
+  discountPriceCents Int? // 折扣价（分），null 表示当前无折扣
+  featuresJson       String   @default("[]") // JSON string[]，卡片特性列表
+  highlight          String? // "popular" | "best_value" | null，用于徽章渲染
+  sortOrder          Int      @default(0)
+  status             String   @default("ACTIVE") // ACTIVE | INACTIVE
+  // 每日库存上限：null = 不限；0 = 停售；>0 = 当日可售件数
+  // 防止触发支付宝小微商户单日收款限额（默认 ≤1000 元/日）
+  dailyStockLimit    Int?
+  // 管理员手动重置时间戳：库存计数时 since = max(startOfToday, dailyStockResetAt)
+  // 设置后只统计此时间之后创建的订单，等于把当前计数器清零
+  dailyStockResetAt  DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([status, sortOrder])
+}
+
+// ===== 软件发布版本（CI 自动登记 / 用户下载页用） =====
+model SoftwareRelease {
+  id                String   @id @default(cuid())
+  // 业务唯一键：同包名 + 同平台 + 同版本 → upsert 覆盖（"相同版本替换"语义）
+  packageName       String   // "inkpress"，未来可扩展其他产品
+  platform          String   // "darwin-arm64" | "darwin-x64" | "win32-x64" | "linux-x64"
+  version           String   // semver "0.3.0"
+  // 显示元信息
+  displayName       String   // "InkPress 桌面版"
+  logoUrl           String?  // 软件图标 URL（可空，前端兜底用内置 logo）
+  // 文件元信息（CI 上传后填入）
+  fileName          String   // "InkPress-0.3.0-arm64.dmg"
+  fileSizeBytes     Int      // 字节数（前端格式化为 MB）
+  fileHashSha256    String?  // 完整性校验（可选）
+  downloadUrl       String   // OSS / CDN 完整直链
+  // 修改内容
+  changelogMarkdown String?  // markdown 原文，详情页渲染
+  highlightsJson    String   @default("[]") // 结构化要点 JSON string[]
+  // 状态与分类
+  status            String   @default("PUBLISHED") // PUBLISHED | HIDDEN
+  channel           String   @default("stable") // stable | beta | rc | snapshot
+  // 下载计数（公开页点击 → /api/releases/[id]/download → +1 → 302 跳真实 URL）
+  downloadCount     Int      @default(0)
+  // 审计
+  source            String   @default("ci") // ci | admin
+  releasedAt        DateTime @default(now()) // CI 发布时间（"最新版"判定 + 排序）
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([packageName, platform, version])
+  @@index([packageName, status, releasedAt])
+  @@index([packageName, channel])
+}
+
+// ===== 订单（支付宝当面付自助购买） =====
+model Order {
+  id             String    @id @default(cuid())
+  userId         String
+  outTradeNo     String    @unique // InkPress 内部订单号，传给支付宝（≤32 字符）
+  planSlug       String // 套餐 slug（下单时快照）
+  planName       String // 套餐展示名（下单时快照，与 Plan 当前配置解耦）
+  planConfigJson String    @default("{}") // License 生成参数快照（durationKind/durationYears/maxDevices）
+  subject        String // 商品标题（传给支付宝的 subject）
+  amountCents    Int // 实付金额（分），下单时从 Plan 快照
+  status         String    @default("PENDING") // OrderStatus: PENDING | PAID | CLOSED | REFUNDED
+  tradeNo        String? // 支付宝流水号（回调写入）
+  buyerLogonId   String? // 买家支付宝账号（回调写入，便于排障）
+  licenseKeyId   String? // 支付成功后生成的 License Key ID（软引用，不建外键）
+  paidAt         DateTime?
+  closedAt       DateTime?
+  notifyCount    Int       @default(0) // 回调到达次数（幂等排障用）
+  lastNotifyAt   DateTime?
+  createdIp      String?
+  createdUa      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([outTradeNo])
+}
+
+// ===== 工单系统 =====
+model Ticket {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String // TicketType: PAYMENT | LICENSE | ACCOUNT | USAGE | HELP | BUG | FEATURE | OTHER
+  subject     String // 4-80 字
+  description String // ≤5000 字
+  status      String         @default("OPEN") // TicketStatus: OPEN | ANSWERED | RESOLVED | CLOSED
+  priority    String         @default("NORMAL") // TicketPriority: LOW | NORMAL | HIGH
+  attachments String         @default("[]") // JSON: [{key,name,size,contentType}]
+  replies     TicketReply[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model TicketReply {
+  id          String   @id @default(cuid())
+  ticketId    String
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId    String // 发布者 userId（用户本人或管理员）
+  authorRole  String // USER | ADMIN
+  content     String // ≤5000 字
+  attachments String   @default("[]") // JSON: [{key,name,size,contentType}]
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="card" x1="168" y1="106" x2="852" y2="922" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.58" stop-color="#F7F8FF"/>
+      <stop offset="1" stop-color="#EEF2FF"/>
+    </linearGradient>
+    <radialGradient id="cardGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(520 292) rotate(90) scale(584 560)">
+      <stop offset="0" stop-color="#C7D7FF" stop-opacity="0.75"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="338" y1="250" x2="682" y2="774" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B8A6FF"/>
+      <stop offset="0.42" stop-color="#6678FF"/>
+      <stop offset="1" stop-color="#244CFF"/>
+    </linearGradient>
+    <linearGradient id="markShade" x1="510" y1="300" x2="510" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.3"/>
+      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#07144F" stop-opacity="0.16"/>
+    </linearGradient>
+    <filter id="cardShadow" x="42" y="48" width="940" height="934" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#1E2435" flood-opacity="0.18"/>
+    </filter>
+    <filter id="markShadow" x="208" y="214" width="616" height="610" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="26" stdDeviation="22" flood-color="#244CFF" flood-opacity="0.26"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0F1C7A" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="cardClip">
+      <rect x="88" y="88" width="848" height="848" rx="198"/>
+    </clipPath>
+  </defs>
+
+  <g filter="url(#cardShadow)">
+    <rect x="88" y="88" width="848" height="848" rx="198" fill="url(#card)"/>
+    <rect x="89.5" y="89.5" width="845" height="845" rx="196.5" stroke="#E4E7F1" stroke-width="3"/>
+  </g>
+  <g clip-path="url(#cardClip)">
+    <rect x="88" y="88" width="848" height="848" fill="url(#cardGlow)"/>
+    <circle cx="294" cy="270" r="150" fill="#FFFFFF" opacity="0.62"/>
+    <circle cx="788" cy="742" r="196" fill="#D9E4FF" opacity="0.34"/>
+  </g>
+
+  <g filter="url(#markShadow)">
+    <path d="M324 238H602C631 238 659 250 680 271L766 357C787 378 799 406 799 435V696C799 746 758 786 708 786H324C274 786 233 746 233 696V328C233 278 274 238 324 238Z" fill="url(#mark)"/>
+    <path d="M324 238H602C631 238 659 250 680 271L766 357C787 378 799 406 799 435V696C799 746 758 786 708 786H324C274 786 233 746 233 696V328C233 278 274 238 324 238Z" fill="url(#markShade)"/>
+    <path d="M646 265V370C646 398 668 420 696 420H794C789 396 777 374 759 357L680 278C670 268 659 263 646 265Z" fill="#DDE6FF" opacity="0.42"/>
+    <path d="M294 318C294 300 309 285 327 285H596C627 285 656 297 678 319L739 380C753 394 762 412 765 432C685 395 615 382 531 397C446 412 373 405 294 381V318Z" fill="#FFFFFF" opacity="0.16"/>
+  </g>
+
+  <circle cx="390" cy="414" r="33" fill="#FFFFFF" opacity="0.96"/>
+  <rect x="348" y="472" width="84" height="218" rx="42" fill="#FFFFFF" opacity="0.96"/>
+  <path d="M512 428H620C694 428 744 475 744 539C744 604 694 650 620 650H568V704" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round" opacity="0.96"/>
+  <path d="M568 512H620C644 512 662 523 662 540C662 558 644 568 620 568H568V512Z" fill="#5E74FF" opacity="0.5"/>
+  <path d="M572 618L526 665V618H572Z" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M588 498H638" stroke="#DDE6FF" stroke-width="18" stroke-linecap="round" opacity="0.95"/>
+  <path d="M588 540H672" stroke="#DDE6FF" stroke-width="18" stroke-linecap="round" opacity="0.95"/>
+  <path d="M588 582H638" stroke="#DDE6FF" stroke-width="18" stroke-linecap="round" opacity="0.95"/>
+</svg>

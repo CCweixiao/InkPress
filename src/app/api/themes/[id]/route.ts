@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(20).optional(),
@@ -12,7 +13,7 @@ const updateSchema = z.object({
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export const PUT = withApiLog("PUT /api/themes/[id]", async (req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const parsed = updateSchema.safeParse(body);
@@ -28,6 +29,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
       await tx.theme.updateMany({ data: { isDefault: false } });
       return tx.theme.update({ where: { id }, data: { ...rest, isDefault: true } });
     });
+    logMutation("theme", "setDefault", { id });
     return NextResponse.json({ theme });
   }
 
@@ -48,10 +50,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 
   const theme = await prisma.theme.update({ where: { id }, data: rest });
+  logMutation("theme", "update", { id, name: theme.name });
   return NextResponse.json({ theme });
-}
+});
 
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export const DELETE = withApiLog("DELETE /api/themes/[id]", async (_req: NextRequest, { params }: Params) => {
   const { id } = await params;
   const theme = await prisma.theme.findUnique({ where: { id } });
   if (theme?.isBuiltIn) {
@@ -85,5 +88,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   } else {
     await prisma.theme.delete({ where: { id } });
   }
+  logMutation("theme", "delete", { id, wasDefault: theme?.isDefault ?? false });
   return NextResponse.json({ ok: true });
-}
+});

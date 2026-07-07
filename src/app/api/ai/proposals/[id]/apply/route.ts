@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import {
-  readContent,
+  readContentAt,
+  writeContentAt,
   readTechnicalDocumentContent,
-  writeContent,
   writeTechnicalDocumentContent,
+  articleFilePath,
 } from "@/lib/content-store";
 import { articleVersionHash } from "@/lib/ai/article-version";
 
@@ -23,8 +24,15 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
       { status: 409 }
     );
   }
+  // 正文位置：以 contentPath 为唯一真相源，缺失时按 spaceId 计算（与读取保持一致）
+  const articleRel =
+    proposal.article.contentPath ??
+    articleFilePath({
+      articleId: proposal.articleId,
+      spaceId: proposal.article.spaceId,
+    });
   const currentMarkdown = proposal.article.contentPath
-    ? await readContent(proposal.article.id)
+    ? await readContentAt(articleRel)
     : proposal.article.contentMd;
   const currentHash = articleVersionHash({
     title: proposal.article.title,
@@ -53,7 +61,7 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
     );
   }
   try {
-    await writeContent(proposal.articleId, targetMarkdown);
+    await writeContentAt(articleRel, targetMarkdown);
     const article = await prisma.$transaction(async (tx) => {
       const updated = await tx.article.update({
         where: { id: proposal.articleId },
@@ -89,7 +97,7 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
       article: { ...article, contentMd: targetMarkdown },
     });
   } catch (error) {
-    await writeContent(proposal.articleId, currentMarkdown).catch(() => {});
+    await writeContentAt(articleRel, currentMarkdown).catch(() => {});
     await prisma.agentArticleProposal.updateMany({
       where: { id, status: "applying" },
       data: { status: "pending" },
@@ -158,6 +166,18 @@ async function applyTechnicalDocument(id: string) {
           ...(proposal.title !== null ? { title: proposal.title } : {}),
           snapshotHash:
             proposal.snapshotHash ?? proposal.technicalDocument.snapshotHash,
+          codeSourceJson: (() => {
+            try {
+              const snapshot = JSON.parse(proposal.sourceSnapshotJson) as {
+                codeSource?: unknown;
+              };
+              return snapshot.codeSource
+                ? JSON.stringify(snapshot.codeSource)
+                : proposal.technicalDocument.codeSourceJson;
+            } catch {
+              return proposal.technicalDocument.codeSourceJson;
+            }
+          })(),
         },
       });
       await tx.technicalDocumentVersion.create({

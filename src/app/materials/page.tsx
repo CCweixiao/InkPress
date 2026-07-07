@@ -1,13 +1,12 @@
 import Link from "next/link";
 import { ArrowLeft, FolderOpen } from "lucide-react";
 import { prisma } from "@/lib/db";
-import { hasOssConfig } from "@/lib/oss";
 import { MaterialBrowser } from "@/components/materials/MaterialBrowser";
 
 export const dynamic = "force-dynamic";
 
 export default async function MaterialsPage() {
-  const [spaces, articles, ossConfigured] = await Promise.all([
+  const [spaces, articles] = await Promise.all([
     prisma.space.findMany({
       where: { trashed: false },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -18,7 +17,6 @@ export default async function MaterialsPage() {
       orderBy: { updatedAt: "desc" },
       select: { id: true, title: true, spaceId: true },
     }),
-    hasOssConfig(),
   ]);
 
   return (
@@ -50,7 +48,7 @@ export default async function MaterialsPage() {
         <MaterialBrowser
           spaces={JSON.parse(JSON.stringify(spaces))}
           articles={JSON.parse(JSON.stringify(articles))}
-          ossConfigured={ossConfigured}
+          ossConfigured={true}
         />
       </main>
     </div>

@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   dataHome,
-  dbPath,
   databaseDir,
   backupDir,
   migrationScriptsDir,
@@ -10,8 +9,10 @@ import {
   cacheDir,
   userSkillsDir,
   logsDir,
+  claudeAgentRuntimeDir,
   markerFile,
   migrationsDir,
+  resolveDbPath,
   usesDataHome,
 } from "@/lib/paths";
 import { runMigrations } from "@/lib/migration";
@@ -20,8 +21,14 @@ import { moduleLogger } from "@/lib/logger";
 
 const log = moduleLogger("init");
 
-/** 读取 app 版本（package.json） */
+/**
+ * 读取 app 版本。
+ * 优先 env（Electron 主进程透传 app.getVersion() / 构建期注入 APP_VERSION），
+ * 回落 process.cwd()/package.json（开发态；打包态 cwd 脆弱故不依赖）。
+ */
 function appVersion(): string {
+  const fromEnv = process.env.APP_VERSION?.trim();
+  if (fromEnv) return fromEnv;
   try {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")
@@ -38,19 +45,50 @@ function appVersion(): string {
  * 由 Next.js instrumentation.ts（server 进程启动时）调用，确保在标准 Node 运行时下执行，
  * 从而原生加载 better-sqlite3（避免 Electron 主进程的 Node ABI 冲突）。
  *
- * 仅在打包形态（usesDataHome() 为真）下执行实际工作；开发模式直接返回。
+ * 打包形态（usesDataHome() 为真）执行完整初始化；开发模式只做幂等 seed
+ * （内置主题 + 默认空间），目录创建与 schema 迁移仍归 prisma migrate dev。
  *
- * 步骤：
+ * 打包形态步骤：
  * 1. 创建 ~/.inkpress 下的子目录结构（含 database/backups/scripts、user skills、logs）
  * 2. 检测首次安装 vs 更新（.update 标记），写版本元数据
  * 3. 版本化迁移：备份 → 事务执行 DDL/DML → 写 migration_history + .success 审计标识
  *    （支持跨版本更新；旧库自动兼容导入 _prisma_migrations）
- * 4. seed 内置主题
+ * 4. seed 内置主题 + 默认空间
  *
  * 系统 skill 不再拷贝：运行时从资源根只读目录实时读取，app 更新即自动全量更新。
  */
 export async function ensureDataHome(): Promise<void> {
-  if (!usesDataHome()) return; // 开发模式：用项目目录，无需初始化
+  const resolvedDb = resolveDbPath();
+  // 路径可观测：开发态也打印 Claude SDK 运行时目录与 DB 路径，避免数据"静默落别处"的排障困惑。
+  log.info(
+    {
+      dataHome: dataHome(),
+      dbPath: resolvedDb.path,
+      dbPathSource: resolvedDb.source,
+      claudeAgentRuntimeDir: claudeAgentRuntimeDir(),
+    },
+    "运行时路径解析"
+  );
+
+  // 遗留清理：重构前 CLAUDE_CONFIG_DIR 落在 <storage>/tmp/claude，现已迁至 claudeAgentRuntimeDir()。
+  // 当前代码不再写入该目录；幂等删除（dev + 打包都跑，覆盖老用户升级）。
+  cleanupLegacyClaudeDir();
+
+  // 开发模式：用项目目录下的 dev.db。目录创建与 schema 迁移归 prisma migrate dev 管，
+  // 这里不介入；但仍需 seed 内置主题与默认空间（均幂等），否则重建 dev.db
+  // （切分支带新 migration / migrate reset / 删除 dev.db）后主题列表会空。
+  if (!usesDataHome()) {
+    await seedBuiltInThemes().catch((e) => {
+      log.error({ err: e }, "seed 内置主题失败（开发模式）");
+    });
+    await ensureDefaultSpace().catch((e) => {
+      log.error({ err: e }, "seed 默认空间失败（开发模式）");
+    });
+    await runClaudeAgentMigration().catch((e) => {
+      log.error({ err: e }, "迁移 claude-agent 配置失败（开发模式）");
+    });
+    return;
+  }
 
   const home = dataHome()!;
   const version = appVersion();
@@ -63,11 +101,18 @@ export async function ensureDataHome(): Promise<void> {
     home,
     storageDir(),
     path.join(storageDir(), "articles"),
+    path.join(storageDir(), "spaces"),
+    path.join(storageDir(), "library"),
+    path.join(storageDir(), "code-sources"),
+    path.join(storageDir(), "technical-documents"),
     cacheDir(),
     databaseDir(),
     backupDir(),
     migrationScriptsDir(),
     userSkillsDir(),
+    claudeAgentRuntimeDir(),
+    path.join(claudeAgentRuntimeDir(), "config"),
+    path.join(claudeAgentRuntimeDir(), "workspace"),
     logsDir(),
   ]) {
     fs.mkdirSync(dir, { recursive: true });
@@ -83,7 +128,7 @@ export async function ensureDataHome(): Promise<void> {
   writeMarker(version, isFirstInstall);
 
   // 2. 版本化迁移（幂等，每次启动补齐未执行版本）
-  await runMigrations(dbPath(), migrationsDir());
+  await runMigrations(resolvedDb.path, migrationsDir());
 
   // 3. seed 内置主题（幂等，已存在则更新）
   await seedBuiltInThemes().catch((e) => {
@@ -94,6 +139,17 @@ export async function ensureDataHome(): Promise<void> {
   await ensureDefaultSpace().catch((e) => {
     log.error({ err: e }, "seed 默认空间失败");
   });
+
+  // 5. 迁移旧 claude-agent 配置到 inkpress.llm（幂等）
+  await runClaudeAgentMigration().catch((e) => {
+    log.error({ err: e }, "迁移 claude-agent 配置失败");
+  });
+}
+
+/** 动态加载并执行 claude-agent → inkpress.llm 迁移（幂等）。 */
+async function runClaudeAgentMigration() {
+  const { migrateClaudeAgentConfig } = await import("@/lib/ai/llm-config");
+  await migrateClaudeAgentConfig();
 }
 
 /**
@@ -123,6 +179,23 @@ async function ensureDefaultSpace() {
       isDefault: true,
     },
   });
+}
+
+/**
+ * 清理重构前的 Claude 遗留目录（<storage>/tmp/claude）。
+ * 重构前 CLAUDE_CONFIG_DIR 落在此处；现统一迁至 claudeAgentRuntimeDir()（~/.inkpress/cache/claude-agent）。
+ * 幂等：目录不存在则跳过；失败不阻断启动。
+ */
+function cleanupLegacyClaudeDir(): void {
+  try {
+    const legacy = path.join(storageDir(), "tmp", "claude");
+    if (fs.existsSync(legacy)) {
+      fs.rmSync(legacy, { recursive: true, force: true });
+      log.info({ dir: legacy }, "已清理重构前的 Claude 遗留目录");
+    }
+  } catch (e) {
+    log.warn({ err: e }, "清理遗留 Claude 目录失败（不影响启动）");
+  }
 }
 
 /** 写/更新 .update 标记文件（version + 时间戳） */

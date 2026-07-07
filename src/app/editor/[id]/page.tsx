@@ -1,13 +1,16 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
 import { EditorWorkspace } from "@/components/editor/EditorWorkspace";
+import { licenseGuard } from "@/lib/license/guard";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
 export default async function EditorPage({ params }: Params) {
+  const license = await licenseGuard();
+  if (!license.allowed) redirect("/license");
   const { id } = await params;
   const article = await prisma.article.findUnique({
     where: { id },
@@ -16,7 +19,7 @@ export default async function EditorPage({ params }: Params) {
   if (!article) notFound();
 
   const contentMd = article.contentPath
-    ? await readContent(article.id)
+    ? await readContentAt(article.contentPath)
     : (article.contentMd ?? "");
 
   const themes = await prisma.theme.findMany({
@@ -43,6 +46,7 @@ export default async function EditorPage({ params }: Params) {
         themeId: article.themeId,
         spaceId: article.spaceId,
         status: article.status,
+        profileId: article.profileId,
       }}
       themes={themes}
     />
