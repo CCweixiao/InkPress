@@ -161,6 +161,20 @@ const articleAssetsDisplay: ToolDisplayFactory = ({ phase, output }) => {
   };
 };
 
+const loadSnippetsDisplay: ToolDisplayFactory = ({ phase, output }) => {
+  const o = outOf(output);
+  return {
+    title: "加载灵感素材",
+    activityKind: "read",
+    summary:
+      phase === "completed"
+        ? `已加载 ${Array.isArray(o) ? o.length : 0} 条灵感`
+        : phase === "failed"
+          ? undefined
+          : "正在加载灵感素材",
+  };
+};
+
 const setArticleDigestDisplay: ToolDisplayFactory = ({ phase }) => ({
   title: "设置文章摘要",
   activityKind: "write",
@@ -383,6 +397,37 @@ const articleAssetsTool: InkPressToolDefinition = {
         tags: parseTags(a.tagsJson),
       })),
     };
+  },
+};
+
+const loadSnippetsTool: InkPressToolDefinition = {
+  name: "load_snippets",
+  permission: "allow",
+  category: "memory",
+  version: "1.0.0",
+  display: loadSnippetsDisplay,
+  description:
+    "加载灵感素材块的完整内容。当用户消息含 {{snippet:id}} 引用时调用，传入出现的全部 id；返回每条的标题/正文/类型/图片/引用出处/链接/标签，用于自然融入文章。",
+  inputSchema: {
+    ids: z.array(z.string().min(1)).min(1),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+  execute: async (_ctx, args) => {
+    const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+    return prisma.snippet.findMany({
+      where: { id: { in: ids }, trashed: false },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        kind: true,
+        imageUrl: true,
+        quoteSource: true,
+        linkUrl: true,
+        linkTitle: true,
+        tagsJson: true,
+      },
+    });
   },
 };
 
@@ -909,6 +954,7 @@ export const INKPRESS_TOOLS: InkPressToolDefinition[] = [
   loadSkillTool,
   readSkillResourceTool,
   articleAssetsTool,
+  loadSnippetsTool,
   setArticleDigestTool,
   proposeArticleRevisionTool,
   proposeTechnicalDocumentRevisionTool,
