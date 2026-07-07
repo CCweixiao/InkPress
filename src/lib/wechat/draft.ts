@@ -1,4 +1,7 @@
 import { wxJson, ensureOk } from "./client";
+import { moduleLogger } from "@/lib/logger";
+
+const log = moduleLogger("wechat.draft");
 
 export type DraftArticle = {
   title: string;
@@ -17,10 +20,15 @@ export type DraftArticle = {
  * 仅推送到草稿箱；正式发布由用户在公众号后台手动操作（按需求决策）。
  */
 export async function addDraft(article: DraftArticle): Promise<string> {
+  const start = Date.now();
   const data = await wxJson("/draft/add", { articles: [article] });
   ensureOk(data, "新增草稿");
   const mediaId = (data as { media_id?: string }).media_id;
   if (!mediaId) throw new Error("新增草稿失败：未返回 media_id");
+  log.info(
+    { mediaId, title: article.title, durationMs: Date.now() - start },
+    "已推送公众号草稿"
+  );
   return mediaId;
 }
 
@@ -34,10 +42,15 @@ export async function updateDraft(
   index: number,
   article: DraftArticle
 ): Promise<void> {
+  const start = Date.now();
   const data = await wxJson("/draft/update", {
     media_id: mediaId,
     index,
     articles: article,
   });
   ensureOk(data, "更新草稿");
+  log.info(
+    { mediaId, index, title: article.title, durationMs: Date.now() - start },
+    "已更新公众号草稿"
+  );
 }

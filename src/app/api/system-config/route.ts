@@ -1,14 +1,30 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { LLM_CONFIG_KEY, parseLlmConfigs } from "@/lib/ai/llm-config";
+import {
+  LLM_CONFIG_KEY,
+  parseLlmConfigs,
+} from "@/lib/ai/llm-config";
 import { OSS_CONFIG_KEY, parseOssConfig } from "@/lib/oss-config";
+import {
+  STORAGE_CONFIG_KEY,
+  localStorageDisplayPath,
+  maskStorageConfigValue,
+  mergeStorageMaskedSecrets,
+  parseStorageConfig,
+} from "@/lib/storage-config";
 import { AGENT_CONFIG_KEY, parseAgentConfig } from "@/lib/ai/agent-config";
+import {
+  WEB_RESEARCH_CONFIG_KEY,
+  parseWebResearchConfig,
+} from "@/lib/ai/web-research-config";
 import { WECHAT_CONFIG_KEY, parseWechatConfig } from "@/lib/wechat/config";
 import { APPEARANCE_CONFIG_KEY, parseAppearanceConfig } from "@/lib/appearance-config";
+import { UI_PREFERENCES_KEY, parseUiPreferences } from "@/lib/ui-preferences";
 import { I18N_CONFIG_KEY, parseI18nConfig } from "@/lib/i18n-config";
-import { LLM_PRESETS_KEY, parseLlmPresets } from "@/lib/llm-presets";
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
+import { encryptConfigValueForStorage, hasConfigSecrets } from "@/lib/config-secrets";
 import { prisma } from "@/lib/db";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,14 +38,31 @@ const deleteSchema = z.object({ key: z.string().trim().min(1) });
 
 /** 保存前按 key 分别校验 value 的 JSON 结构 */
 function validateConfigValue(key: string, value: string) {
-  if (key === OSS_CONFIG_KEY) parseOssConfig(value);
+  if (key === STORAGE_CONFIG_KEY) parseStorageConfig(value);
+  else if (key === OSS_CONFIG_KEY) parseOssConfig(value);
   else if (key === LLM_CONFIG_KEY) parseLlmConfigs(value);
   else if (key === AGENT_CONFIG_KEY) parseAgentConfig(value);
+  else if (key === WEB_RESEARCH_CONFIG_KEY) parseWebResearchConfig(value);
   else if (key === WECHAT_CONFIG_KEY) parseWechatConfig(value);
   else if (key === APPEARANCE_CONFIG_KEY) parseAppearanceConfig(value);
+  else if (key === UI_PREFERENCES_KEY) parseUiPreferences(value);
   else if (key === I18N_CONFIG_KEY) parseI18nConfig(value);
-  else if (key === LLM_PRESETS_KEY) parseLlmPresets(value);
   else parseJsonObjectOrArrayConfig(value);
+}
+
+/**
+ * B7：校验通过后、落库前，按 key 做敏感值加密转换。
+ * LLM_CONFIG_KEY → 加密每个 provider 的 apiKey（幂等）。
+ */
+function prepareValueForStorage(key: string, value: string): string {
+  if (hasConfigSecrets(key)) {
+    try {
+      return encryptConfigValueForStorage(key, value);
+    } catch {
+      return value; // 加密失败不阻断（校验已过），保留原值
+    }
+  }
+  return value;
 }
 
 /** 返回脱敏的配置列表（API Key 仅返回是否已填，不回传明文） */
@@ -51,6 +84,9 @@ function maskConfigs(
       } catch {
         return item;
       }
+    }
+    if (item.key === STORAGE_CONFIG_KEY) {
+      return { ...item, value: maskStorageConfigValue(item.value) };
     }
     if (item.key === OSS_CONFIG_KEY) {
       try {
@@ -74,6 +110,27 @@ function maskConfigs(
         return item;
       }
     }
+    if (item.key === WEB_RESEARCH_CONFIG_KEY) {
+      try {
+        const parsed = JSON.parse(item.value) as Record<string, unknown>;
+        return {
+          ...item,
+          value: JSON.stringify(
+            {
+              ...parsed,
+              tavilyApiKey:
+                typeof parsed.tavilyApiKey === "string" && parsed.tavilyApiKey
+                  ? "********"
+                  : "",
+            },
+            null,
+            2
+          ),
+        };
+      } catch {
+        return item;
+      }
+    }
     if (item.key === AGENT_CONFIG_KEY) {
       try {
         const parsed = JSON.parse(item.value) as Record<string, unknown>;
@@ -84,6 +141,10 @@ function maskConfigs(
               ...parsed,
               tavilyApiKey:
                 typeof parsed.tavilyApiKey === "string" && parsed.tavilyApiKey
+                  ? "********"
+                  : "",
+              githubToken:
+                typeof parsed.githubToken === "string" && parsed.githubToken
                   ? "********"
                   : "",
             },
@@ -124,10 +185,14 @@ export async function GET() {
   const configs = await prisma.systemConfig.findMany({
     orderBy: { key: "asc" },
   });
-  return NextResponse.json({ ok: true, configs: maskConfigs(configs) });
+  return NextResponse.json({
+    ok: true,
+    configs: maskConfigs(configs),
+    storageInfo: { localPath: localStorageDisplayPath() },
+  });
 }
 
-export async function POST(req: Request) {
+export const POST = withApiLog("POST /api/system-config", async (req: Request) => {
   const parsed = configSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "配置参数无效。" }, { status: 400 });
@@ -140,11 +205,15 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  const item = await prisma.systemConfig.create({ data: parsed.data });
+  const storedValue = prepareValueForStorage(parsed.data.key, parsed.data.value);
+  const item = await prisma.systemConfig.create({
+    data: { key: parsed.data.key, value: storedValue },
+  });
+  logMutation("systemConfig", "create", { key: parsed.data.key });
   return NextResponse.json({ ok: true, item: maskConfigs([item])[0] });
-}
+});
 
-export async function PUT(req: Request) {
+export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => {
   const parsed = configSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "配置参数无效。" }, { status: 400 });
@@ -154,8 +223,10 @@ export async function PUT(req: Request) {
   let value = parsed.data.value;
   if (
     parsed.data.key === LLM_CONFIG_KEY ||
+    parsed.data.key === STORAGE_CONFIG_KEY ||
     parsed.data.key === OSS_CONFIG_KEY ||
     parsed.data.key === AGENT_CONFIG_KEY ||
+    parsed.data.key === WEB_RESEARCH_CONFIG_KEY ||
     parsed.data.key === WECHAT_CONFIG_KEY
   ) {
     const existing = await prisma.systemConfig.findUnique({
@@ -173,22 +244,25 @@ export async function PUT(req: Request) {
     );
   }
 
+  const storedValue = prepareValueForStorage(parsed.data.key, value);
   const item = await prisma.systemConfig.upsert({
     where: { key: parsed.data.key },
-    update: { value },
-    create: { key: parsed.data.key, value },
+    update: { value: storedValue },
+    create: { key: parsed.data.key, value: storedValue },
   });
+  logMutation("systemConfig", "update", { key: parsed.data.key });
   return NextResponse.json({ ok: true, item: maskConfigs([item])[0] });
-}
+});
 
-export async function DELETE(req: Request) {
+export const DELETE = withApiLog("DELETE /api/system-config", async (req: Request) => {
   const parsed = deleteSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "删除参数无效。" }, { status: 400 });
   }
   await prisma.systemConfig.delete({ where: { key: parsed.data.key } });
+  logMutation("systemConfig", "delete", { key: parsed.data.key });
   return NextResponse.json({ ok: true });
-}
+});
 
 /** 保存时把脱敏占位 "********" 还原成 DB 中已有的真实密钥 */
 function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): string {
@@ -211,9 +285,18 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
       });
       return JSON.stringify(merged, null, 2);
     }
+    if (key === WEB_RESEARCH_CONFIG_KEY) {
+      if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {
+        newVal.tavilyApiKey = oldVal.tavilyApiKey ?? "";
+      }
+      return JSON.stringify(newVal, null, 2);
+    }
     if (key === AGENT_CONFIG_KEY) {
       if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {
         newVal.tavilyApiKey = oldVal.tavilyApiKey ?? "";
+      }
+      if (newVal.githubToken === "********" || newVal.githubToken === "") {
+        newVal.githubToken = oldVal.githubToken ?? "";
       }
       return JSON.stringify(newVal, null, 2);
     }
@@ -223,7 +306,10 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
       }
       return JSON.stringify(newVal, null, 2);
     }
-    // OSS
+    if (key === STORAGE_CONFIG_KEY) {
+      return mergeStorageMaskedSecrets(oldJson, newJson);
+    }
+    // legacy OSS
     if (newVal.accessKeySecret === "********") {
       newVal.accessKeySecret = oldVal.accessKeySecret ?? "";
     }

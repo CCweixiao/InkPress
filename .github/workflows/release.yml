@@ -1,0 +1,166 @@
+name: Release
+
+# 触发：
+# 1. 推送 v* 形式的 tag（如 v0.1.0）→ 自动构建并发布 Release
+# 2. 手动触发（workflow_dispatch）→ 输入 tag 名后构建并发布
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag 名（如 v0.1.0，无需前缀也行）"
+        required: true
+        default: "v0.1.0"
+
+# 同一 tag 重新触发时取消旧的运行（避免旧代码构建阻塞新构建）
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+# 仅构建 arm64：GitHub Actions 自 2025-12-04 退役 macos-13 镜像后，
+# 已无任何原生 Intel macOS runner；跨架构在 arm64 runner 上打 x64 需要
+# 解决 bytenode bytecode + better-sqlite3 native binding 的 cross-arch
+# 问题（见 scripts/electron-build.mjs 的 arch guard），暂不支持。
+# Intel Mac 用户请引导到 Web 版或后续 self-hosted runner 方案。
+jobs:
+  build:
+    name: Build (arm64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "11.8.0"
+          run_install: false
+
+      - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # 启用 pnpm store 缓存：首次运行后，依赖装包时间从 ~60s 降到 ~10s
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          # 允许 better-sqlite3 / electron / sharp 等原生包构建
+          pnpm_allow_build: "true"
+
+      # 从 tag 名提取版本号写回 package.json，避免 tag 与产物文件名错位。
+      # 例如 tag=v0.4.2 → package.json.version=0.4.2 → 产物 InkPress-0.4.2-arm64.dmg。
+      # next.config.ts 的 APP_VERSION 注入和 prepare-standalone 均依赖 package.json.version。
+      - name: Sync version from tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.tag }}"
+          else
+            RAW="${{ github.ref_name }}"
+          fi
+          VERSION="${RAW#v}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "✗ tag 版本号非法: $RAW（期望 vX.Y.Z）"
+            exit 1
+          fi
+          echo "同步 package.json version → $VERSION（来源: $RAW）"
+          node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          grep '"version"' package.json
+
+      - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
+        run: pnpm electron:prepare
+
+      - name: Configure code signing
+        id: sign
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "代码签名 secrets 已配置，将签名 + 公证"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "未配置签名 secrets，显式禁用签名（macos runner keychain 有默认证书会触发自动签名并报错）"
+            # 在 build.mac 写入 identity:null，比 CSC_IDENTITY_AUTO_DISCOVERY env 更可靠
+            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          fi
+
+      - name: Build DMG (arm64)
+        env:
+          # 透传签名 env 给 electron-builder。未签名时 CSC_LINK 为空 + identity:null 已禁用签名
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec electron-builder --mac --arm64 --publish never
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-arm64
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 Release 所需
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg-arm64
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          # 规范化：确保以 v 开头
+          case "$TAG" in
+            v*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
+            *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          files: artifacts/*.dmg
+          body: |
+            ## 安装包
+
+            | 文件 | 适用平台 |
+            | --- | --- |
+            | `*-arm64.dmg` | Apple Silicon（M1/M2/M3/M4） |
+
+            ## 安装说明
+
+            1. 下载 `*-arm64.dmg`，双击打开，将 InkPress 拖入 Applications
+            2. 首次打开若提示「无法验证开发者」：右键点击应用 → 选择「打开」即可绕过 Gatekeeper（未签名构建）；已签名构建可双击直接打开
+            3. 启动后数据存放在 `~/.inkpress`（数据库、文章、技能、日志）
+
+            > 注：仅支持 Apple Silicon。Intel Mac 暂未提供原生包，可使用 Web 版。
+
+            ---
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

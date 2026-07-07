@@ -4,7 +4,12 @@ import { prisma } from "@/lib/db";
 import { convertToWeChat } from "@/lib/convert/to-wechat";
 import { uploadBodyImage } from "@/lib/wechat/material";
 import { addDraft, updateDraft } from "@/lib/wechat/draft";
-import { readContent } from "@/lib/content-store";
+import { readContentAt } from "@/lib/content-store";
+import { moduleLogger } from "@/lib/logger";
+import { withApiLog } from "@/lib/api-log";
+import { requireLicenseForApi } from "@/lib/license/guard";
+
+const log = moduleLogger("wechat.draft.api");
 
 const schema = z.object({
   articleId: z.string(),
@@ -21,7 +26,9 @@ const schema = z.object({
  * 4. addDraft 推送
  * 5. 写回 wxMediaId + status=pushed
  */
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest) => {
+  const licenseBlocked = await requireLicenseForApi();
+  if (licenseBlocked) return licenseBlocked;
   const body = await req.json().catch(() => ({}));
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -34,7 +41,7 @@ export async function POST(req: NextRequest) {
   if (!article) {
     return NextResponse.json({ error: "文章不存在" }, { status: 404 });
   }
-  let themeId = parsed.data.themeId ?? article.themeId;
+  const themeId = parsed.data.themeId ?? article.themeId;
   const theme = themeId
     ? await prisma.theme.findUnique({ where: { id: themeId } })
     : await prisma.theme.findFirst({ where: { isBuiltIn: true } });
@@ -43,6 +50,8 @@ export async function POST(req: NextRequest) {
   }
 
   // 服务端 fetcher（下载外链图片，带超时与大小限制，避免卡死或超大文件）
+  // 每个失败分支都记 warn：图片下载失败是公众号图片缺失的最常见根因，
+  // 之前被上层 .catch(()=>null) 吞掉，现在这里留下明确日志。
   const fetcher = async (url: string): Promise<ArrayBuffer> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -51,13 +60,26 @@ export async function POST(req: NextRequest) {
         signal: controller.signal,
         headers: { "user-agent": "Mozilla/5.0 (compatible; WePaperBot/1.0)" },
       });
-      if (!res.ok) throw new Error(`下载图片失败：${url}（${res.status}）`);
+      if (!res.ok) {
+        log.warn({ url, status: res.status }, "下载外链图片失败（HTTP 非 2xx）");
+        throw new Error(`下载图片失败：${url}（${res.status}）`);
+      }
       const buf = await res.arrayBuffer();
       // 限制 10MB（微信单图上限约 10MB）
       if (buf.byteLength > 10 * 1024 * 1024) {
+        log.warn(
+          { url, sizeMb: +(buf.byteLength / 1024 / 1024).toFixed(1) },
+          "外链图片超出 10MB 上限"
+        );
         throw new Error(`图片过大（${(buf.byteLength / 1024 / 1024).toFixed(1)}MB）：${url}`);
       }
       return buf;
+    } catch (e) {
+      // abort（超时）与网络错误在此统一记 warn；上面已记的 HTTP/超大分支不会重复
+      if (e instanceof Error && !/下载图片失败|图片过大/.test(e.message)) {
+        log.warn({ url, err: e.message }, "下载外链图片异常（超时或网络错误）");
+      }
+      throw e;
     } finally {
       clearTimeout(timer);
     }
@@ -66,10 +88,10 @@ export async function POST(req: NextRequest) {
   try {
     // 正文从文件读取（回退 contentMd 列兼容旧数据）
     const markdown = article.contentPath
-      ? await readContent(article.id)
+      ? await readContentAt(article.contentPath)
       : (article.contentMd ?? "");
-    // 2. 转换（含图片上传替换）
-    const { html } = await convertToWeChat(
+    // 2. 转换（含图片上传替换；failedImages 为上传失败的外链，原样保留在 HTML 中）
+    const { html, failedImages } = await convertToWeChat(
       markdown,
       {
         cssContent: theme.cssContent,
@@ -78,9 +100,15 @@ export async function POST(req: NextRequest) {
       },
       { uploadImage: (url) => uploadBodyImage(url, fetcher) }
     );
+    if (failedImages.length > 0) {
+      log.warn(
+        { articleId, count: failedImages.length, urls: failedImages.map((f) => f.url) },
+        "部分正文图片上传失败，将以原外链推送（公众号可能因防盗链裂图）"
+      );
+    }
 
     // 3. 封面
-    let thumbMediaId = article.coverMediaId ?? "";
+    const thumbMediaId = article.coverMediaId ?? "";
     if (!thumbMediaId) {
       // 无封面时使用一张占位：从正文第一张图取，否则跳过封面（公众号要求必须有封面）
       return NextResponse.json(
@@ -114,6 +142,7 @@ export async function POST(req: NextRequest) {
         message: "已更新公众号草稿箱中的文章",
         mediaId: existedMediaId,
         updated: true,
+        failedImages,
       });
     }
 
@@ -127,9 +156,11 @@ export async function POST(req: NextRequest) {
       message: "已推送到公众号草稿箱",
       mediaId,
       updated: false,
+      failedImages,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "推送失败";
+    log.error({ err: e, articleId }, "推送公众号草稿失败");
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
+});

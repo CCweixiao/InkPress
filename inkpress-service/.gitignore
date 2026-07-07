@@ -1,0 +1,50 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next
+/.next/
+/out/
+next-env.d.ts
+
+# build
+/build
+/dist
+
+# prisma generated client
+/src/generated
+
+# env
+.env
+.env.local
+.env.*.local
+.env.production
+
+# data
+/data
+*.db
+*.db-journal
+dev.db
+/backups
+.backup
+
+# logs
+/logs
+*.log
+
+# os
+.DS_Store
+
+# ssh keys
+*.pem
+
+# editor
+.vscode/
+.idea/
+
+# tsbuildinfo
+*.tsbuildinfo
+
+# graphify 知识图谱产物（本地代码图谱，不入库）
+/graphify-out/

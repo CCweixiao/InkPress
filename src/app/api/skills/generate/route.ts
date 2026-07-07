@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { generateText } from "ai";
 import { getModel } from "@/lib/ai/provider";
+import { requireLicenseForApi } from "@/lib/license/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ const schema = z.object({
  * 产出后交前端预览编辑，确认后再 POST /api/skills 保存。
  */
 export async function POST(req: NextRequest) {
+  const licenseBlocked = await requireLicenseForApi();
+  if (licenseBlocked) return licenseBlocked;
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });

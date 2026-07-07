@@ -1,0 +1,179 @@
+import { prisma } from "@/lib/db";
+import { moduleLogger } from "@/lib/logger";
+import { truncateUa } from "@/lib/http";
+
+const log = moduleLogger("license:validation-log");
+
+export interface ValidationLogInput {
+  licenseKeyId?: string | null;
+  activationId?: string | null;
+  deviceIdHash?: string | null;
+  action: "ACTIVATE" | "VALIDATE" | "DEACTIVATE";
+  result: "ALLOWED" | "DENIED" | "RATE_LIMITED" | "ERROR";
+  reason?: string | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  appVersion?: string | null;
+}
+
+/**
+ * 写入分级（缓解 SQLite IO 压力 / IOPS 上限）：
+ * - all       全量记录（默认）
+ * - denied    仅 DENIED / RATE_LIMITED / ERROR（丢 ALLOWED）
+ * - error     仅 ERROR（异常路径）
+ * - off       完全关停
+ *
+ * 紧急情况：LICENSE_VALIDATION_LOG_LEVEL=off 可立即停写。
+ */
+type ValidationLogLevel = "all" | "denied" | "error" | "off";
+
+const LOG_LEVEL: ValidationLogLevel = (() => {
+  const raw = (process.env.LICENSE_VALIDATION_LOG_LEVEL ?? "all")
+    .trim()
+    .toLowerCase();
+  return raw === "denied" || raw === "error" || raw === "off" ? raw : "all";
+})();
+
+function shouldWrite(result: ValidationLogInput["result"]): boolean {
+  if (LOG_LEVEL === "off") return false;
+  if (LOG_LEVEL === "error") return result === "ERROR";
+  if (LOG_LEVEL === "denied") {
+    return result === "DENIED" || result === "RATE_LIMITED" || result === "ERROR";
+  }
+  return true;
+}
+
+/**
+ * 写 License 校验日志（PDC §9.4）。可异步、失败仅记录不抛，但错误必须可见。
+ *
+ * 注：调用方处于请求关键路径，函数内部根据 LOG_LEVEL 决定是否真正落盘。
+ */
+export async function writeValidationLog(
+  input: ValidationLogInput
+): Promise<void> {
+  if (!shouldWrite(input.result)) return;
+  try {
+    await prisma.licenseValidationLog.create({
+      data: {
+        licenseKeyId: input.licenseKeyId ?? null,
+        activationId: input.activationId ?? null,
+        deviceIdHash: input.deviceIdHash ?? null,
+        action: input.action,
+        result: input.result,
+        reason: input.reason ?? null,
+        ip: input.ip ?? null,
+        userAgent: truncateUa(input.userAgent ?? null),
+        appVersion: input.appVersion ?? null,
+      },
+    });
+  } catch (err) {
+    log.error({ err, action: input.action, result: input.result }, "校验日志写入失败");
+  }
+}
+
+export interface ListValidationLogsOpts {
+  licenseKeyId: string;
+  page: number;
+  pageSize: number;
+  /** 仅返回最近 N 天内的记录；0 或不传 = 不加时间过滤 */
+  days?: number;
+}
+
+export interface ListValidationLogsResult {
+  items: Awaited<ReturnType<typeof prisma.licenseValidationLog.findMany>>;
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * 分页查询某 License 的校验日志，按 createdAt 倒序。
+ * 默认 days=3 仅返回最近 3 天数据，避免长尾查询。
+ */
+export async function listValidationLogs(
+  opts: ListValidationLogsOpts
+): Promise<ListValidationLogsResult> {
+  const { licenseKeyId, page, pageSize, days } = opts;
+  const safePage = Math.max(1, Math.floor(page));
+  const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
+
+  const where: { licenseKeyId: string; createdAt?: { gte?: Date } } = {
+    licenseKeyId,
+  };
+  if (days && days > 0) {
+    const since = new Date(Date.now() - days * 86_400_000);
+    where.createdAt = { gte: since };
+  }
+
+  const [items, total] = await Promise.all([
+    prisma.licenseValidationLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (safePage - 1) * safePageSize,
+      take: safePageSize,
+    }),
+    prisma.licenseValidationLog.count({ where }),
+  ]);
+
+  return { items, total, page: safePage, pageSize: safePageSize };
+}
+
+// ===== TTL 清理：默认 3 天，超期自动 deleteMany =====
+
+const LOG_RETENTION_DAYS = Math.max(
+  0,
+  Math.floor(Number(process.env.LICENSE_LOG_RETENTION_DAYS) || 3)
+);
+// 启动后首次清理的延迟：避免重启高峰叠加 IO 压力
+const SWEEP_START_DELAY_MS = Math.max(
+  60_000,
+  Math.floor(Number(process.env.LICENSE_LOG_SWEEP_START_DELAY_MS) || 5 * 60_000)
+);
+const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+// 单次 deleteMany 上限，超过则分批；0 = 不限制
+const SWEEP_BATCH_SIZE = Math.max(
+  0,
+  Math.floor(Number(process.env.LICENSE_LOG_SWEEP_BATCH) || 5000)
+);
+
+async function sweepExpiredLogs(): Promise<void> {
+  if (LOG_RETENTION_DAYS <= 0) return;
+  // LOG_LEVEL=off 时跳过 sweep：用户紧急关停日志时不应再产生 IO 压力
+  if (LOG_LEVEL === "off") return;
+  try {
+    const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86_400_000);
+    // 分批删除，避免一次性卡死 SQLite（deleteMany 无 LIMIT，用 raw SQL）
+    if (SWEEP_BATCH_SIZE > 0) {
+      // 注：Prisma 参数化绑定，SWEEP_BATCH_SIZE 已校验为非负整数
+      const result = await prisma.$executeRaw`
+        DELETE FROM LicenseValidationLog
+        WHERE rowid IN (
+          SELECT rowid FROM LicenseValidationLog
+          WHERE createdAt < ${cutoff}
+          LIMIT ${SWEEP_BATCH_SIZE}
+        )
+      `;
+      if (result > 0) {
+        log.info({ count: result, cutoff, batch: true }, "清理过期校验日志（分批）");
+      }
+    } else {
+      const result = await prisma.licenseValidationLog.deleteMany({
+        where: { createdAt: { lt: cutoff } },
+      });
+      if (result.count > 0) {
+        log.info({ count: result.count, cutoff }, "清理过期校验日志");
+      }
+    }
+  } catch (err) {
+    log.warn({ err }, "清理过期校验日志失败（忽略）");
+  }
+}
+
+if (process.env.NEXT_RUNTIME === "nodejs") {
+  // 启动后 5 分钟跑一次初始清理（默认），随后每 24h 一次
+  // 默认推迟 5 分钟，让服务先 warm up 完成（SSR 编译、连接池、缓存预热）
+  const startTimer = setTimeout(() => void sweepExpiredLogs(), SWEEP_START_DELAY_MS);
+  startTimer.unref?.();
+  const timer = setInterval(() => void sweepExpiredLogs(), SWEEP_INTERVAL_MS);
+  timer.unref?.();
+}

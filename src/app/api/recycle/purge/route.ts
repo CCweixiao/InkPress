@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { purgeArticle, purgeAsset, purgeSpace } from "@/lib/recycle";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 
@@ -18,8 +19,8 @@ async function purgeOne(type: "article" | "space" | "asset", id: string) {
   else await purgeAsset(id);
 }
 
-/** 彻底删除回收站项（真删：文章删文件、素材删 OSS）。支持单个或批量。 */
-export async function POST(req: Request) {
+/** 彻底删除回收站项（真删：文章删文件、素材删统一存储对象）。支持单个或批量。 */
+export const POST = withApiLog("POST /api/recycle/purge", async (req: Request) => {
   const body = await req.json().catch(() => ({}));
 
   // 优先尝试批量
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
   if (batch.success) {
     for (const { type, id } of batch.data.items) {
       await purgeOne(type, id);
+      logMutation("recycle", "purge", { type, id });
     }
     return NextResponse.json({ ok: true, count: batch.data.items.length });
   }
@@ -38,5 +40,6 @@ export async function POST(req: Request) {
   }
   const { type, id } = single.data;
   await purgeOne(type, id);
+  logMutation("recycle", "purge", { type, id });
   return NextResponse.json({ ok: true });
-}
+});

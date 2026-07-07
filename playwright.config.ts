@@ -10,7 +10,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "pnpm tsx scripts/prepare-standalone.ts && PORT=3100 HOSTNAME=127.0.0.1 node .next/standalone/server.js",
+      "INKPRESS_HOME=$PWD/.e2e-data RESOURCE_ROOT=$PWD/prisma pnpm tsx scripts/setup-e2e.ts && INKPRESS_HOME=$PWD/.e2e-data RESOURCE_ROOT=$PWD PORT=3100 HOSTNAME=127.0.0.1 pnpm start",
     url: "http://localhost:3100",
     reuseExistingServer: false,
     timeout: 120_000,

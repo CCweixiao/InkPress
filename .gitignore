@@ -1,5 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# IDE
+.idea/
+.vscode/
+
 # dependencies
 /node_modules
 /.pnp
@@ -9,6 +13,7 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+.pnpm-store/
 
 # testing
 /coverage
@@ -20,7 +25,12 @@
 /out/
 
 # production
-/build
+/build/*
+# 保留 electron-builder 打包图标源（默认 buildResources=build/）
+!/build/icon.png
+!/build/icon.svg
+# 保留 macOS 签名/公证用的权限文件
+!/build/entitlements.mac.plist
 
 # misc
 .DS_Store
@@ -34,6 +44,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 允许提交 publish 模板（.env.publish 本体仍被忽略）
+!.env.publish.example
 
 # vercel
 .vercel
@@ -48,6 +60,7 @@ next-env.d.ts
 # sqlite database
 *.db
 *.db-journal
+*.db.bak*
 
 # 开发模式数据库目录（含 dev.db、备份、迁移脚本留档）
 /dev.database/
@@ -71,3 +84,7 @@ next-env.d.ts
 
 # Docker 数据卷（持久化数据，不入库）
 /inkpress-data/
+.e2e-data/
+
+# graphify 知识图谱产物（`graphify update .` 生成的 AST 图谱，不入库）
+/graphify-out/

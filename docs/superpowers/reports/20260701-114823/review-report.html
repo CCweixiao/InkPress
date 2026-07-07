@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>P3/P4 Agent SDK 未提交改动 Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f7fb;
+        --surface: #ffffff;
+        --surface-alt: #f7f9fc;
+        --surface-deep: #eef3f9;
+        --text: #1f2d3d;
+        --muted: #5b6b7c;
+        --line: #d7e0ea;
+        --accent: #2f6feb;
+        --accent-soft: #eaf1ff;
+        --danger: #d63c3c;
+        --danger-soft: #fff0f0;
+        --warn: #c9811a;
+        --warn-soft: #fff5e8;
+        --ok: #1f8f5f;
+        --ok-soft: #ecfbf4;
+        --ink: #0f172a;
+        --code-bg: #0f172a;
+        --code-head: #111c31;
+        --code-line: rgba(148, 163, 184, 0.14);
+        --code-accent: #7dd3fc;
+        --code-text: #e5eefb;
+        --shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+        background:
+          linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+
+      .page {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+
+      .hero,
+      .panel,
+      .dimension-section,
+      .summary-panel {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+      }
+
+      .hero {
+        padding: 30px 32px;
+        border-top: 5px solid var(--accent);
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: 34px;
+        line-height: 1.2;
+        color: var(--ink);
+      }
+
+      .hero-subtitle {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .meta-item {
+        padding: 16px 18px;
+        background: var(--surface-alt);
+        border-radius: 14px;
+        border: 1px solid var(--line);
+      }
+
+      .meta-label,
+      .metric-label,
+      .section-label {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        font-weight: 600;
+      }
+
+      .meta-value {
+        margin-top: 6px;
+        font-size: 15px;
+        line-height: 1.5;
+        word-break: break-word;
+        color: var(--ink);
+      }
+
+      .summary-row {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 18px;
+        margin-top: 20px;
+      }
+
+      .summary-panel {
+        padding: 22px 24px;
+      }
+
+      .summary-panel h2,
+      .panel h2,
+      .dimension-section h2 {
+        margin: 0 0 16px;
+        font-size: 22px;
+        color: var(--ink);
+      }
+
+      .panel {
+        padding: 24px;
+        margin-top: 20px;
+      }
+
+      .meta-matrix,
+      .score-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .metric-strip {
+        margin-top: 18px;
+      }
+
+      .metric-card {
+        padding: 18px;
+        border-radius: 16px;
+        background: linear-gradient(180deg, #ffffff 0%, var(--surface-alt) 100%);
+        border: 1px solid var(--line);
+      }
+
+      .metric-card.positive {
+        background: var(--ok-soft);
+        border-color: rgba(31, 143, 95, 0.2);
+      }
+
+      .metric-card.danger {
+        background: var(--danger-soft);
+        border-color: rgba(214, 60, 60, 0.2);
+      }
+
+      .metric-card.warning {
+        background: var(--warn-soft);
+        border-color: rgba(201, 129, 26, 0.2);
+      }
+
+      .metric-value {
+        margin-top: 8px;
+        font-size: 30px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      .summary-text {
+        line-height: 1.7;
+        white-space: pre-wrap;
+      }
+
+      .dimension-section {
+        padding: 24px;
+        margin-top: 20px;
+      }
+
+      .section-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .section-block {
+        padding: 16px 18px;
+        background: var(--surface-alt);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+
+      .finding-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--surface);
+        overflow: hidden;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+      }
+
+      .finding-card + .finding-card {
+        margin-top: 14px;
+      }
+
+      .finding-card summary {
+        list-style: none;
+        cursor: pointer;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 18px 20px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      }
+
+      .finding-card summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .finding-badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .badge.severity {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .badge.must-fix.is-true {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .badge.must-fix.is-false {
+        background: #edf2f7;
+        color: var(--muted);
+      }
+
+      .finding-title {
+        font-weight: 700;
+        line-height: 1.5;
+        color: var(--ink);
+      }
+
+      .finding-location {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        color: var(--muted);
+        text-align: right;
+      }
+
+      .finding-body {
+        padding: 0 20px 20px;
+        line-height: 1.7;
+      }
+
+      .finding-body > div + div {
+        margin-top: 8px;
+      }
+
+      .business-checks {
+        display: grid;
+        gap: 12px;
+      }
+
+      .business-check {
+        padding: 16px 18px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--surface-alt);
+      }
+
+      .business-check.passed {
+        background: linear-gradient(180deg, #ffffff 0%, var(--ok-soft) 100%);
+        border-color: rgba(31, 143, 95, 0.22);
+      }
+
+      .business-check.failed {
+        background: linear-gradient(180deg, #ffffff 0%, var(--danger-soft) 100%);
+        border-color: rgba(214, 60, 60, 0.22);
+      }
+
+      .business-check-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .business-check-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 14px;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid currentColor;
+      }
+
+      .business-check-feature {
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      .business-check-status {
+        margin-left: auto;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      .business-check-detail,
+      .business-check-ref {
+        margin-top: 8px;
+        line-height: 1.7;
+      }
+
+      ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      .plain-list,
+      .file-list,
+      .question-list {
+        margin: 0;
+      }
+
+      .file-list li {
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: var(--surface-alt);
+        border: 1px solid var(--line);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        color: var(--ink);
+      }
+
+      .file-list li + li {
+        margin-top: 8px;
+      }
+
+      pre {
+        margin: 10px 0 0;
+        padding: 0;
+        overflow-x: auto;
+        border-radius: 14px;
+        background:
+          linear-gradient(180deg, var(--code-head) 0 44px, var(--code-bg) 44px 100%);
+        color: var(--code-text);
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      code {
+        display: block;
+        position: relative;
+        padding: 58px 18px 18px;
+        line-height: 1.7;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        white-space: pre;
+        background-image: linear-gradient(transparent 31px, var(--code-line) 32px);
+        background-size: 100% 32px;
+      }
+
+      code::before {
+        content: "代码片段";
+        position: absolute;
+        top: 14px;
+        left: 18px;
+        color: var(--code-accent);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      code::after {
+        content: "";
+        position: absolute;
+        top: 22px;
+        right: 18px;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #fb7185;
+        box-shadow: -18px 0 0 #fbbf24, -36px 0 0 #34d399;
+      }
+
+      .empty-state {
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: var(--surface-alt);
+        color: var(--muted);
+        border: 1px dashed var(--line);
+      }
+
+      .footer {
+        margin-top: 24px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      @media (max-width: 980px) {
+        .hero-grid,
+        .meta-matrix,
+        .score-grid,
+        .section-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .summary-row {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .hero-grid,
+        .meta-matrix,
+        .score-grid,
+        .section-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .finding-card summary {
+          grid-template-columns: 1fr;
+        }
+
+        .finding-location {
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <section class="hero">
+        <h1>P3/P4 Agent SDK 未提交改动 Review</h1>
+        <div class="hero-subtitle">结构化代码审查报告</div>
+        <div class="hero-grid">
+          <div class="meta-item">
+            <div class="meta-label">审查范围</div>
+            <div class="meta-value">working tree uncommitted changes; review-scope.mjs fallback because origin/master is unavailable</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">分支名称</div>
+            <div class="meta-value">unknown</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">生成时间</div>
+            <div class="meta-value">2026-07-01 11:48:23</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">审查者</div>
+            <div class="meta-value">Codex</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="summary-row">
+        <section class="summary-panel">
+          <h2>审查结论</h2>
+          <div class="section-grid">
+            <div class="section-block">
+              <div class="section-label">结论状态</div>
+              <div class="meta-value">可直接合入</div>
+            </div>
+            <div class="section-block">
+              <div class="section-label">风险等级</div>
+              <div class="meta-value">低风险</div>
+            </div>
+          </div>
+          <div class="section-label" style="margin-top:16px;">结论说明</div>
+          <div class="summary-text">P3/P4 review 中发现的阻断点已直接修复，当前没有剩余 must-fix finding。验证通过 typecheck、全量单测、diff whitespace check 和本地 Prisma migration status。</div>
+        </section>
+
+        <section class="summary-panel">
+          <h2>评分与分布</h2>
+          <div class="score-grid">
+            
+    <div class="metric-card positive">
+      <div class="metric-label">总分</div>
+      <div class="metric-value">100</div>
+    </div>
+  
+            
+    <div class="metric-card positive">
+      <div class="metric-label">必须修复问题</div>
+      <div class="metric-value">0</div>
+    </div>
+  
+            
+    <div class="metric-card neutral">
+      <div class="metric-label">阻断问题数</div>
+      <div class="metric-value">0</div>
+    </div>
+  
+            
+    <div class="metric-card neutral">
+      <div class="metric-label">高风险问题数</div>
+      <div class="metric-value">0</div>
+    </div>
+  
+          </div>
+          <div class="score-grid metric-strip">
+            
+    <div class="metric-card neutral">
+      <div class="metric-label">中风险问题数</div>
+      <div class="metric-value">0</div>
+    </div>
+  
+            
+    <div class="metric-card neutral">
+      <div class="metric-label">低风险问题数</div>
+      <div class="metric-value">0</div>
+    </div>
+  
+            
+    <div class="metric-card neutral">
+      <div class="metric-label">审查文件数</div>
+      <div class="metric-value">15</div>
+    </div>
+  
+            
+    <div class="metric-card neutral">
+      <div class="metric-label">需求来源</div>
+      <div class="metric-value">code-plan</div>
+    </div>
+  
+          </div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <h2>需求上下文</h2>
+        <div class="meta-matrix">
+          <div class="meta-item">
+            <div class="meta-label">输入类型</div>
+            <div class="meta-value">code-plan</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">来源标题</div>
+            <div class="meta-value">docs/p3-p4-implementation-review.md</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">来源地址</div>
+            <div class="meta-value">-</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">审查文件数</div>
+            <div class="meta-value">15</div>
+          </div>
+        </div>
+        <div class="section-label" style="margin-top:16px;">需求摘要</div>
+        <div class="summary-text">审查 P3 ArticleTypeProfile 与 P4 Claude Agent SDK 原生子 agent 的未提交实现，按高风险项直接修复不合理之处。</div>
+        <div class="section-label" style="margin-top:16px;">任务描述</div>
+        <div class="summary-text">核对 SDK agents/工具/事件字段、profileId migration、profile prompt/skill 注入、子 agent 工具边界和前端事件渲染。</div>
+        <div class="section-label" style="margin-top:16px;">验收提示</div>
+        <ul class="plain-list"><li>生产迁移不会缺失 Article.profileId</li><li>子 agent 能通过 SDK 内置 Agent 工具被调起</li><li>task_* 事件能正确渲染到前端 agent-step</li><li>测试与类型检查通过</li></ul>
+      </section>
+
+      <section class="panel">
+        <h2>已审查文件清单</h2>
+        <ul class="file-list"><li>docs/p3-p4-implementation-review.md</li><li>prisma/schema.prisma</li><li>prisma/migrations/20260708010000_article_profile/migration.sql</li><li>src/app/api/ai/chat/route.ts</li><li>src/app/api/articles/route.ts</li><li>src/components/articles/NewArticleButton.tsx</li><li>src/lib/ai/article-type-profile.ts</li><li>src/lib/ai/subagents.ts</li><li>src/lib/ai/claude-agent-options.ts</li><li>src/lib/ai/agent-sdk-stream-adapter.ts</li><li>src/lib/ai/system-prompt.ts</li><li>tests/unit/article-type-profile.test.ts</li><li>tests/unit/subagents.test.ts</li><li>tests/unit/system-prompt.test.ts</li><li>tests/unit/agent-sdk-stream-adapter.test.ts</li></ul>
+      </section>
+
+      <section class="panel">
+        <h2>业务功能点核对</h2>
+        
+    <div class="business-checks">
+      
+            <div class="business-check passed">
+              <div class="business-check-head">
+                <span class="business-check-icon">✓</span>
+                <span class="business-check-feature">P3 ArticleTypeProfile 持久化</span>
+                <span class="business-check-status">已实现</span>
+              </div>
+              <div class="business-check-detail">Article.profileId 已有 schema 字段并补充生产 migration，避免 migrate deploy 环境缺列。</div>
+              <div class="business-check-ref"><strong>对应需求：</strong>docs/p3-p4-implementation-review.md: 中风险 3</div>
+            </div>
+          
+            <div class="business-check passed">
+              <div class="business-check-head">
+                <span class="business-check-icon">✓</span>
+                <span class="business-check-feature">P3 profile 注入 system prompt 与默认 Skill</span>
+                <span class="business-check-status">已实现</span>
+              </div>
+              <div class="business-check-detail">chat route 读取 loaded.profileId，合并 forceSkillIds 与 profile.defaultSkills；system prompt 按 article profile / technical document type 注入写作引导。</div>
+              <div class="business-check-ref"><strong>对应需求：</strong>docs/p3-p4-implementation-review.md: P3 ArticleTypeProfile</div>
+            </div>
+          
+            <div class="business-check passed">
+              <div class="business-check-head">
+                <span class="business-check-icon">✓</span>
+                <span class="business-check-feature">P4 SDK 原生子 agent 可被调起</span>
+                <span class="business-check-status">已实现</span>
+              </div>
+              <div class="business-check-detail">根据 Claude Agent SDK 官方文档，已只开放内置 Agent 工具并加入 allowedTools；Read/Edit/Bash/WebFetch 等内置工具仍未暴露。</div>
+              <div class="business-check-ref"><strong>对应需求：</strong>docs/p3-p4-implementation-review.md: 高风险 1；Claude Agent SDK Subagents 文档</div>
+            </div>
+          
+            <div class="business-check passed">
+              <div class="business-check-head">
+                <span class="business-check-icon">✓</span>
+                <span class="business-check-feature">P4 task_* 事件前端渲染</span>
+                <span class="business-check-status">已实现</span>
+              </div>
+              <div class="business-check-detail">SDK 类型确认 task_started/task_progress 字段为 snake_case；task_notification 不带 subagent_type，已用 task_id 缓存补齐完成态展示，并增加单测。</div>
+              <div class="business-check-ref"><strong>对应需求：</strong>docs/p3-p4-implementation-review.md: 高风险 2</div>
+            </div>
+          
+            <div class="business-check passed">
+              <div class="business-check-head">
+                <span class="business-check-icon">✓</span>
+                <span class="business-check-feature">子 agent 工具边界</span>
+                <span class="business-check-status">已实现</span>
+              </div>
+              <div class="business-check-detail">research/review/fact_check 子 agent 仍限制为 InkPress MCP allow 工具；web_fetch 继续走主 agent 审批/白名单链路，不在子 agent 中直接开放。</div>
+              <div class="business-check-ref"><strong>对应需求：</strong>docs/p3-p4-implementation-review.md: 中风险 5</div>
+            </div>
+          
+    </div>
+  
+      </section>
+
+      
+    <section class="dimension-section">
+      <h2>业务功能的实现</h2>
+      <div class="empty-state">审查结果无偏差</div>
+    </section>
+  
+    <section class="dimension-section">
+      <h2>代码的质量</h2>
+      <div class="empty-state">审查结果无偏差</div>
+    </section>
+  
+    <section class="dimension-section">
+      <h2>架构的合理性</h2>
+      <div class="empty-state">审查结果无偏差</div>
+    </section>
+  
+    <section class="dimension-section">
+      <h2>项目 rules 的遵循情况</h2>
+      <div class="empty-state">审查结果无偏差</div>
+    </section>
+  
+
+      <section class="panel">
+        <h2>待确认问题</h2>
+        <div class="empty-state">审查结果无偏差</div>
+      </section>
+
+      <div class="footer">本报告由 .cursor/skills/code-review-skills/scripts/render-review-report.mjs 基于结构化 findings 自动生成。</div>
+    </div>
+  </body>
+</html>

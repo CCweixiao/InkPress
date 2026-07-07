@@ -4,10 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FolderPlus, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ViewToggle, type ViewMode } from "@/components/common/ViewToggle";
+import { ViewToggle, useViewMode, type ViewMode } from "@/components/common/ViewToggle";
 import { SpaceSection, type SpaceItem } from "./SpaceSection";
 import { SpaceDialog } from "./SpaceDialog";
 import { ArticleCard, type ArticleListItem } from "@/components/articles/ArticleCard";
+import { ImportArticleButton } from "@/components/articles/ImportArticleButton";
 
 /** 首页未分类区块默认显示数，「显示更多」递增量 */
 const UNCLASSIFIED_PAGE_SIZE = 8;
@@ -19,12 +20,14 @@ const UNCLASSIFIED_PAGE_SIZE = 8;
 export function HomeView({
   spaces,
   unclassified,
+  initialViewMode,
 }: {
   spaces: { space: SpaceItem; articles: ArticleListItem[] }[];
   unclassified: ArticleListItem[];
+  initialViewMode?: ViewMode;
 }) {
   const router = useRouter();
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useViewMode(initialViewMode);
   const [createOpen, setCreateOpen] = useState(false);
   // 未分类区块懒加载
   const [unclassifiedLimit, setUnclassifiedLimit] = useState(UNCLASSIFIED_PAGE_SIZE);
@@ -73,6 +76,7 @@ export function HomeView({
                 <span className="text-xs text-muted-foreground">
                   {unclassified.length} 篇
                 </span>
+                <ImportArticleButton spaceId={null} variant="ghost" size="sm" />
               </div>
               <div
                 className={

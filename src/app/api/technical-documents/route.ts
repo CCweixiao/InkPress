@@ -6,6 +6,7 @@ import {
   technicalDocumentRelativePath,
   writeTechnicalDocumentContent,
 } from "@/lib/content-store";
+import { withApiLog, logMutation } from "@/lib/api-log";
 
 const createSchema = z.object({
   title: z.string().trim().max(200).default("未命名技术文档"),
@@ -28,14 +29,14 @@ export async function GET() {
   return NextResponse.json({ documents });
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withApiLog("POST /api/technical-documents", async (req: NextRequest) => {
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "技术文档参数无效。" }, { status: 400 });
   }
   const config = await getAgentConfig();
   if (!config.projects.some((project) => project.id === parsed.data.projectId)) {
-    return NextResponse.json({ error: "项目不在只读白名单中。" }, { status: 400 });
+    return NextResponse.json({ error: "项目不在长期信任列表中。" }, { status: 400 });
   }
   const document = await prisma.technicalDocument.create({
     data: parsed.data,
@@ -45,5 +46,6 @@ export async function POST(req: NextRequest) {
     where: { id: document.id },
     data: { contentPath: technicalDocumentRelativePath(document.id) },
   });
+  logMutation("techdoc", "create", { id: document.id, title: document.title, projectId: document.projectId });
   return NextResponse.json({ document: updated }, { status: 201 });
-}
+});

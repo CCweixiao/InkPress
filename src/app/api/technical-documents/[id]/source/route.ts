@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import { readProjectFile } from "@/lib/ai/project-access";
+import { codeSourceProject } from "@/lib/ai/code-source";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -12,9 +13,22 @@ export async function GET(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "技术文档不存在。" }, { status: 404 });
   }
   const config = await getAgentConfig();
-  const project = config.projects.find((item) => item.id === document.projectId);
+  let project = config.projects.find((item) => item.id === document.projectId);
+  if (!project && document.codeSourceJson !== "{}") {
+    try {
+      const source = JSON.parse(document.codeSourceJson) as { id?: string };
+      if (source.id) {
+        project = (await codeSourceProject(source.id, config)).project;
+      }
+    } catch {
+      // A temporary grant may have expired; the response below asks for authorization again.
+    }
+  }
   if (!project) {
-    return NextResponse.json({ error: "项目不在只读白名单中。" }, { status: 403 });
+    return NextResponse.json(
+      { error: "代码源授权已失效，请在写作助手中重新授权。" },
+      { status: 403 }
+    );
   }
   const pathname = req.nextUrl.searchParams.get("path") ?? "";
   const startLine = Number(req.nextUrl.searchParams.get("startLine") ?? 1);

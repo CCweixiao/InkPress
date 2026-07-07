@@ -1,0 +1,263 @@
+@import "tailwindcss";
+
+/* 与 InkPress 主应用一致的 slate 主题（shadcn 风格） */
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --accent: #eff6ff;
+  --accent-foreground: #1d4ed8;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --ring: #2563eb;
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: #191919;
+  --foreground: #e6e6e6;
+  --card: #1e1e1e;
+  --card-foreground: #e6e6e6;
+  --muted: #242424;
+  --muted-foreground: #a0a0a0;
+  --border: #2e2e2e;
+  --input: #2e2e2e;
+  --primary: #4d94ff;
+  --primary-foreground: #0b1220;
+  --secondary: #242424;
+  --secondary-foreground: #e6e6e6;
+  --accent: #1e2a44;
+  --accent-foreground: #9ec5ff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --ring: #4d94ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+.guide-markdown {
+  max-width: 880px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(37, 99, 235, 0.045), transparent 180px),
+    var(--card);
+  padding: clamp(1.25rem, 3vw, 2.75rem);
+  color: var(--card-foreground);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+}
+
+.guide-markdown h1 {
+  margin: 0 0 1rem;
+  max-width: 760px;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 1.08;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.guide-markdown h2 {
+  margin: 2.2rem 0 0.8rem;
+  padding-top: 0.4rem;
+  font-size: 1.45rem;
+  line-height: 1.32;
+  font-weight: 720;
+  letter-spacing: 0;
+}
+
+.guide-markdown h3 {
+  margin: 1.6rem 0 0.6rem;
+  font-size: 1.08rem;
+  line-height: 1.4;
+  font-weight: 680;
+}
+
+.guide-markdown p,
+.guide-markdown li,
+.guide-markdown td,
+.guide-markdown th {
+  font-size: 0.98rem;
+  line-height: 1.8;
+}
+
+.guide-markdown p {
+  margin: 0.85rem 0;
+  color: color-mix(in srgb, var(--foreground) 82%, var(--muted-foreground));
+}
+
+.guide-markdown ul,
+.guide-markdown ol {
+  margin: 0.85rem 0 1rem;
+  padding-left: 1.4rem;
+}
+
+.guide-markdown li {
+  margin: 0.3rem 0;
+  color: color-mix(in srgb, var(--foreground) 86%, var(--muted-foreground));
+}
+
+.guide-markdown a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.guide-markdown hr.guide-hr {
+  margin: 2.2rem 0;
+  border: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--muted-foreground) 35%, transparent),
+    transparent
+  );
+}
+
+.guide-markdown img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1rem auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+}
+
+.guide-markdown code {
+  border-radius: 6px;
+  background: var(--muted);
+  padding: 0.15rem 0.36rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.guide-markdown li ul,
+.guide-markdown li ol {
+  margin: 0.35rem 0 0;
+  padding-left: 1.4rem;
+}
+
+.guide-markdown blockquote {
+  margin: 1.2rem 0;
+  border-left: 4px solid var(--primary);
+  border-radius: 0 12px 12px 0;
+  background: var(--muted);
+  padding: 0.85rem 1rem;
+  color: var(--muted-foreground);
+}
+
+.guide-table-wrap {
+  margin: 1.1rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.guide-markdown table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: var(--card);
+}
+
+.guide-markdown th {
+  background: var(--muted);
+  color: var(--foreground);
+  font-weight: 650;
+  text-align: left;
+}
+
+.guide-markdown th,
+.guide-markdown td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.72rem 0.85rem;
+  vertical-align: top;
+}
+
+.guide-markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.guide-code {
+  margin: 1.15rem 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #0f172a;
+}
+
+.guide-code__bar {
+  display: flex;
+  justify-content: flex-end;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+  padding: 0.45rem 0.8rem;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.guide-code pre {
+  overflow-x: auto;
+  padding: 1rem;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.86rem;
+  line-height: 1.75;
+}
+
+.guide-code code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+/* 锚点跳转时避开顶部 sticky ServiceHeader（高度约 73px，留余量到 96px） */
+.guide-markdown h1,
+.guide-markdown h2,
+.guide-markdown h3,
+.guide-markdown h4 {
+  scroll-margin-top: 96px;
+}

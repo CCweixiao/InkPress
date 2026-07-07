@@ -1,16 +1,24 @@
 import Link from "next/link";
-import { Boxes, FileCode2, FolderOpen, Palette, Settings, Sparkles, Trash2 } from "lucide-react";
+import Image from "next/image";
+import { Boxes, FileCode2, FolderOpen, Settings, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
-import { previewSnippet } from "@/lib/content-store";
+import { getUiPreferences } from "@/lib/ui-preferences";
+import { previewSnippetAt } from "@/lib/content-store";
+import { APP_VERSION, REPO_URL, releaseTagUrl } from "@/lib/site";
 import { Button } from "@/components/ui/button";
 import { HomeView } from "@/components/spaces/HomeView";
 import { GlobalSearch } from "@/components/common/GlobalSearch";
+import { BackToTop } from "@/components/common/BackToTop";
+import { GitHubIcon } from "@/components/common/GitHubIcon";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import type { ArticleListItem } from "@/components/articles/ArticleCard";
 import type { SpaceItem } from "@/components/spaces/SpaceSection";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  // SSR 读回 UI 偏好（网格/列表）作为首帧值，避免闪烁
+  const uiPreferences = await getUiPreferences();
   // 取空间 + 文章（含封面 Asset URL）
   const [spaces, articles, coverAssets] = await Promise.all([
     prisma.space.findMany({
@@ -43,7 +51,7 @@ export default async function HomePage() {
         id: a.id,
         title: a.title,
         contentMd: a.contentPath
-          ? await previewSnippet(a.id)
+          ? await previewSnippetAt(a.contentPath)
           : (a.contentMd ?? ""),
         digest: a.digest,
         status: a.status,
@@ -67,10 +75,17 @@ export default async function HomePage() {
       <header className="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-40">
         <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 shrink-0">
-            <Sparkles className="h-5 w-5 text-primary" />
+            <Image
+              src="/inkpress-logo-transparent.png"
+              alt="InkPress"
+              width={28}
+              height={28}
+              className="h-7 w-7"
+              priority
+            />
             <span className="font-semibold text-lg">InkPress</span>
             <span className="text-xs text-muted-foreground ml-1 hidden sm:inline">
-              AI 公众号写作台
+              数字文刊工坊
             </span>
           </div>
           {/* 全局搜索 */}
@@ -82,12 +97,6 @@ export default async function HomePage() {
               <Link href="/technical-documents">
                 <FileCode2 className="h-4 w-4" />
                 技术文档
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/themes">
-                <Palette className="h-4 w-4" />
-                主题
               </Link>
             </Button>
             <Button asChild variant="ghost" size="sm">
@@ -115,12 +124,46 @@ export default async function HomePage() {
               </Link>
             </Button>
           </nav>
+
+          {/* 主题切换 + GitHub 仓库 + 版本徽章 */}
+          <div className="flex items-center gap-1 shrink-0 border-l border-border pl-2 ml-1">
+            <ThemeToggle />
+            <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+              <a
+                href={REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub 仓库"
+                title="GitHub 仓库"
+              >
+                <GitHubIcon className="h-4 w-4" />
+              </a>
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs font-mono">
+              <a
+                href={releaseTagUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`v${APP_VERSION} Release`}
+                title={`当前版本 v${APP_VERSION} · 查看 Release`}
+              >
+                v{APP_VERSION}
+              </a>
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8 space-y-6">
-        <HomeView spaces={grouped} unclassified={unclassified} />
+        <HomeView
+          spaces={grouped}
+          unclassified={unclassified}
+          initialViewMode={uiPreferences.viewMode}
+        />
       </main>
+
+      {/* 回到顶部 */}
+      <BackToTop />
     </div>
   );
 }
