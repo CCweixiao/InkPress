@@ -6,7 +6,7 @@ import type {
   PostCompactHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
 import { chooseLlmConfig } from "@/lib/ai/llm-config";
-import { buildInkPressSystemPrompt } from "@/lib/ai/system-prompt";
+import { buildInkPressSystemPrompt, SNIPPET_FUSION_HINT } from "@/lib/ai/system-prompt";
 import { buildSubagents } from "@/lib/ai/subagents";
 import { createInkPressMcpServer } from "@/lib/ai/inkpress-mcp-server";
 import { listSkills } from "@/lib/ai/skills";
@@ -56,6 +56,8 @@ export type BuildClaudeAgentOptionsInput = {
   modelId?: string | null;
   /** 向 UI 流写 UIMessage chunk（MCP handler 用它发工具卡片）。 */
   emit: (part: never) => void;
+  /** P1：本轮最后一条 user 消息文本（runtime 侧 lastUserText），用于检测 {{snippet:}} 引用。 */
+  lastUserText?: string;
 };
 
 /** sha256(token)，落 approvalTokenHash（mirror CodeSourceGrant 的 hashToken 约定）。 */
@@ -294,6 +296,9 @@ export async function buildClaudeAgentOptions(
       preferredSkillIds: input.preferredSkillIds,
       codeSource: input.codeSource,
       tavilyApiKey: webResearch.tavilyApiKey,
+      snippetsHint: input.lastUserText?.includes("{{snippet:")
+        ? SNIPPET_FUSION_HINT
+        : undefined,
     }),
     model: selected.model.id,
     // 固定 cwd，避免 SDK 默认绑定到 InkPress 开发仓库或用户本地 Claude Code 工作目录。
