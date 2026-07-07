@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { EditorToolbar } from "./EditorToolbar";
 import { createImageUploadExtension } from "./extensions/ImageUpload";
+import { createSnippetDropExtension } from "./extensions/SnippetDrop";
 import { cn } from "@/lib/utils";
 
 type TableMenuState = {
@@ -111,11 +112,14 @@ export function TiptapEditor({
   onChange,
   articleId,
   placeholder = "开始写作，或从左侧用 AI 生成…",
+  onEditorReady,
 }: {
   value: string;
   onChange: (md: string) => void;
   articleId?: string;
   placeholder?: string;
+  /** editor 实例就绪后回调一次（供父级做光标精确插入 / 选区读取）。 */
+  onEditorReady?: (editor: Editor) => void;
 }) {
   const [tableMenu, setTableMenu] = useState<TableMenuState>(null);
   const [tableToolsOpen, setTableToolsOpen] = useState(false);
@@ -284,6 +288,7 @@ export function TiptapEditor({
       TaskList,
       TaskItem.configure({ nested: true }),
       createImageUploadExtension(articleId),
+      createSnippetDropExtension(),
     ],
     content: value,
     immediatelyRender: false,
@@ -365,6 +370,11 @@ export function TiptapEditor({
       onChange(md);
     },
   });
+
+  // editor 实例就绪后回调一次（供父级做光标精确插入 / 选区读取）
+  useEffect(() => {
+    if (editor && onEditorReady) onEditorReady(editor);
+  }, [editor, onEditorReady]);
 
   // 外部 value 变化（如 AI 生成应用）时同步进编辑器
   useEffect(() => {
