@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = { trashed: false };
   if (kind) where.kind = kind;
-  if (tag) where.tagsJson = { contains: JSON.stringify(tag) };
+  if (tag) where.tagsJson = { contains: `"${tag}"` };
   if (q) {
     where.OR = [
       { title: { contains: q } },

@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = { trashed };
   if (kind) where.kind = kind;
-  if (tag) where.tagsJson = { contains: JSON.stringify(tag) };
+  if (tag) where.tagsJson = { contains: `"${tag}"` };
   if (q) {
     where.OR = [
       { title: { contains: q } },
@@ -70,9 +70,11 @@ export async function POST(req: NextRequest) {
   }
 
   const { tags, ...data } = parsed.data;
-  // 自动从 content 首行提取 title
+  // 自动从 content 首行提取 title（trim 避免空白标题）
   const title =
-    data.title || data.content.split("\n")[0].slice(0, 50) || "无标题";
+    data.title.trim() ||
+    data.content.trim().split("\n")[0].slice(0, 50) ||
+    "无标题";
 
   const snippet = await prisma.snippet.create({
     data: {

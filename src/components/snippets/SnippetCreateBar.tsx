@@ -48,6 +48,7 @@ export function SnippetCreateBar({ onCreated }: SnippetCreateBarProps) {
         onChange={(e) => setContent(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="记录一个灵感…（Ctrl+Enter 发送）"
+        aria-label="记录灵感"
         rows={2}
         className="w-full rounded-xl border border-border bg-muted/30 px-4 py-3 pr-12 text-sm resize-none placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all"
       />

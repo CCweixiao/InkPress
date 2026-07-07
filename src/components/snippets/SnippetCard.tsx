@@ -66,6 +66,7 @@ export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps)
             onClick={handlePin}
             className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
             title={snippet.pinned ? "取消置顶" : "置顶"}
+            aria-label={snippet.pinned ? "取消置顶" : "置顶"}
           >
             <Pin className={cn("h-3.5 w-3.5", snippet.pinned && "text-primary fill-primary")} />
           </button>
@@ -73,6 +74,7 @@ export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps)
             onClick={handleDelete}
             className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
             title="删除"
+            aria-label="删除"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
