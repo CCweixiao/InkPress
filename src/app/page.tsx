@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
-import { Boxes, FileCode2, FolderOpen, Settings, Sparkles, Trash2 } from "lucide-react";
+import { Boxes, CheckSquare as CheckSquareIcon, FileCode2, FolderOpen, Settings, Sparkles, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getUiPreferences } from "@/lib/ui-preferences";
 import { previewSnippetAt } from "@/lib/content-store";
@@ -93,6 +93,12 @@ export default async function HomePage() {
             <GlobalSearch />
           </div>
           <nav className="flex items-center gap-1 shrink-0">
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/tasks">
+                <CheckSquareIcon className="h-4 w-4" />
+                任务
+              </Link>
+            </Button>
             <Button asChild variant="ghost" size="sm">
               <Link href="/technical-documents">
                 <FileCode2 className="h-4 w-4" />

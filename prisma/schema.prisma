@@ -395,6 +395,7 @@ model Space {
 
   articles Article[]
   assets   Asset[]
+  tasks    Task[]
 
   @@index([trashed])
 }
@@ -593,6 +594,36 @@ model SnippetTagAssignment {
   @@index([snippetId])
   @@index([tagId])
   @@unique([snippetId, tagId])
+}
+
+/// 任务管理：融合滴嗒清单 + Notion 的任务系统
+/// 支持优先级、截止日期、子任务嵌套、多视图（列表/看板/日历）
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  content     String    @default("") // 富文本详情（Markdown）
+  status      String    @default("todo") // todo | in_progress | done | archived
+  priority    Int       @default(0) // 0=none, 1=low(🔵), 2=medium(🟡), 3=high(🟠), 4=urgent(🔴)
+  dueDate     DateTime?
+  completedAt DateTime?
+  parentId    String? // 子任务关系
+  spaceId     String? // 关联空间
+  sortOrder   Int       @default(0) // 拖拽排序
+  tagsJson    String    @default("[]") // 标签 JSON 数组
+  isCollapsed Boolean   @default(false) // 子任务折叠状态
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  parent   Task?  @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  children Task[] @relation("TaskSubtasks")
+  space    Space? @relation(fields: [spaceId], references: [id])
+
+  @@index([parentId])
+  @@index([spaceId])
+  @@index([status])
+  @@index([priority])
+  @@index([dueDate])
+  @@index([sortOrder])
 }
 
 // P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。
