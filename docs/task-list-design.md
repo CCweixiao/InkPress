@@ -21,11 +21,13 @@ InkPress 定位为"AI 驱动的写作创作平台"。创作者的日常工作流
 
 ### 设计原则
 
-1. **轻量内嵌**：不做全功能项目管理工具，聚焦"个人创作者 + 小团队"的任务场景
-2. **与文章打通**：任务可关联文章，文章内可嵌入/引用任务
-3. **渐进披露**：简单场景只需标题+勾选；复杂场景可展开子任务、标签、日期等
-4. **本地优先**：数据存于本地 SQLite，与现有 Prisma 模型体系一致
-5. **键盘友好**：支持快捷键快速创建、导航、完成，符合写作者工作习惯
+1. **独立优先**：任务是完全独立的一等公民功能，无需绑定任何创作内容即可使用
+2. **轻量内嵌**：不做全功能项目管理工具，聚焦"个人创作者 + 小团队"的任务场景
+3. **可选关联**：任务可选择性地关联任意内容类型（文章、小说、剧本等），通过通用的"内容链接"机制实现，而非硬编码绑定某一内容类型
+4. **渐进披露**：简单场景只需标题+勾选；复杂场景可展开子任务、标签、日期等
+5. **本地优先**：数据存于本地 SQLite，与现有 Prisma 模型体系一致
+6. **键盘友好**：支持快捷键快速创建、导航、完成，符合写作者工作习惯
+7. **面向扩展**：数据模型不假设内容类型，未来新增小说、剧本等内容类型时零迁移成本
 
 ---
 
@@ -54,14 +56,15 @@ InkPress 定位为"AI 驱动的写作创作平台"。创作者的日常工作流
 | 入口 | 触发方式 | 行为 |
 |------|----------|------|
 | 全局快捷键 | `Cmd/Ctrl + Shift + T` | 弹出快速创建浮窗（类滴答清单快速添加） |
-| 编辑器内 | 选中文本 → 右键 → "创建待办" | 将选中文本作为任务标题，自动关联当前文章 |
+| 编辑器内 | 选中文本 → 右键 → "创建待办" | 将选中文本作为任务标题，可选关联当前内容（不强制） |
 | 任务列表页 | 页面底部输入框 / `Enter` 快捷键 | 直接在当前列表/清单下新建任务 |
 | 命令面板 | `Cmd/Ctrl + K` → "新建任务" | 统一搜索/命令入口 |
 
-### 1.3 文章-任务联动入口
+### 1.3 内容-任务联动入口（可选）
 
-- 文章详情页侧边栏显示"关联任务"区块
-- 文章列表可按"有待办"筛选
+- 任意内容详情页侧边栏可展示"关联任务"区块（通过内容类型注册表驱动）
+- 内容列表可按"有待办"筛选
+- 此联动完全可选——不关联任何内容的纯任务同样是主要使用场景
 
 ---
 
@@ -108,8 +111,8 @@ model Task {
   taskList      TaskList?    @relation(fields: [taskListId], references: [id], onDelete: SetNull)
   // 标签
   tags          TaskTag[]
-  // 文章关联
-  articleLinks  TaskArticleLink[]
+  // 内容关联（可选，通用多态链接）
+  contentLinks  TaskContentLink[]
   // 重复规则
   repeatRule    String?      // iCal RRULE 格式（如 "FREQ=DAILY;INTERVAL=1"）
   // 提醒
@@ -132,17 +135,21 @@ model TaskTag {
   createdAt DateTime @default(now())
 }
 
-// ===== 任务-文章关联 =====
-model TaskArticleLink {
-  id        String   @id @default(cuid())
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  articleId String   // 关联的文章 ID（本地文章系统的 ID）
-  note      String?  // 关联说明
-  createdAt DateTime @default(now())
+// ===== 任务-内容关联（通用多态，可选） =====
+// 设计说明：任务本身完全独立，此表仅在用户主动关联时才产生记录。
+// contentType 字段实现多态引用，未来新增内容类型（小说、剧本等）只需新增枚举值，无需 schema 变更。
+model TaskContentLink {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  contentType String   // ARTICLE | NOVEL | SCREENPLAY | NOTE | CUSTOM（内容类型）
+  contentId   String   // 关联内容的 ID（对应具体内容表的主键）
+  contentTitle String? // 冗余存储标题快照，避免跨表查询（内容删除后仍可展示）
+  note        String?  // 关联说明（如"此任务对应第三章修改"）
+  createdAt   DateTime @default(now())
 
-  @@unique([taskId, articleId])
-  @@index([articleId])
+  @@unique([taskId, contentType, contentId])
+  @@index([contentType, contentId])
 }
 
 // ===== 提醒 =====
@@ -163,10 +170,28 @@ model TaskReminder {
 ### 2.2 模型说明
 
 - **TaskList**：类似滴答清单的"清单"概念，任务的容器。支持不同视图模式
-- **Task**：核心实体，支持子任务（parentId 自引用），最多 2 层嵌套（与滴答清单一致）
+- **Task**：核心实体，完全独立可用，支持子任务（parentId 自引用），最多 2 层嵌套
 - **TaskTag**：标签系统，多对多关系，用于跨清单筛选
-- **TaskArticleLink**：InkPress 特色——任务与文章的双向关联
+- **TaskContentLink**：**可选**的通用内容关联，通过 `contentType` 多态引用任意内容类型。任务默认不关联任何内容，用户可按需手动关联。未来新增内容类型时只需扩展 `contentType` 枚举值
 - **TaskReminder**：提醒记录，桌面端通过 Electron Notification API 触发
+
+### 2.3 内容类型扩展策略
+
+```
+当前已支持：
+  ARTICLE      — 文章（现有 article 系统）
+
+未来可扩展（无需 migration）：
+  NOVEL        — 小说（长篇叙事）
+  SCREENPLAY   — 剧本
+  NOTE         — 笔记/便签
+  CUSTOM       — 用户自定义类型
+```
+
+新增内容类型时：
+1. 在内容类型枚举中添加新值（代码层面的 TS union type）
+2. 在"关联内容"选择器 UI 中注册新类型的图标和搜索 provider
+3. 无需 Prisma migration，无需修改 Task 模型本身
 
 ---
 
@@ -224,9 +249,10 @@ model TaskReminder {
 │ 重复：不重复            ▾       │
 │ 提醒：截止前 1 小时     ▾       │
 │                                 │
-│ ── 关联文章 ──                  │
-│ 📄 产品介绍初稿.md      🔗      │
-│ [+ 关联文章]                    │
+│ ── 关联内容（可选） ──              │
+│ 📄 产品介绍初稿.md  [文章]   🔗    │
+│ 📖 第三章-高潮      [小说]   🔗    │
+│ [+ 关联内容]                        │
 │                                 │
 │ ── 子任务 ──                    │
 │ □ 整理产品功能列表              │
@@ -349,9 +375,9 @@ model TaskReminder {
 
 ### 5.1 AI 辅助任务创建
 
-在写作 Agent 对话中支持自然语言创建任务：
+在 Agent 对话中支持自然语言创建任务：
 - 用户说"帮我建一个任务：下周五前完成竞品分析" → Agent 调用 `create_task` 工具
-- Agent 写作完成后，自动建议关联任务（如"是否将此文章标记为已完成？"）
+- 任务创建与内容创作完全独立，Agent 不会强制关联
 
 ### 5.2 AI 任务分解
 
@@ -359,9 +385,12 @@ model TaskReminder {
 - Agent 根据任务标题+描述，建议 3-7 个子任务
 - 用户确认后批量创建
 
-### 5.3 写作建议关联
+### 5.3 AI 建议关联（可选）
 
-Agent 生成文章大纲时，可同时为每个章节创建对应子任务，方便分段完成长文。
+当用户在某个创作内容（文章/小说/剧本）的编辑器中工作时，Agent 可主动建议：
+- "检测到你正在写的内容与任务 X 相关，是否关联？"
+- Agent 生成大纲时，可建议为每个章节/段落创建对应子任务（用户确认后才关联）
+- 关联始终是可选的、用户主动确认的，不自动绑定
 
 ---
 
@@ -387,12 +416,13 @@ src/
 │   ├── TaskDatePicker.tsx        # 日期选择器（含自然语言）
 │   ├── TaskPrioritySelect.tsx    # 优先级选择器
 │   ├── TaskTagSelect.tsx         # 标签选择器
-│   └── TaskArticleLink.tsx       # 文章关联组件
+│   └── TaskContentLink.tsx      # 通用内容关联组件（支持多内容类型）
 └── lib/tasks/
     ├── task-service.ts           # CRUD 服务层
     ├── task-date-parser.ts       # 自然语言日期解析
     ├── task-sort.ts              # 排序逻辑
-    └── task-reminder.ts          # 提醒调度（Electron）
+    ├── task-reminder.ts          # 提醒调度（Electron）
+    └── task-content-registry.ts  # 内容类型注册表（图标/搜索/路由映射）
 ```
 
 ### 6.2 数据流
@@ -438,10 +468,11 @@ setInterval(async () => {
 | 集成点 | 方式 | 说明 |
 |--------|------|------|
 | 侧边栏导航 | 修改 `components/common/Sidebar.tsx` | 新增"待办任务"入口 |
-| 编辑器右键菜单 | 扩展编辑器 context menu | "从选中文本创建任务" |
+| 编辑器右键菜单 | 扩展编辑器 context menu | "从选中文本创建任务"（可选关联当前内容） |
 | AI Agent 工具 | 新增 `create_task` / `list_tasks` 工具定义 | Agent 可操作任务 |
-| 文章详情侧栏 | 新增 `TaskArticleSection` 组件 | 显示关联任务 |
+| 内容详情侧栏 | 新增 `TaskContentSection` 通用组件 | 任意内容类型页面可选展示关联任务 |
 | 全局搜索 | 扩展 `Cmd+K` 命令面板 | 搜索任务、跳转 |
+| 内容类型注册表 | `task-content-registry.ts` | 注册新内容类型时只需添加一条配置 |
 
 ---
 
@@ -468,13 +499,14 @@ setInterval(async () => {
 - [ ] 完成动效
 - [ ] 键盘快捷键全覆盖
 
-### Phase 3：深度集成
+### Phase 3：内容关联 + 深度集成
 
-- [ ] 任务-文章关联
+- [ ] 通用内容关联机制（TaskContentLink）
+- [ ] 内容类型注册表（article 作为首个实现）
 - [ ] 日历视图
 - [ ] 提醒系统（Electron Notification）
 - [ ] AI 任务创建/分解工具
-- [ ] 编辑器右键"创建待办"
+- [ ] 编辑器右键"创建待办"（可选关联）
 - [ ] 重复任务规则
 
 ### Phase 4：高级特性（可选）
@@ -521,16 +553,20 @@ setInterval(async () => {
 | 3 | 子任务最大嵌套层级？ | 2 层（与滴答清单一致），避免过度复杂 | 2 层 |
 | 4 | 已完成任务保留时长？ | 永久保留，支持按时间段归档/清理 | 永久 |
 | 5 | 是否支持任务评论？ | Phase 1 用"备注"字段代替，不做独立评论流 | 备注代替 |
+| 6 | 任务与内容是否必须关联？ | **否**。任务完全独立可用，内容关联是可选增强 | ✅ 已决策：解耦 |
+| 7 | 如何支持未来新内容类型？ | 通过 `contentType` 枚举 + 注册表模式，新增类型零 migration | ✅ 已决策：多态 |
 
 ---
 
 ## 10. 总结
 
-本设计旨在为 InkPress 增加"轻量但够用"的任务跟踪能力，核心差异点在于：
+本设计旨在为 InkPress 增加"轻量但够用"的任务跟踪能力，核心设计决策：
 
-1. **写作场景深度绑定**：任务可关联文章、从编辑器快速创建、Agent 辅助分解
-2. **本地优先零配置**：延续 InkPress SQLite 单文件哲学，无需额外服务
-3. **渐进式复杂度**：简单场景一行标题+勾选即可；复杂场景展开完整字段
-4. **键盘驱动**：面向创作者的高效操作体验
+1. **任务独立优先**：任务是完全独立的一等功能，无需绑定任何创作内容即可独立使用（如日常待办、学习计划、生活事项等）
+2. **可选内容关联**：通过通用的 `TaskContentLink` 多态模型，任务可按需关联文章、小说、剧本等任意内容类型，关联是增强而非前提
+3. **面向扩展**：`contentType` 枚举 + 注册表模式，未来新增内容类型时零数据库迁移、只加代码配置
+4. **本地优先零配置**：延续 InkPress SQLite 单文件哲学，无需额外服务
+5. **渐进式复杂度**：简单场景一行标题+勾选即可；复杂场景展开完整字段
+6. **键盘驱动**：面向创作者的高效操作体验
 
 后续待人工审阅确认后，进入 Phase 1 开发。
