@@ -21,6 +21,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+<<<<<<< HEAD
+import { copyStandaloneTree } from "./standalone-copy";
+=======
 import { spawnSync } from "node:child_process";
 import { createRequire, builtinModules } from "node:module";
 
@@ -77,6 +80,7 @@ function copyTreeFollowingLinks(src: string, dest: string): void {
     }
   }
 }
+>>>>>>> origin/main
 
 const root = process.cwd();
 const targetArch = parseTargetArch();
@@ -124,6 +128,16 @@ if (!fs.existsSync(srcStandalone)) {
 // 清理旧 bundle，重建
 fs.rmSync(bundle, { recursive: true, force: true });
 
+<<<<<<< HEAD
+console.log("生成去符号链接的 standalone bundle…");
+// 核心：复制 standalone。Windows 上使用 fallback，避免 fs.cpSync(dereference=true) 触发崩溃（0xC0000409）
+const materializedSymlinks = copyStandaloneTree(srcStandalone, bundle);
+const copyDetail =
+  process.platform === "win32" && materializedSymlinks > 0
+    ? `（Windows fallback：物化 ${materializedSymlinks} 处符号链接）`
+    : "（已解析符号链接）";
+console.log(`  ✓ standalone → ${path.relative(root, bundle)}${copyDetail}`);
+=======
 console.log(`生成去符号链接的 standalone bundle（目标架构 ${targetArch}）…`);
 // 第一步：复制（dereference=true 会跟随 symlink 读文件内容，但对 symlink 目录本身
 // 仍会重建为 symlink —— pnpm 的 .pnpm 结构正是如此，导致 bundle 内残留指向项目源码
@@ -134,6 +148,7 @@ const materialized = materializeSymlinks(bundle);
 console.log(
   `  ✓ standalone → ${path.relative(root, bundle)}（已解析符号链接，物化 ${materialized} 处 symlink → 真实文件）`
 );
+>>>>>>> origin/main
 
 // 清理 Next.js NFT 误追踪进 standalone 的项目级目录。
 // outputFileTracingRoot 默认指向项目根，导致 dist/（历史打包产物，含 DMG 与嵌套 app，可达数 GB）、
