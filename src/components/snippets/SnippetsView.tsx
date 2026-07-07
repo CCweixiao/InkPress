@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { SnippetCreateBar } from "./SnippetCreateBar";
 import { SnippetList } from "./SnippetList";
 import { SnippetTagSidebar } from "./SnippetTagSidebar";
@@ -20,8 +20,35 @@ export function SnippetsView({
   const [snippets, setSnippets] = useState<SnippetItem[]>(initialSnippets);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [activeKind, setActiveKind] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SnippetItem[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
-  const filteredSnippets = snippets.filter((s) => {
+  // 搜索框非空时用 API 结果；否则用本地筛选（kind/tag 在已加载集合内）
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults(null);
+      return;
+    }
+    setSearching(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/snippets?q=${encodeURIComponent(q)}&limit=100`);
+        const data = (await res.json()) as { snippets: SnippetItem[] };
+        setSearchResults(data.snippets ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  const baseList = searchResults ?? snippets;
+  const filteredSnippets = baseList.filter((s) => {
+    if (searchResults) return true; // 已按 q 服务端筛过
     if (activeTag) {
       const tags: string[] = JSON.parse(s.tagsJson || "[]");
       if (!tags.includes(activeTag)) return false;
@@ -72,6 +99,20 @@ export function SnippetsView({
         <span className="text-xs text-muted-foreground ml-auto">
           共 {totalCount} 条灵感
         </span>
+      </div>
+
+      {/* 搜索框 */}
+      <div className="flex items-center gap-2">
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="搜索灵感（标题 / 正文 / 标签）…"
+          className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        {searching && (
+          <span className="text-xs text-muted-foreground">搜索中…</span>
+        )}
       </div>
 
       {/* 创建框 */}
