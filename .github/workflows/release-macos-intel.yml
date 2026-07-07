@@ -1,0 +1,180 @@
+name: Release (macOS Intel)
+
+# 独立的 macOS Intel x64 打包流水线，与 release.yml（mac arm64）互不影响：
+# - 同一个 tag（v*）会同时触发多个 release workflow，但文件 / concurrency group /
+#   Release 资产完全隔离，互不阻塞、互不覆盖
+# - Intel 包必须在原生 x64 runner 上构建；不能在 arm64 runner 上跨架构生成，
+#   否则 bytenode bytecode 与 better-sqlite3 原生绑定可能和运行时架构不匹配
+# - softprops/action-gh-release 默认 upsert 模式：Release 已存在则 append 资产
+#
+# 触发：
+# 1. 推送 v* 形式的 tag → 自动构建并 append 到对应 Release
+# 2. workflow_dispatch → 手动触发（输入 tag 名）
+# 3. PR 修改本 workflow / 打包脚本时，仅构建验证，不发布 Release
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/release-macos-intel.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/**"
+      - "electron/**"
+      - "next.config.ts"
+      - "tsconfig.electron.json"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag 名（如 v0.1.0，无需前缀也行）"
+        required: true
+        default: "v0.1.0"
+
+# 与 release.yml / release-windows.yml 的 group 不同，避免互相 cancel
+concurrency:
+  group: release-macos-intel-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (macOS Intel x64)
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "11.8.0"
+          run_install: false
+
+      - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          # 允许 better-sqlite3 / electron / sharp 等原生包构建
+          pnpm_allow_build: "true"
+
+      # 从 tag 名提取版本号写回 package.json，避免 tag 与产物文件名错位。
+      # 例：tag=v0.4.3 → package.json.version=0.4.3 → 产物 InkPress-0.4.3-x64.dmg
+      - name: Sync version from tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RAW="v0.0.0-pr-${{ github.event.pull_request.number }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.tag }}"
+          else
+            RAW="${{ github.ref_name }}"
+          fi
+          VERSION="${RAW#v}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "✗ tag 版本号非法: $RAW（期望 vX.Y.Z）"
+            exit 1
+          fi
+          echo "同步 package.json version → $VERSION（来源: $RAW）"
+          node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          grep '"version"' package.json
+
+      # package.json 的 mac target 默认是 arm64；Intel workflow 必须在运行时改成 x64-only，
+      # 避免 electron-builder 同时产出 arm64 + x64 两个 DMG。
+      - name: Force macOS Intel-only target
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const p = "./package.json";
+          const j = JSON.parse(fs.readFileSync(p, "utf8"));
+          j.build.mac.target = [{ target: "dmg", arch: ["x64"] }];
+          j.build.dmg = {
+            ...(j.build.dmg || {}),
+            artifactName: "InkPress-${version}-x64.${ext}",
+          };
+          fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+          NODE
+          node -e "const j=require('./package.json'); console.log(JSON.stringify({macTarget:j.build.mac.target,dmgArtifactName:j.build.dmg.artifactName}, null, 2))"
+
+      - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
+        run: pnpm electron:prepare
+
+      - name: Configure code signing
+        id: sign
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "代码签名 secrets 已配置，将签名 + 公证"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "未配置签名 secrets，显式禁用签名（macos runner keychain 有默认证书会触发自动签名并报错）"
+            # 在 build.mac 写入 identity:null，比 CSC_IDENTITY_AUTO_DISCOVERY env 更可靠
+            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          fi
+
+      - name: Build DMG (macOS Intel x64)
+        env:
+          # 透传签名 env 给 electron-builder。未签名时 CSC_LINK 为空 + identity:null 已禁用签名
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec electron-builder --mac --x64 --publish never
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-macos-intel-x64
+          path: dist/*-x64.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Append macOS Intel assets to GitHub Release
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # append 资产到已存在的 Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download macOS Intel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg-macos-intel-x64
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          # 规范化：确保以 v 开头
+          case "$TAG" in
+            v*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
+            *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # append 模式：release.yml 创建的 Release 已存在 → 只追加 Intel DMG 资产，
+      # 不改 tag_name / name / body，不覆盖 mac arm64 或 Windows 资产。
+      - name: Append macOS Intel assets to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: artifacts/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
