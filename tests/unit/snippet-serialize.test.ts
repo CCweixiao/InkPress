@@ -27,6 +27,12 @@ describe("serializeComposer", () => {
     expect(r.snippetRefs).toEqual(["cl1"]);
   });
 
+  it("text 为纯空白 → 标记段不以换行/空白开头", () => {
+    const r = serializeComposer("   ", ["cl1"]);
+    expect(r.message).toBe("<!-- snippet-refs -->\n{{snippet:cl1}}");
+    expect(r.snippetRefs).toEqual(["cl1"]);
+  });
+
   it("text 尾部已有换行 → 不产生多余空行（至多一个空行）", () => {
     const r = serializeComposer("你好\n", ["cl1"]);
     expect(r.message).toBe("你好\n\n<!-- snippet-refs -->\n{{snippet:cl1}}");
