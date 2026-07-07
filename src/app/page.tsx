@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
-import { Boxes, FileCode2, FolderOpen, Settings, Trash2 } from "lucide-react";
+import { Boxes, FileCode2, FolderOpen, Settings, Sparkles, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getUiPreferences } from "@/lib/ui-preferences";
 import { previewSnippetAt } from "@/lib/content-store";
@@ -103,6 +103,12 @@ export default async function HomePage() {
               <Link href="/materials">
                 <FolderOpen className="h-4 w-4" />
                 素材
+              </Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/snippets">
+                <Sparkles className="h-4 w-4" />
+                灵感
               </Link>
             </Button>
             <Button asChild variant="ghost" size="sm">
