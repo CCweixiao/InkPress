@@ -9,9 +9,21 @@ interface SnippetListProps {
   existingTags?: string[];
   onDeleted: (id: string) => void;
   onUpdated: (snippet: SnippetItem) => void;
+  selectMode?: boolean;
+  selectedIds?: string[];
+  onToggleSelect?: (id: string) => void;
 }
 
-export function SnippetList({ snippets, tagColors, existingTags, onDeleted, onUpdated }: SnippetListProps) {
+export function SnippetList({
+  snippets,
+  tagColors,
+  existingTags,
+  onDeleted,
+  onUpdated,
+  selectMode,
+  selectedIds,
+  onToggleSelect,
+}: SnippetListProps) {
   if (snippets.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -35,6 +47,9 @@ export function SnippetList({ snippets, tagColors, existingTags, onDeleted, onUp
           existingTags={existingTags}
           onDeleted={onDeleted}
           onUpdated={onUpdated}
+          selectMode={selectMode}
+          selected={selectedIds?.includes(snippet.id)}
+          onToggleSelect={onToggleSelect ? () => onToggleSelect(snippet.id) : undefined}
         />
       ))}
     </div>

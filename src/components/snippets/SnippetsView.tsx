@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { SnippetCreateBar } from "./SnippetCreateBar";
 import { SnippetList } from "./SnippetList";
 import { SnippetTagSidebar } from "./SnippetTagSidebar";
@@ -34,6 +35,7 @@ export function SnippetsView({
   tags: initialTags,
   totalCount,
 }: SnippetsViewProps) {
+  const router = useRouter();
   const [snippets, setSnippets] = useState<SnippetItem[]>(initialSnippets);
   const [tags, setTags] = useState<TagEntry[]>(initialTags);
   const [activeTags, setActiveTags] = useState<string[]>([]);
@@ -42,6 +44,38 @@ export function SnippetsView({
   const [searchResults, setSearchResults] = useState<SnippetItem[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [colorMsg, setColorMsg] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const exitSelect = () => {
+    setSelectMode(false);
+    setSelectedIds([]);
+  };
+
+  const handleExport = async () => {
+    if (selectedIds.length === 0) return;
+    setExportMsg(null);
+    try {
+      const res = await fetch("/api/snippets/export-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "导出失败");
+      router.push(`/editor/${data.articleId}`);
+    } catch (e) {
+      setExportMsg(e instanceof Error ? e.message : "导出失败");
+      window.setTimeout(() => setExportMsg(null), 3000);
+    }
+  };
 
   // 派生 tagColors map（仅有效色），下传给卡片 pill 着色
   const tagColors: Record<string, string> = {};
@@ -167,9 +201,41 @@ export function SnippetsView({
             {label}
           </button>
         ))}
-        <span className="text-xs text-muted-foreground ml-auto">
-          共 {totalCount} 条灵感
-        </span>
+        {selectMode ? (
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs text-muted-foreground">
+              已选 {selectedIds.length} · 共 {totalCount} 条
+            </span>
+            <button
+              type="button"
+              onClick={() => void handleExport()}
+              disabled={selectedIds.length === 0}
+              className="text-xs rounded-md bg-primary px-3 py-1 text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              导出为草稿
+            </button>
+            <button
+              type="button"
+              onClick={exitSelect}
+              className="text-xs text-muted-foreground hover:text-foreground px-2"
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 ml-auto">
+            <span className="text-xs text-muted-foreground">
+              共 {totalCount} 条灵感
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted"
+            >
+              选择
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 搜索框 */}
@@ -209,12 +275,18 @@ export function SnippetsView({
           {colorMsg && (
             <p className="text-xs text-destructive mb-2">{colorMsg}</p>
           )}
+          {exportMsg && (
+            <p className="text-xs text-destructive mb-2">{exportMsg}</p>
+          )}
           <SnippetList
             snippets={filteredSnippets}
             tagColors={tagColors}
             existingTags={tags.map((t) => t.name)}
             onDeleted={handleDeleted}
             onUpdated={handleUpdated}
+            selectMode={selectMode}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
           />
         </div>
       </div>

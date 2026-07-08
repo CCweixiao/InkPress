@@ -17,6 +17,9 @@ interface SnippetCardProps {
   existingTags?: string[];
   onDeleted: (id: string) => void;
   onUpdated: (snippet: SnippetItem) => void;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
 function formatRelativeTime(dateStr: string) {
@@ -40,6 +43,9 @@ export function SnippetCard({
   existingTags,
   onDeleted,
   onUpdated,
+  selectMode,
+  selected,
+  onToggleSelect,
 }: SnippetCardProps) {
   const [editing, setEditing] = useState(false);
   const [refetching, setRefetching] = useState(false);
@@ -114,13 +120,30 @@ export function SnippetCard({
   return (
     <Card
       className={cn(
-        "group relative p-4 transition-all hover:shadow-md cursor-default break-inside-avoid",
-        snippet.pinned && "ring-1 ring-primary/30"
+        "group relative p-4 transition-all break-inside-avoid",
+        selectMode
+          ? "cursor-pointer hover:ring-2 hover:ring-primary/40"
+          : "hover:shadow-md cursor-default",
+        snippet.pinned && "ring-1 ring-primary/30",
+        selected && "ring-2 ring-primary"
       )}
+      onClick={selectMode ? onToggleSelect : undefined}
     >
-      {/* 操作按钮（悬停显示） */}
-      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 transition-opacity">
-        {snippet.kind === "link" && (
+      {/* 选择态 checkbox（左上角） */}
+      {selectMode && (
+        <div className="absolute top-2 left-2 z-10 flex h-5 w-5 items-center justify-center rounded border border-primary bg-background">
+          <input
+            type="checkbox"
+            checked={!!selected}
+            readOnly
+            className="h-4 w-4 accent-primary"
+          />
+        </div>
+      )}
+      {/* 操作按钮（悬停显示；选择模式下隐藏） */}
+      {!selectMode && (
+        <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 transition-opacity">
+          {snippet.kind === "link" && (
           <button
             type="button"
             onClick={() => void handleRefetch()}
@@ -160,7 +183,8 @@ export function SnippetCard({
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
-      </div>
+        </div>
+      )}
 
       {/* 内容区 */}
       {snippet.kind === "image" && snippet.imageUrl && (
