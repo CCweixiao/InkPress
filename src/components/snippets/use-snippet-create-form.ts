@@ -71,6 +71,7 @@ export function useSnippetCreateForm({
               imageUrl: asset.url,
               imageAssetId: asset.id,
               content: caption || file.name,
+              tags,
             }),
           });
           if (snipRes.ok) {

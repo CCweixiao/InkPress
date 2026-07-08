@@ -30,7 +30,7 @@ export function SnippetCreateBar({ onCreated, existingTags }: SnippetCreateBarPr
           onKeyDown={handleKeyDown}
           onPaste={form.handlePaste}
           placeholder={
-            form.pasting ? "上传图片中…" : "记录一个灵感…（Ctrl+Enter 发送 · 可粘贴图片）"
+            form.pasting ? "上传图片中…" : "记录一个灵感…（可粘贴图片）"
           }
           aria-label="记录灵感"
           rows={2}
@@ -54,7 +54,7 @@ export function SnippetCreateBar({ onCreated, existingTags }: SnippetCreateBarPr
         value={form.tags}
         onChange={form.setTags}
         suggestions={form.existingTags ?? []}
-        placeholder="标签…（回车或逗号添加）"
+        placeholder="标签…"
       />
     </div>
   );

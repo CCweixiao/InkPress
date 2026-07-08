@@ -8,14 +8,13 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from "@/components/ui/dialog";
 import { TagInput } from "./TagInput";
 import { useSnippetCreateForm } from "./use-snippet-create-form";
 import type { SnippetItem } from "./types";
 
 /**
- * 全局「快速记录灵感」弹窗：Alt+N 呼出（非输入态）。
+ * 全局「快速记录灵感」弹窗：Cmd/Ctrl+Shift+N 呼出（非输入态）。
  * 挂在根 layout，与 SnippetCreateBar 共用 useSnippetCreateForm。
  * 成功 → 内联「✓ 灵感已保存」800ms → 关闭；在 /snippets 页则 router.refresh 列表。
  */
@@ -33,11 +32,13 @@ export function SnippetQuickDialog() {
   const form = useSnippetCreateForm({ onCreated: handleCreated });
   const { reset: resetForm } = form;
 
-  // Alt+N 全局触发（输入态跳过，避免 Mac Option 插特殊字符）
+  // 全局触发（输入态跳过）：主入口 Cmd/Ctrl+Shift+N，兼容旧 Alt+N。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "n" && e.key !== "N") return;
-      if (!e.altKey || e.metaKey || e.ctrlKey) return;
+      const primaryShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey;
+      const legacyShortcut = e.altKey && !e.metaKey && !e.ctrlKey;
+      if (!primaryShortcut && !legacyShortcut) return;
       const t = e.target as HTMLElement | null;
       const tag = t?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
@@ -84,9 +85,6 @@ export function SnippetQuickDialog() {
             <Sparkles className="h-4 w-4 text-primary" />
             快速记录灵感
           </DialogTitle>
-          <DialogDescription>
-            随时按下 Alt+N 呼出，Ctrl+Enter 保存。
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -107,7 +105,7 @@ export function SnippetQuickDialog() {
             value={form.tags}
             onChange={form.setTags}
             suggestions={form.existingTags ?? []}
-            placeholder="标签…（回车或逗号添加）"
+            placeholder="标签…"
           />
           {errorMsg && <p className="text-xs text-destructive">{errorMsg}</p>}
           <div className="flex justify-end gap-2 pt-1">

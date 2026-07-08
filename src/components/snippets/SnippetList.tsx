@@ -31,7 +31,7 @@ export function SnippetList({
           记录你的第一个灵感片段 ✨
         </p>
         <p className="text-sm text-muted-foreground/60 mt-2">
-          在上方输入框中写下你的想法，按 Ctrl+Enter 保存
+          在上方输入框中写下你的想法
         </p>
       </div>
     );
