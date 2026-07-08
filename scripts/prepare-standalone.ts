@@ -114,6 +114,9 @@ const SERVER_EXTERNALS = [
   "adm-zip",
   "ali-oss",
   "@resvg/resvg-js",
+  // Must stay external so its platform optional package
+  // (@anthropic-ai/claude-agent-sdk-darwin-x64, etc.) is copied into the app.
+  "@anthropic-ai/claude-agent-sdk",
 ];
 
 if (!fs.existsSync(srcStandalone)) {
