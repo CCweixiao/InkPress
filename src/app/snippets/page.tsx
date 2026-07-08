@@ -13,6 +13,7 @@ export default async function SnippetsPage() {
       where: { trashed: false },
       orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
       take: 40,
+      omit: { embedding: true }, // 不把 KB 级向量序列化给前端
     }),
     // 获取标签计数
     prisma.snippet.findMany({
