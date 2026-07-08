@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +51,21 @@ export async function PATCH(
   }
 
   const snippet = await prisma.snippet.update({ where: { id }, data });
+
+  // 输入字段变化时异步重生成 aiSummary；只改 tag/color/pinned 等不触发。
+  const inputChanged =
+    (rest.content !== undefined && rest.content !== existing.content) ||
+    (rest.kind !== undefined && rest.kind !== existing.kind) ||
+    (rest.quoteSource !== undefined &&
+      (rest.quoteSource ?? null) !== existing.quoteSource) ||
+    (rest.linkTitle !== undefined &&
+      (rest.linkTitle ?? null) !== existing.linkTitle) ||
+    (rest.linkDescription !== undefined &&
+      (rest.linkDescription ?? null) !== existing.linkDescription);
+  if (inputChanged) {
+    after(() => generateAndSaveAiSummary(id));
+  }
+
   return NextResponse.json({ snippet });
 }
 

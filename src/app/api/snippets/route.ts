@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,6 +84,9 @@ export async function POST(req: NextRequest) {
       tagsJson: JSON.stringify(tags),
     },
   });
+
+  // 异步生成 aiSummary（@面板预览用）。fire-and-forget，失败不阻断创建。
+  after(() => generateAndSaveAiSummary(snippet.id));
 
   return NextResponse.json({ snippet }, { status: 201 });
 }
