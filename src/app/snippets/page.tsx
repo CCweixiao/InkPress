@@ -33,7 +33,7 @@ export default async function SnippetsPage() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-40">
-        <div className="mx-auto max-w-6xl px-6 h-14 flex items-center gap-3">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 h-14 flex items-center gap-3">
           <Link
             href="/"
             className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -49,7 +49,7 @@ export default async function SnippetsPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
         <SnippetsView
           initialSnippets={JSON.parse(JSON.stringify(snippets))}
           tags={tagsWithColor}

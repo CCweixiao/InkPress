@@ -142,13 +142,13 @@ export function SnippetCard({
       )}
       {/* 操作按钮（悬停显示；选择模式下隐藏） */}
       {!selectMode && (
-        <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 transition-opacity">
+        <div className="absolute top-2 right-2 flex items-center gap-1 rounded-md bg-background/70 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           {snippet.kind === "link" && (
           <button
             type="button"
             onClick={() => void handleRefetch()}
             disabled={refetching}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="p-1.5 md:p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title="重新抓取链接信息"
             aria-label="重新抓取链接信息"
           >
@@ -161,7 +161,7 @@ export function SnippetCard({
         )}
         <button
           onClick={() => setEditing(true)}
-          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="p-1.5 md:p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="编辑"
           aria-label="编辑"
         >
@@ -169,7 +169,7 @@ export function SnippetCard({
         </button>
         <button
           onClick={handlePin}
-          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="p-1.5 md:p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={snippet.pinned ? "取消置顶" : "置顶"}
           aria-label={snippet.pinned ? "取消置顶" : "置顶"}
         >
@@ -177,7 +177,7 @@ export function SnippetCard({
         </button>
         <button
           onClick={handleDelete}
-          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="p-1.5 md:p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="删除"
           aria-label="删除"
         >

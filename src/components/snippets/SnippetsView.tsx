@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Pin, Trash2 } from "lucide-react";
+import { Pin, Trash2, Hash } from "lucide-react";
 import { SnippetCreateBar } from "./SnippetCreateBar";
 import { SnippetList } from "./SnippetList";
 import { SnippetTagSidebar } from "./SnippetTagSidebar";
 import { snippetMatchesAllTags } from "@/lib/snippets/tag-filter";
-import { isValidTagColor } from "@/lib/snippets/tag-colors";
+import { isValidTagColor, resolveTagColor, getTagColorClasses } from "@/lib/snippets/tag-colors";
+import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { BatchTagPicker } from "./BatchTagPicker";
 import {
@@ -360,6 +361,31 @@ export function SnippetsView({
           </div>
         )}
       </div>
+
+      {/* 移动端标签筛选（横向滚动 chips，桌面用侧栏） */}
+      {tags.length > 0 && (
+        <div className="md:hidden -mt-3 flex gap-2 overflow-x-auto flex-nowrap pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {tags.map(({ name, count }) => {
+            const cls = getTagColorClasses(resolveTagColor(name, tagColors));
+            const active = activeTags.includes(name);
+            return (
+              <button
+                key={name}
+                type="button"
+                onClick={() => handleToggleTag(name)}
+                className={cn(
+                  "shrink-0 inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs whitespace-nowrap",
+                  active ? cls.active : "border-border text-muted-foreground"
+                )}
+              >
+                <Hash className="h-3 w-3" />
+                {name}
+                <span className="opacity-60">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* 搜索框 */}
       <div className="flex items-center gap-2">
