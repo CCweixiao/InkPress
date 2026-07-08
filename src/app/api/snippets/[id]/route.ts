@@ -2,6 +2,7 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
+import { generateAndSaveEmbedding } from "@/lib/snippets/embedding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,7 +64,10 @@ export async function PATCH(
     (rest.linkDescription !== undefined &&
       (rest.linkDescription ?? null) !== existing.linkDescription);
   if (inputChanged) {
-    after(() => generateAndSaveAiSummary(id));
+    after(() => {
+      void generateAndSaveAiSummary(id);
+      void generateAndSaveEmbedding(id);
+    });
   }
 
   return NextResponse.json({ snippet });

@@ -2,6 +2,12 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
+import { generateAndSaveEmbedding } from "@/lib/snippets/embedding";
+import { getEmbeddingConfig } from "@/lib/ai/embedding-config";
+import {
+  findSemanticSnippets,
+  mergeKeywordAndSemantic,
+} from "@/lib/snippets/semantic-search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +37,7 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
     take: limit + 1,
+    omit: { embedding: true }, // 不把 KB 级向量灌给前端
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
@@ -38,7 +45,25 @@ export async function GET(req: NextRequest) {
   if (hasMore) snippets.pop();
   const nextCursor = hasMore ? snippets[snippets.length - 1]?.id : null;
 
-  return NextResponse.json({ snippets, nextCursor });
+  // 语义补充：q 非空 + 配了 embedding 时，用语义命中填补剩余 slot（keyword 优先）。
+  let merged = snippets;
+  if (q) {
+    const cfg = await getEmbeddingConfig();
+    if (cfg) {
+      const hits = await findSemanticSnippets(q, { topK: limit, threshold: 0.3 });
+      if (hits.length) {
+        const semSnippets = await prisma.snippet.findMany({
+          where: { id: { in: hits.map((h) => h.id) }, trashed: false },
+          omit: { embedding: true },
+        });
+        const scores: Record<string, number> = {};
+        for (const h of hits) scores[h.id] = h.score;
+        merged = mergeKeywordAndSemantic(snippets, semSnippets, scores, limit);
+      }
+    }
+  }
+
+  return NextResponse.json({ snippets: merged, nextCursor });
 }
 
 const createSchema = z.object({
@@ -85,8 +110,11 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // 异步生成 aiSummary（@面板预览用）。fire-and-forget，失败不阻断创建。
-  after(() => generateAndSaveAiSummary(snippet.id));
+  // 异步生成 aiSummary + embedding。fire-and-forget，各自吞错，互不阻断。
+  after(() => {
+    void generateAndSaveAiSummary(snippet.id);
+    void generateAndSaveEmbedding(snippet.id);
+  });
 
   return NextResponse.json({ snippet }, { status: 201 });
 }

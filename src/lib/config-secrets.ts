@@ -16,6 +16,7 @@ const CONFIG_SECRET_FIELDS: Record<string, string[][]> = {
   "inkpress.agent": [["tavilyApiKey"], ["githubToken"]],
   "inkpress.web-research": [["tavilyApiKey"]],
   "inkpress.wechat": [["secret"]],
+  "inkpress.embedding": [["apiKey"]],
 };
 
 function cloneJson<T>(value: T): T {

@@ -15,7 +15,6 @@ export interface SnippetItem {
   color: string | null;
   sourceArticleId: string | null;
   sourceUrl: string | null;
-  embedding: string | null;
   aiSummary: string | null;
   usageCount: number;
   pinned: boolean;

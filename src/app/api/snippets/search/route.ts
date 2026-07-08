@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getEmbeddingConfig } from "@/lib/ai/embedding-config";
+import {
+  findSemanticSnippets,
+  mergeKeywordAndSemantic,
+} from "@/lib/snippets/semantic-search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +45,35 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const items = snippets.map((s) => ({
+  // 语义补充（@面板）：q 非空 + 配了 embedding 时合并。
+  let merged = snippets;
+  if (q) {
+    const cfg = await getEmbeddingConfig();
+    if (cfg) {
+      const hits = await findSemanticSnippets(q, { topK: limit, threshold: 0.3 });
+      if (hits.length) {
+        const semSnippets = await prisma.snippet.findMany({
+          where: { id: { in: hits.map((h) => h.id) }, trashed: false },
+          select: {
+            id: true,
+            title: true,
+            aiSummary: true,
+            content: true,
+            kind: true,
+            tagsJson: true,
+            imageUrl: true,
+            color: true,
+            updatedAt: true,
+          },
+        });
+        const scores: Record<string, number> = {};
+        for (const h of hits) scores[h.id] = h.score;
+        merged = mergeKeywordAndSemantic(snippets, semSnippets, scores, limit);
+      }
+    }
+  }
+
+  const items = merged.map((s) => ({
     id: s.id,
     title: s.title,
     summary: s.aiSummary || s.content.slice(0, 80),

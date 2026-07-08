@@ -18,6 +18,10 @@ import {
   parseWebResearchConfig,
 } from "@/lib/ai/web-research-config";
 import { WECHAT_CONFIG_KEY, parseWechatConfig } from "@/lib/wechat/config";
+import {
+  EMBEDDING_CONFIG_KEY,
+  parseEmbeddingConfig,
+} from "@/lib/ai/embedding-config";
 import { APPEARANCE_CONFIG_KEY, parseAppearanceConfig } from "@/lib/appearance-config";
 import { UI_PREFERENCES_KEY, parseUiPreferences } from "@/lib/ui-preferences";
 import { I18N_CONFIG_KEY, parseI18nConfig } from "@/lib/i18n-config";
@@ -47,6 +51,7 @@ function validateConfigValue(key: string, value: string) {
   else if (key === APPEARANCE_CONFIG_KEY) parseAppearanceConfig(value);
   else if (key === UI_PREFERENCES_KEY) parseUiPreferences(value);
   else if (key === I18N_CONFIG_KEY) parseI18nConfig(value);
+  else if (key === EMBEDDING_CONFIG_KEY) parseEmbeddingConfig(value);
   else parseJsonObjectOrArrayConfig(value);
 }
 
@@ -156,6 +161,27 @@ function maskConfigs(
         return item;
       }
     }
+    if (item.key === EMBEDDING_CONFIG_KEY) {
+      try {
+        const parsed = JSON.parse(item.value) as Record<string, unknown>;
+        return {
+          ...item,
+          value: JSON.stringify(
+            {
+              ...parsed,
+              apiKey:
+                typeof parsed.apiKey === "string" && parsed.apiKey
+                  ? "********"
+                  : "",
+            },
+            null,
+            2
+          ),
+        };
+      } catch {
+        return item;
+      }
+    }
     if (item.key === WECHAT_CONFIG_KEY) {
       try {
         const parsed = JSON.parse(item.value) as Record<string, unknown>;
@@ -227,7 +253,8 @@ export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => 
     parsed.data.key === OSS_CONFIG_KEY ||
     parsed.data.key === AGENT_CONFIG_KEY ||
     parsed.data.key === WEB_RESEARCH_CONFIG_KEY ||
-    parsed.data.key === WECHAT_CONFIG_KEY
+    parsed.data.key === WECHAT_CONFIG_KEY ||
+    parsed.data.key === EMBEDDING_CONFIG_KEY
   ) {
     const existing = await prisma.systemConfig.findUnique({
       where: { key: parsed.data.key },
@@ -288,6 +315,12 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
     if (key === WEB_RESEARCH_CONFIG_KEY) {
       if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {
         newVal.tavilyApiKey = oldVal.tavilyApiKey ?? "";
+      }
+      return JSON.stringify(newVal, null, 2);
+    }
+    if (key === EMBEDDING_CONFIG_KEY) {
+      if (newVal.apiKey === "********" || newVal.apiKey === "") {
+        newVal.apiKey = oldVal.apiKey ?? "";
       }
       return JSON.stringify(newVal, null, 2);
     }
