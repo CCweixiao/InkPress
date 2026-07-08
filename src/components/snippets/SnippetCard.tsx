@@ -3,10 +3,15 @@
 import { Pin, Trash2, Quote, Link as LinkIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import {
+  resolveTagColor,
+  getTagColorClasses,
+} from "@/lib/snippets/tag-colors";
 import type { SnippetItem } from "./types";
 
 interface SnippetCardProps {
   snippet: SnippetItem;
+  tagColors: Record<string, string>;
   onDeleted: (id: string) => void;
   onUpdated: (snippet: SnippetItem) => void;
 }
@@ -26,7 +31,7 @@ function formatRelativeTime(dateStr: string) {
   return date.toLocaleDateString("zh-CN");
 }
 
-export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps) {
+export function SnippetCard({ snippet, tagColors, onDeleted, onUpdated }: SnippetCardProps) {
   const tags: string[] = JSON.parse(snippet.tagsJson || "[]");
 
   const handlePin = async () => {
@@ -129,9 +134,20 @@ export function SnippetCard({ snippet, onDeleted, onUpdated }: SnippetCardProps)
       <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
         {tags.length > 0 && (
           <span className="flex flex-wrap gap-1">
-            {tags.slice(0, 3).map((t) => (
-              <span key={t} className="text-primary/70">#{t}</span>
-            ))}
+            {tags.slice(0, 3).map((t) => {
+              const color = resolveTagColor(t, tagColors);
+              return (
+                <span
+                  key={t}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-xs",
+                    color ? getTagColorClasses(color).pill : "text-primary/70"
+                  )}
+                >
+                  #{t}
+                </span>
+              );
+            })}
             {tags.length > 3 && (
               <span className="text-muted-foreground">+{tags.length - 3}</span>
             )}

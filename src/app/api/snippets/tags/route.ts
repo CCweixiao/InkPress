@@ -1,31 +1,43 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { collectUniqueTags } from "@/lib/snippets/tag-filter";
+import { TAG_COLOR_NAMES } from "@/lib/snippets/tag-colors";
+import { getTagColors, setTagColor } from "@/lib/snippets/tag-color-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** 获取所有标签（去重 + 计数） */
+/** 获取所有标签（去重 + 计数 + 颜色） */
 export async function GET() {
   const snippets = await prisma.snippet.findMany({
     where: { trashed: false },
     select: { tagsJson: true },
   });
-
-  const tagCounts = new Map<string, number>();
-  for (const s of snippets) {
-    try {
-      const tags: string[] = JSON.parse(s.tagsJson);
-      for (const tag of tags) {
-        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-      }
-    } catch {
-      // skip invalid JSON
-    }
-  }
-
-  const tags = Array.from(tagCounts.entries())
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-
+  const tagColors = await getTagColors();
+  const tags = collectUniqueTags(snippets).map((t) => ({
+    ...t,
+    color: tagColors[t.name] ?? null,
+  }));
   return NextResponse.json({ tags });
+}
+
+const patchSchema = z.object({
+  name: z.string().min(1).max(50),
+  color: z.enum(TAG_COLOR_NAMES).nullable(),
+});
+
+/** 设置/清除某标签的颜色 */
+export async function PATCH(req: NextRequest) {
+  const body = await req.json().catch(() => ({}));
+  const parsed = patchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "参数无效", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { name, color } = parsed.data;
+  const tagColors = await setTagColor(name, color);
+  return NextResponse.json({ tagColors });
 }

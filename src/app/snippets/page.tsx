@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { SnippetsView } from "@/components/snippets/SnippetsView";
+import { collectUniqueTags } from "@/lib/snippets/tag-filter";
+import { getTagColors } from "@/lib/snippets/tag-color-store";
 
 export const dynamic = "force-dynamic";
 
@@ -19,21 +21,13 @@ export default async function SnippetsPage() {
     }),
   ]);
 
-  // 统计标签
-  const tagCounts = new Map<string, number>();
-  for (const s of allSnippets) {
-    try {
-      const tags: string[] = JSON.parse(s.tagsJson);
-      for (const tag of tags) {
-        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-      }
-    } catch {
-      // skip
-    }
-  }
-  const tags = Array.from(tagCounts.entries())
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
+  // 统计标签（去重 + 计数）+ 合并标签颜色
+  const tags = collectUniqueTags(allSnippets);
+  const tagColors = await getTagColors();
+  const tagsWithColor = tags.map((t) => ({
+    ...t,
+    color: tagColors[t.name] ?? null,
+  }));
 
   return (
     <div className="min-h-screen">
@@ -57,7 +51,7 @@ export default async function SnippetsPage() {
       <main className="mx-auto max-w-6xl px-6 py-8">
         <SnippetsView
           initialSnippets={JSON.parse(JSON.stringify(snippets))}
-          tags={tags}
+          tags={tagsWithColor}
           totalCount={allSnippets.length}
         />
       </main>
