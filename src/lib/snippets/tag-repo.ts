@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { MAX_TAGS, MAX_TAG_LEN } from "@/lib/snippets/batch-ops";
 
 /** include 片段：带 tag 名。所有读 snippet 的查询复用。 */
 export const withTagsInclude = {
@@ -20,10 +21,11 @@ export function normalizeTagNames(names: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of names) {
-    const t = raw.trim();
+    const t = raw.trim().slice(0, MAX_TAG_LEN);
     if (!t || seen.has(t)) continue;
     seen.add(t);
     out.push(t);
+    if (out.length >= MAX_TAGS) break;
   }
   return out;
 }

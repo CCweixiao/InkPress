@@ -8,6 +8,7 @@ import {
   syncSnippetTags,
   serializeSnippet,
   withTagsInclude,
+  normalizeTagNames,
 } from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
@@ -55,7 +56,7 @@ export async function PATCH(
 
   await prisma.snippet.update({ where: { id }, data: rest });
   if (tags !== undefined) {
-    await syncSnippetTags(id, tags);
+    await syncSnippetTags(id, normalizeTagNames(tags));
   }
 
   // 输入字段变化时异步重生成：link 先抓 OG（linkUrl 变化→force 覆盖）→ aiSummary → embedding。

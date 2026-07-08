@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 /** 与 src/components/snippets/TagInput 同源，本地声明避免 client 取常量导入带状态组件。 */
-export const MAX_TAGS = 8;
-export const MAX_TAG_LEN = 20;
+export const MAX_TAGS = 5;
+export const MAX_TAG_LEN = 10;
 
 export type BatchAction = "delete" | "pin" | "addTag" | "removeTag";
 

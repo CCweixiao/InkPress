@@ -3,11 +3,23 @@
 import { useState } from "react";
 import { Pin, Trash2, Quote, Link as LinkIcon, Pencil, RefreshCw, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   resolveTagColor,
   getTagColorClasses,
 } from "@/lib/snippets/tag-colors";
+import { Markdown } from "@/components/ai/Markdown";
+import {
+  getFirstMarkdownImage,
+  stripMarkdownImages,
+} from "@/lib/markdown/images";
+import { isSafeMarkdownUrl } from "@/lib/markdown/safe-url";
 import { SnippetEditInline } from "./SnippetEditInline";
 import type { SnippetItem } from "./types";
 
@@ -51,6 +63,14 @@ export function SnippetCard({
   const [refetching, setRefetching] = useState(false);
   const [refetchMsg, setRefetchMsg] = useState<string | null>(null);
   const tags: string[] = snippet.tags;
+  const firstMarkdownImage =
+    snippet.kind === "text" ? getFirstMarkdownImage(snippet.content) : null;
+  const markdownImage =
+    firstMarkdownImage && isSafeMarkdownUrl(firstMarkdownImage.src)
+      ? firstMarkdownImage
+      : null;
+  const markdownText =
+    markdownImage ? stripMarkdownImages(snippet.content) : snippet.content;
 
   async function handleRefetch() {
     setRefetching(true);
@@ -91,36 +111,11 @@ export function SnippetCard({
     }
   };
 
-  if (editing) {
-    return (
-      <Card className="group relative p-4 transition-all break-inside-avoid ring-2 ring-primary/40">
-        {snippet.kind === "image" && snippet.imageUrl && (
-          <div className="mb-3 rounded-lg overflow-hidden">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={snippet.imageUrl}
-              alt={snippet.title}
-              className="w-full h-auto object-cover max-h-48"
-            />
-          </div>
-        )}
-        <SnippetEditInline
-          snippet={snippet}
-          existingTags={existingTags}
-          onSave={(updated) => {
-            setEditing(false);
-            onUpdated(updated);
-          }}
-          onCancel={() => setEditing(false)}
-        />
-      </Card>
-    );
-  }
-
   return (
+    <>
     <Card
       className={cn(
-        "group relative p-4 transition-all break-inside-avoid",
+        "group relative flex h-[22rem] flex-col overflow-hidden p-4 transition-all break-inside-avoid",
         selectMode
           ? "cursor-pointer hover:ring-2 hover:ring-primary/40"
           : "hover:shadow-md cursor-default",
@@ -128,6 +123,12 @@ export function SnippetCard({
         selected && "ring-2 ring-primary"
       )}
       onClick={selectMode ? onToggleSelect : undefined}
+      onDoubleClick={(event) => {
+        if (selectMode) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("button, input, a")) return;
+        setEditing(true);
+      }}
     >
       {/* 选择态 checkbox（左上角） */}
       {selectMode && (
@@ -142,7 +143,10 @@ export function SnippetCard({
       )}
       {/* 操作按钮（悬停显示；选择模式下隐藏） */}
       {!selectMode && (
-        <div className="absolute top-2 right-2 flex items-center gap-1 rounded-md bg-background/70 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+        <div
+          onDoubleClick={(event) => event.stopPropagation()}
+          className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-md border border-border/60 bg-background/90 p-0.5 shadow-sm backdrop-blur-sm opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+        >
           {snippet.kind === "link" && (
           <button
             type="button"
@@ -188,12 +192,12 @@ export function SnippetCard({
 
       {/* 内容区 */}
       {snippet.kind === "image" && snippet.imageUrl && (
-        <div className="mb-3 rounded-lg overflow-hidden">
+        <div className="mb-3 overflow-hidden rounded-lg border border-border/70 bg-muted">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={snippet.imageUrl}
             alt={snippet.title}
-            className="w-full h-auto object-cover max-h-48"
+            className="h-44 w-full object-cover"
           />
         </div>
       )}
@@ -246,20 +250,35 @@ export function SnippetCard({
             </p>
           )}
           {snippet.content && (
-            <p className="text-sm text-foreground/80 mt-1">{snippet.content}</p>
+            <p className="mt-1 line-clamp-3 text-sm text-foreground/80">{snippet.content}</p>
           )}
           {refetchMsg && (
             <p className="text-xs text-muted-foreground mt-1">{refetchMsg}</p>
           )}
         </div>
       ) : (
-        <p className="text-sm text-foreground/90 whitespace-pre-wrap mb-2">
-          {snippet.content}
-        </p>
+        <>
+          {markdownImage && (
+            <div className="snippet-card-gallery mb-3 overflow-hidden rounded-lg border border-border/70 bg-muted">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={markdownImage.src}
+                alt={markdownImage.alt}
+                loading="lazy"
+                className="h-44 w-full object-cover"
+              />
+            </div>
+          )}
+          {markdownText && (
+            <Markdown className="snippet-card-markdown text-sm text-foreground/90">
+              {markdownText}
+            </Markdown>
+          )}
+        </>
       )}
 
       {/* 底部：标签 + 时间 */}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
+      <div className="mt-auto flex items-center gap-2 border-t border-border/50 pt-2 text-xs text-muted-foreground">
         {tags.length > 0 && (
           <span className="flex flex-wrap gap-1">
             {tags.slice(0, 3).map((t) => {
@@ -284,5 +303,32 @@ export function SnippetCard({
         <span className="ml-auto">{formatRelativeTime(snippet.createdAt)}</span>
       </div>
     </Card>
+    <Dialog open={editing} onOpenChange={setEditing}>
+      <DialogContent className="max-h-[86vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>编辑灵感</DialogTitle>
+        </DialogHeader>
+        {snippet.kind === "image" && snippet.imageUrl && (
+          <div className="overflow-hidden rounded-lg border border-border/70 bg-muted">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={snippet.imageUrl}
+              alt={snippet.title}
+              className="max-h-52 w-full object-cover"
+            />
+          </div>
+        )}
+        <SnippetEditInline
+          snippet={snippet}
+          existingTags={existingTags}
+          onSave={(updated) => {
+            setEditing(false);
+            onUpdated(updated);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

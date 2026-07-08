@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
+import { TiptapEditor } from "@/components/editor/TiptapEditor";
 import { TagInput } from "./TagInput";
 import type { SnippetItem } from "./types";
 
@@ -93,14 +94,14 @@ export function SnippetEditInline({
           />
         </div>
       )}
-      <textarea
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-        placeholder={snippet.kind === "image" ? "图片配文…" : "内容…"}
-        rows={snippet.kind === "image" ? 2 : 3}
-        autoFocus
-        className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-      />
+      <div className="snippet-editor-inline rounded-lg border border-border bg-background p-2">
+        <TiptapEditor
+          value={content}
+          onChange={setContent}
+          mode="snippet"
+          placeholder={snippet.kind === "image" ? "图片配文…" : "内容…"}
+        />
+      </div>
       <TagInput
         value={tags}
         onChange={setTags}

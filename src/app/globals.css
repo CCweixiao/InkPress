@@ -343,6 +343,78 @@ body {
   pointer-events: none;
   height: 0;
 }
+
+/* 灵感弹窗里的 Markdown 编辑器：比文章编辑器更轻、更像闪念输入。 */
+.snippet-editor-dialog .editor-toolbar {
+  position: static;
+  margin-bottom: 0.75rem;
+  border-radius: 0.75rem;
+  box-shadow: none;
+}
+
+.snippet-editor-dialog .tiptap {
+  min-height: 220px;
+  padding: 0.25rem 0.25rem 0.5rem;
+  font-size: 15px;
+  line-height: 1.68;
+  letter-spacing: 0;
+}
+
+.snippet-editor-dialog .tiptap h1,
+.snippet-editor-dialog .tiptap h2,
+.snippet-editor-dialog .tiptap h3 {
+  margin-top: 1em;
+}
+
+.snippet-editor-inline .editor-toolbar {
+  position: static;
+  margin-bottom: 0.5rem;
+  border-radius: 0.625rem;
+  box-shadow: none;
+}
+
+.snippet-editor-inline .tiptap {
+  min-height: 120px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0.25rem;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0;
+}
+
+.snippet-card-markdown {
+  margin-bottom: 0.5rem;
+  max-height: 7.75rem;
+  overflow: hidden;
+}
+
+.snippet-card-markdown :where(p, ul, ol, blockquote, pre) {
+  margin-top: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+
+.snippet-card-markdown :where(h1, h2, h3) {
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+  font-size: 1em;
+}
+
+.snippet-card-markdown img {
+  width: 100%;
+  max-height: 14rem;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.snippet-card-gallery {
+  position: relative;
+}
+
+.snippet-card-gallery img {
+  display: block;
+}
 .tiptap .tableWrapper {
   margin: 1.1em 0;
   overflow-x: auto;

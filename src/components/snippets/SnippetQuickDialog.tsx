@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { TiptapEditor } from "@/components/editor/TiptapEditor";
 import { TagInput } from "./TagInput";
 import { useSnippetCreateForm } from "./use-snippet-create-form";
 import type { SnippetItem } from "./types";
@@ -25,7 +26,12 @@ export function SnippetQuickDialog() {
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleCreated = (_snippet: SnippetItem) => {
+  const handleCreated = (snippet: SnippetItem) => {
+    window.dispatchEvent(
+      new CustomEvent<SnippetItem>("inkpress:snippet-created", {
+        detail: snippet,
+      })
+    );
     if (pathname === "/snippets") router.refresh();
   };
 
@@ -34,6 +40,7 @@ export function SnippetQuickDialog() {
 
   // 全局触发（输入态跳过）：主入口 Cmd/Ctrl+Shift+N，兼容旧 Alt+N。
   useEffect(() => {
+    const openDialog = () => setOpen(true);
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "n" && e.key !== "N") return;
       const primaryShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey;
@@ -43,10 +50,14 @@ export function SnippetQuickDialog() {
       const tag = t?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
       e.preventDefault();
-      setOpen(true);
+      openDialog();
     };
+    window.addEventListener("inkpress:open-snippet-quick-dialog", openDialog);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("inkpress:open-snippet-quick-dialog", openDialog);
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   // 关闭时重置反馈 + 表单
@@ -74,12 +85,15 @@ export function SnippetQuickDialog() {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       void handleSubmit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[86vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
@@ -87,20 +101,19 @@ export function SnippetQuickDialog() {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3">
-          <textarea
-            value={form.content}
-            onChange={(e) => form.setContent(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={form.handlePaste}
-            placeholder={
-              form.pasting ? "上传图片中…" : "记录一个灵感…（可粘贴图片）"
-            }
-            aria-label="记录灵感"
-            rows={4}
-            autoFocus
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-none placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring"
-          />
+        <div className="space-y-3" onKeyDown={handleKeyDown}>
+          <div className="snippet-editor-dialog rounded-xl border border-border bg-background p-3">
+            <TiptapEditor
+              value={form.content}
+              onChange={form.setContent}
+              mode="snippet"
+              placeholder={
+                form.pasting
+                  ? "上传图片中…"
+                  : "写下闪念，支持 Markdown 和粘贴图片"
+              }
+            />
+          </div>
           <TagInput
             value={form.tags}
             onChange={form.setTags}
@@ -114,20 +127,20 @@ export function SnippetQuickDialog() {
               onClick={() => setOpen(false)}
               className="text-sm text-muted-foreground hover:text-foreground px-3 py-1.5"
             >
-              取消
+              取消（Esc）
             </button>
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={!form.canSubmit || saved}
+              disabled={!form.canSubmit || saved || form.pasting}
               className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {form.isSubmitting ? (
+              {form.isSubmitting || form.pasting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : saved ? (
                 "✓ 灵感已保存"
               ) : (
-                "保存"
+                "保存（Ctrl+Enter）"
               )}
             </button>
           </div>

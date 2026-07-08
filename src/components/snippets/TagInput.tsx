@@ -3,9 +3,7 @@
 import { useState, useRef, useMemo, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const MAX_TAGS = 8;
-const MAX_TAG_LEN = 20;
+import { MAX_TAGS, MAX_TAG_LEN } from "@/lib/snippets/batch-ops";
 
 interface TagInputProps {
   value: string[];
@@ -16,7 +14,7 @@ interface TagInputProps {
 
 /**
  * 标签 chip 输入 + typeahead。
- * 提交键 Enter / , / Tab（trim + 去重 + ≤20 字 + 最多 8 个）；
+ * 提交键 Enter / , / Tab（trim + 去重 + ≤10 字 + 最多 5 个）；
  * Backspace 空输入删最后；Esc 清当前输入；↑↓ 导航 suggestion；
  * 失焦丢弃未提交文本（零误触）。
  */
@@ -115,7 +113,7 @@ export function TagInput({
           type="text"
           value={text}
           onChange={(e) => {
-            setText(e.target.value);
+            setText(e.target.value.slice(0, MAX_TAG_LEN));
             setHighlight(-1);
           }}
           onKeyDown={onKeyDown}
@@ -126,6 +124,8 @@ export function TagInput({
             setHighlight(-1);
           }}
           placeholder={value.length === 0 ? placeholder : ""}
+          disabled={value.length >= MAX_TAGS}
+          maxLength={MAX_TAG_LEN}
           className="flex-1 min-w-[80px] bg-transparent outline-none placeholder:text-muted-foreground/60"
         />
       </div>

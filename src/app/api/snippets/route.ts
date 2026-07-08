@@ -13,6 +13,7 @@ import {
   syncSnippetTags,
   serializeSnippet,
   withTagsInclude,
+  normalizeTagNames,
   tagWhere,
   tagSearchWhere,
 } from "@/lib/snippets/tag-repo";
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
   const created = await prisma.snippet.create({
     data: { ...data, title },
   });
-  await syncSnippetTags(created.id, tags);
+  await syncSnippetTags(created.id, normalizeTagNames(tags));
 
   // 异步：link 先抓 OG（填 linkDescription）→ aiSummary（copy 策略可命中）→ embedding。
   after(async () => {

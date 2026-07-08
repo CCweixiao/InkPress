@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Pin, Trash2, Hash } from "lucide-react";
-import { SnippetCreateBar } from "./SnippetCreateBar";
+import { Pin, Trash2, Hash, Plus, Search } from "lucide-react";
 import { SnippetList } from "./SnippetList";
 import { SnippetTagSidebar } from "./SnippetTagSidebar";
 import { snippetMatchesAllTags } from "@/lib/snippets/tag-filter";
@@ -41,8 +40,8 @@ export function SnippetsView({
   const router = useRouter();
   const [snippets, setSnippets] = useState<SnippetItem[]>(initialSnippets);
   const [tags, setTags] = useState<TagEntry[]>(initialTags);
+  const [total, setTotal] = useState(totalCount);
   const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [activeKind, setActiveKind] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SnippetItem[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -52,6 +51,41 @@ export function SnippetsView({
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [batchMsg, setBatchMsg] = useState<string | null>(null);
   const { confirm, dialog: confirmDialog } = useConfirm();
+
+  const openQuickDialog = () => {
+    window.dispatchEvent(new Event("inkpress:open-snippet-quick-dialog"));
+  };
+
+  useEffect(() => {
+    setSnippets(initialSnippets);
+    setTags(initialTags);
+    setTotal(totalCount);
+  }, [initialSnippets, initialTags, totalCount]);
+
+  useEffect(() => {
+    const onCreated = (event: Event) => {
+      const snippet = (event as CustomEvent<SnippetItem>).detail;
+      if (!snippet?.id) return;
+      setSnippets((prev) => {
+        if (prev.some((s) => s.id === snippet.id)) return prev;
+        return [snippet, ...prev];
+      });
+      setTotal((prev) => prev + 1);
+      const newTags = snippet.tags;
+      if (newTags.length === 0) return;
+      setTags((cur) => {
+        const map = new Map(cur.map((t) => [t.name, { ...t }]));
+        for (const nt of newTags) {
+          const ex = map.get(nt);
+          if (ex) ex.count += 1;
+          else map.set(nt, { name: nt, count: 1, color: null });
+        }
+        return Array.from(map.values()).sort(sortByCount);
+      });
+    };
+    window.addEventListener("inkpress:snippet-created", onCreated);
+    return () => window.removeEventListener("inkpress:snippet-created", onCreated);
+  }, []);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
@@ -200,7 +234,6 @@ export function SnippetsView({
   const baseList = searchResults ?? snippets;
   const filteredSnippets = baseList.filter((s) => {
     if (!snippetMatchesAllTags(s.tags, activeTags)) return false;
-    if (activeKind && s.kind !== activeKind) return false;
     return true;
   });
 
@@ -235,21 +268,6 @@ export function SnippetsView({
     }
   };
 
-  const handleCreated = (snippet: SnippetItem) => {
-    setSnippets((prev) => [snippet, ...prev]);
-    const newTags = snippet.tags;
-    if (newTags.length === 0) return;
-    setTags((cur) => {
-      const map = new Map(cur.map((t) => [t.name, { ...t }]));
-      for (const nt of newTags) {
-        const ex = map.get(nt);
-        if (ex) ex.count += 1;
-        else map.set(nt, { name: nt, count: 1, color: null });
-      }
-      return Array.from(map.values()).sort(sortByCount);
-    });
-  };
-
   const handleDeleted = (id: string) => {
     const removed = snippets.find((s) => s.id === id);
     setSnippets((prev) => prev.filter((s) => s.id !== id));
@@ -265,38 +283,42 @@ export function SnippetsView({
   };
 
   const handleUpdated = (updated: SnippetItem) => {
+    const before =
+      snippets.find((s) => s.id === updated.id) ??
+      searchResults?.find((s) => s.id === updated.id);
     setSnippets((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    setSearchResults((prev) =>
+      prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev
+    );
+    if (!before) return;
+    const { added, removed } = diffTagSets(before.tags, updated.tags);
+    if (added.length === 0 && removed.length === 0) return;
+    const deltas = new Map<string, number>();
+    for (const t of added) deltas.set(t, (deltas.get(t) ?? 0) + 1);
+    for (const t of removed) deltas.set(t, (deltas.get(t) ?? 0) - 1);
+    setTags((cur) => applyTagDeltas(cur, deltas));
   };
 
   return (
     <div className="space-y-6">
-      {/* 类型筛选标签 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {(
-          [
-            { label: "全部", value: null },
-            { label: "文字", value: "text" },
-            { label: "图文", value: "image" },
-            { label: "引用", value: "quote" },
-            { label: "链接", value: "link" },
-          ] as const
-        ).map(({ label, value }) => (
-          <button
-            key={label}
-            onClick={() => setActiveKind(value)}
-            className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
-              activeKind === value
-                ? "bg-primary text-primary-foreground border-primary"
-                : "bg-muted/50 text-muted-foreground border-transparent hover:bg-muted"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full sm:w-80 lg:w-96">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索灵感…"
+            className="h-8 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+        {searching && (
+          <span className="text-xs text-muted-foreground">搜索中…</span>
+        )}
         {selectMode ? (
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs text-muted-foreground">
-              已选 {selectedIds.length} · 共 {totalCount} 条
+              已选 {selectedIds.length} · 共 {total} 条
             </span>
             <button
               type="button"
@@ -348,13 +370,21 @@ export function SnippetsView({
           </div>
         ) : (
           <div className="flex items-center gap-3 ml-auto">
+            <button
+              type="button"
+              onClick={openQuickDialog}
+              className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary/10"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              新建
+            </button>
             <span className="text-xs text-muted-foreground">
-              共 {totalCount} 条灵感
+              共 {total} 条灵感
             </span>
             <button
               type="button"
               onClick={() => setSelectMode(true)}
-              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted"
+              className="h-8 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               选择
             </button>
@@ -386,26 +416,6 @@ export function SnippetsView({
           })}
         </div>
       )}
-
-      {/* 搜索框 */}
-      <div className="flex items-center gap-2">
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索灵感（标题 / 正文 / 标签）…"
-          className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        {searching && (
-          <span className="text-xs text-muted-foreground">搜索中…</span>
-        )}
-      </div>
-
-      {/* 创建框 */}
-      <SnippetCreateBar
-        onCreated={handleCreated}
-        existingTags={tags.map((t) => t.name)}
-      />
 
       {/* 主内容区 */}
       <div className="flex gap-6">

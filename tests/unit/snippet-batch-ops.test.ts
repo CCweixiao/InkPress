@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_TAG_LEN,
   MAX_TAGS,
   validateBatchBody,
   dedupeIds,
@@ -35,6 +36,10 @@ describe("mergeTag", () => {
   });
   it("trim 后追加", () => {
     expect(mergeTag(["a"], "  b  ")).toEqual(["a", "b"]);
+  });
+  it("标签最多 5 个，单个标签最多 10 字", () => {
+    expect(MAX_TAGS).toBe(5);
+    expect(MAX_TAG_LEN).toBe(10);
   });
 });
 
@@ -137,7 +142,7 @@ describe("validateBatchBody", () => {
     );
     expect(validateBatchBody({ ids: ["1"], action: "pin" }).ok).toBe(false);
   });
-  it("addTag 需 tag 1-20 字（trim 后）", () => {
+  it("addTag 需 tag 1-10 字（trim 后）", () => {
     expect(validateBatchBody({ ids: ["1"], action: "addTag", tag: "新标签" }).ok).toBe(
       true
     );
@@ -145,7 +150,7 @@ describe("validateBatchBody", () => {
       false
     );
     expect(
-      validateBatchBody({ ids: ["1"], action: "addTag", tag: "一".repeat(21) }).ok
+      validateBatchBody({ ids: ["1"], action: "addTag", tag: "一".repeat(11) }).ok
     ).toBe(false);
   });
   it("ids 上限 50", () => {

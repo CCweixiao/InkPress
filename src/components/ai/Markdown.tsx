@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import MarkdownIt from "markdown-it";
+import { isSafeMarkdownUrl } from "@/lib/markdown/safe-url";
 import { cn } from "@/lib/utils";
 
 let mdInstance: MarkdownIt | null = null;
@@ -13,8 +14,8 @@ function getMarkdown(): MarkdownIt {
       breaks: true,
       typographer: false,
     });
-    // 仅允许 http(s) 链接，拦截 javascript:/data: 等危险协议
-    mdInstance.validateLink = (url) => /^https?:\/\//i.test(url);
+    // 允许外链与站内资源，拦截 javascript:/data:/协议相对地址等危险 URL。
+    mdInstance.validateLink = isSafeMarkdownUrl;
   }
   return mdInstance;
 }

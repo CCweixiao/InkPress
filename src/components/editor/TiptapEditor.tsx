@@ -113,11 +113,13 @@ export function TiptapEditor({
   articleId,
   placeholder = "开始写作，或从左侧用 AI 生成…",
   onEditorReady,
+  mode = "article",
 }: {
   value: string;
   onChange: (md: string) => void;
   articleId?: string;
   placeholder?: string;
+  mode?: "article" | "snippet";
   /** editor 实例就绪后回调一次（供父级做光标精确插入 / 选区读取）。 */
   onEditorReady?: (editor: Editor) => void;
 }) {
@@ -257,6 +259,7 @@ export function TiptapEditor({
   }, [slashCommands, slashMenu?.query]);
 
   const editor = useEditor({
+    enableInputRules: mode === "snippet" ? false : undefined,
     extensions: [
       StarterKit.configure({
         // StarterKit 自带 codeBlock，但无高亮；保持简洁，高亮在预览/转换层统一处理
@@ -369,7 +372,7 @@ export function TiptapEditor({
         .markdown?.getMarkdown() ?? "";
       onChange(md);
     },
-  });
+  }, [mode]);
 
   // editor 实例就绪后回调一次（供父级做光标精确插入 / 选区读取）
   useEffect(() => {
