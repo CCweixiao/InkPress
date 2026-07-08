@@ -194,6 +194,10 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    optionalDependencies:
+      '@resvg/resvg-js-darwin-x64':
+        specifier: 2.6.2
+        version: 2.6.2
     devDependencies:
       '@electron/rebuild':
         specifier: ^4.0.4

@@ -160,6 +160,11 @@ patchMissingPackages();
 // 找不到模块。这里从项目 .pnpm/node_modules/ 补全 bundle 的虚拟根，再把缺失的包提升到顶层。
 hoistMissingTopLevel();
 
+// Next.js .next/node_modules/<pkg>-<hash>/ 里的 traced 包会按自己的目录解析依赖。
+// 若只把依赖提升到顶层，遇到同名多版本包（如 jsdom 需要 lru-cache@11，
+// 顶层另有 lru-cache@5）会解析到错误版本。这里为 traced 包物化局部依赖闭包。
+materializeTracedNextPackageDependencies();
+
 // 重写 server.js 内硬编码的项目绝对路径（outputFileTracingRoot / turbopack.root）。
 // Next.js 构建时把构建机器的项目根写入 nextConfig，运行时 require-hook 用它解析
 // serverExternalPackages（如 better-sqlite3），导致打包到其他机器后 require 仍回退
@@ -727,6 +732,121 @@ function hoistMissingTopLevel(): void {
   }
   if (hoisted > 0) {
     console.log(`  ✓ 从 .pnpm 虚拟根提升 ${hoisted} 个缺失包到顶层 node_modules`);
+  }
+}
+
+/**
+ * 给 .next/node_modules/<pkg>-<hash>/ 包补齐局部依赖闭包。
+ *
+ * Turbopack runtime 会 externalRequire("jsdom-<hash>")，后续 require("lru-cache")
+ * 从这个 traced 包目录向上解析。只提升到顶层会破坏 pnpm 的多版本隔离：
+ * jsdom@29 需要 lru-cache@11，但顶层可能已有旧版 lru-cache@5。
+ *
+ * 解决方式：找到项目 node_modules 中对应真实包，用它自己的 require 解析 dependencies，
+ * 递归复制到 traced 包的 node_modules 下，保留局部版本选择。
+ */
+function materializeTracedNextPackageDependencies(): void {
+  const nextNm = path.join(bundle, ".next", "node_modules");
+  if (!fs.existsSync(nextNm)) return;
+
+  const projectRequire = createRequire(path.join(root, "package.json"));
+  const seen = new Set<string>();
+  let tracedPackages = 0;
+  let copiedPackages = 0;
+
+  const tracedPackageDirs = (dir: string, scope = ""): string[] => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const result: string[] = [];
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const full = path.join(dir, e.name);
+      if (e.name.startsWith("@") && !scope) {
+        result.push(...tracedPackageDirs(full, e.name + "/"));
+        continue;
+      }
+      if (fs.existsSync(path.join(full, "package.json"))) result.push(full);
+    }
+    return result;
+  };
+
+  const readPackageJson = (pkgDir: string): Record<string, unknown> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+
+  const resolvePackageDir = (
+    req: NodeRequire,
+    pkgName: string
+  ): string | null => {
+    const normalizedName = pkgName.startsWith("node:") ? pkgName.slice(5) : pkgName;
+    if (builtinModules.includes(normalizedName)) return null;
+
+    let entry: string;
+    try {
+      entry = req.resolve(pkgName);
+    } catch {
+      return null;
+    }
+    if (!path.isAbsolute(entry)) return null;
+
+    let dir = fs.statSync(entry).isDirectory() ? entry : path.dirname(entry);
+    while (dir !== path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+      dir = path.dirname(dir);
+    }
+    return null;
+  };
+
+  const copyRuntimeDeps = (srcPkgDir: string, destPkgDir: string) => {
+    const key = `${srcPkgDir}=>${destPkgDir}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const pj = readPackageJson(srcPkgDir);
+    if (!pj) return;
+    const deps = [
+      ...Object.keys((pj.dependencies as Record<string, unknown> | undefined) || {}),
+      ...Object.keys((pj.optionalDependencies as Record<string, unknown> | undefined) || {}),
+    ];
+    if (deps.length === 0) return;
+
+    const srcRequire = createRequire(path.join(srcPkgDir, "package.json"));
+    for (const dep of deps) {
+      const srcDepDir = resolvePackageDir(srcRequire, dep);
+      if (!srcDepDir) continue;
+      const destDepDir = path.join(destPkgDir, "node_modules", dep);
+      fs.mkdirSync(path.dirname(destDepDir), { recursive: true });
+      if (!fs.existsSync(destDepDir)) {
+        safeCpSync(srcDepDir, destDepDir);
+        copiedPackages++;
+      }
+      copyRuntimeDeps(srcDepDir, destDepDir);
+    }
+  };
+
+  for (const tracedDir of tracedPackageDirs(nextNm)) {
+    const pj = readPackageJson(tracedDir);
+    const name = typeof pj?.name === "string" ? pj.name : null;
+    if (!name) continue;
+
+    const srcPkgDir = resolvePackageDir(projectRequire, name);
+    if (!srcPkgDir) continue;
+    tracedPackages++;
+    copyRuntimeDeps(srcPkgDir, tracedDir);
+  }
+
+  if (tracedPackages > 0) {
+    console.log(
+      `  ✓ 补齐 .next traced 包局部依赖：${tracedPackages} 个 traced 包，复制 ${copiedPackages} 个依赖包`
+    );
   }
 }
 
