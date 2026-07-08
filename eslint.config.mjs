@@ -20,6 +20,7 @@ const eslintConfig = defineConfig([
     "storage/**",
     "logs/**",
     ".inkpress/**",
+    ".codex/**", // Codex CLI 本地技能缓存（非项目代码）
     "scripts/**",
     "tests/**",
     "prisma/**",

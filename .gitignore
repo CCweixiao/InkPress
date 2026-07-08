@@ -88,3 +88,6 @@ next-env.d.ts
 
 # graphify 知识图谱产物（`graphify update .` 生成的 AST 图谱，不入库）
 /graphify-out/
+
+# Codex CLI 本地技能缓存（AI 工具产物，非项目代码）
+/.codex/
