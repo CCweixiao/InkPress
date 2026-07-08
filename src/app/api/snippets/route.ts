@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
 import { generateAndSaveEmbedding } from "@/lib/snippets/embedding";
+import { generateAndSaveOg } from "@/lib/snippets/link-og";
 import { getEmbeddingConfig } from "@/lib/ai/embedding-config";
 import {
   findSemanticSnippets,
@@ -110,8 +111,9 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // 异步生成 aiSummary + embedding。fire-and-forget，各自吞错，互不阻断。
-  after(() => {
+  // 异步：link 先抓 OG（填 linkDescription）→ aiSummary（copy 策略可命中）→ embedding。
+  after(async () => {
+    await generateAndSaveOg(snippet.id, { force: true });
     void generateAndSaveAiSummary(snippet.id);
     void generateAndSaveEmbedding(snippet.id);
   });

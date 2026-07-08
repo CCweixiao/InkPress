@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
 import { generateAndSaveEmbedding } from "@/lib/snippets/embedding";
+import { generateAndSaveOg } from "@/lib/snippets/link-og";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,8 +54,12 @@ export async function PATCH(
 
   const snippet = await prisma.snippet.update({ where: { id }, data });
 
-  // 输入字段变化时异步重生成 aiSummary；只改 tag/color/pinned 等不触发。
+  // 输入字段变化时异步重生成：link 先抓 OG（linkUrl 变化→force 覆盖）→ aiSummary → embedding。
+  const linkUrlChanged =
+    rest.linkUrl !== undefined &&
+    (rest.linkUrl ?? null) !== existing.linkUrl;
   const inputChanged =
+    linkUrlChanged ||
     (rest.content !== undefined && rest.content !== existing.content) ||
     (rest.kind !== undefined && rest.kind !== existing.kind) ||
     (rest.quoteSource !== undefined &&
@@ -64,7 +69,8 @@ export async function PATCH(
     (rest.linkDescription !== undefined &&
       (rest.linkDescription ?? null) !== existing.linkDescription);
   if (inputChanged) {
-    after(() => {
+    after(async () => {
+      await generateAndSaveOg(id, { force: linkUrlChanged });
       void generateAndSaveAiSummary(id);
       void generateAndSaveEmbedding(id);
     });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Pin, Trash2, Quote, Link as LinkIcon, Pencil } from "lucide-react";
+import { Pin, Trash2, Quote, Link as LinkIcon, Pencil, RefreshCw, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
@@ -42,7 +42,28 @@ export function SnippetCard({
   onUpdated,
 }: SnippetCardProps) {
   const [editing, setEditing] = useState(false);
+  const [refetching, setRefetching] = useState(false);
+  const [refetchMsg, setRefetchMsg] = useState<string | null>(null);
   const tags: string[] = JSON.parse(snippet.tagsJson || "[]");
+
+  async function handleRefetch() {
+    setRefetching(true);
+    setRefetchMsg(null);
+    try {
+      const res = await fetch(`/api/snippets/${snippet.id}/refetch-og`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "抓取失败");
+      onUpdated(data.snippet);
+      setRefetchMsg("✓ 已更新");
+    } catch (e) {
+      setRefetchMsg(e instanceof Error ? e.message : "抓取失败");
+    } finally {
+      setRefetching(false);
+      window.setTimeout(() => setRefetchMsg(null), 2000);
+    }
+  }
 
   const handlePin = async () => {
     const res = await fetch(`/api/snippets/${snippet.id}/pin`, {
@@ -99,6 +120,22 @@ export function SnippetCard({
     >
       {/* 操作按钮（悬停显示） */}
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 transition-opacity">
+        {snippet.kind === "link" && (
+          <button
+            type="button"
+            onClick={() => void handleRefetch()}
+            disabled={refetching}
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title="重新抓取链接信息"
+            aria-label="重新抓取链接信息"
+          >
+            {refetching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
         <button
           onClick={() => setEditing(true)}
           className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -153,12 +190,32 @@ export function SnippetCard({
         </div>
       ) : snippet.kind === "link" ? (
         <div className="mb-2">
+          {snippet.linkImage && (
+            // 原生 <img>：OG 图来自任意域，next/image 需配 remotePatterns 不划算；
+            // onError 隐藏坏图，referrerPolicy 防 Referer 泄露。
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={snippet.linkImage}
+              alt=""
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+              className="w-full h-32 object-cover rounded-md mb-2 bg-muted"
+            />
+          )}
           <div className="flex items-center gap-1.5 mb-1">
-            <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" />
+            <LinkIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-sm font-medium truncate">
               {snippet.linkTitle || snippet.linkUrl}
             </span>
           </div>
+          {snippet.linkDescription && (
+            <p className="text-xs text-muted-foreground line-clamp-2 mb-1">
+              {snippet.linkDescription}
+            </p>
+          )}
           {snippet.linkUrl && (
             <p className="text-xs text-muted-foreground truncate">
               {snippet.linkUrl}
@@ -166,6 +223,9 @@ export function SnippetCard({
           )}
           {snippet.content && (
             <p className="text-sm text-foreground/80 mt-1">{snippet.content}</p>
+          )}
+          {refetchMsg && (
+            <p className="text-xs text-muted-foreground mt-1">{refetchMsg}</p>
           )}
         </div>
       ) : (
