@@ -2,11 +2,24 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { Pin, Trash2 } from "lucide-react";
 import { SnippetCreateBar } from "./SnippetCreateBar";
 import { SnippetList } from "./SnippetList";
 import { SnippetTagSidebar } from "./SnippetTagSidebar";
 import { snippetMatchesAllTags } from "@/lib/snippets/tag-filter";
 import { isValidTagColor } from "@/lib/snippets/tag-colors";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { BatchTagPicker } from "./BatchTagPicker";
+import {
+  resolvePinToggle,
+  collectTagsUnion,
+  parseTags,
+  mergeTag,
+  removeTag,
+  diffTagSets,
+  applyTagDeltas,
+  type BatchAction,
+} from "@/lib/snippets/batch-ops";
 import type { SnippetItem } from "./types";
 
 type TagEntry = { name: string; count: number; color: string | null };
@@ -15,15 +28,6 @@ interface SnippetsViewProps {
   initialSnippets: SnippetItem[];
   tags: TagEntry[];
   totalCount: number;
-}
-
-function parseTags(json: string): string[] {
-  try {
-    const v = JSON.parse(json || "[]");
-    return Array.isArray(v) ? v.filter((t) => typeof t === "string") : [];
-  } catch {
-    return [];
-  }
 }
 
 function sortByCount(a: TagEntry, b: TagEntry): number {
@@ -47,6 +51,8 @@ export function SnippetsView({
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [batchMsg, setBatchMsg] = useState<string | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
@@ -57,6 +63,91 @@ export function SnippetsView({
   const exitSelect = () => {
     setSelectMode(false);
     setSelectedIds([]);
+  };
+
+  // —— 选择模式批量操作派生 ——
+  const selectedSet = new Set(selectedIds);
+  const selectedSnippets = snippets.filter((s) => selectedSet.has(s.id));
+  const pinToggle = resolvePinToggle(
+    selectedSnippets.map((s) => ({ pinned: !!s.pinned }))
+  );
+  const removeCandidates = collectTagsUnion(selectedSnippets);
+
+  const handleBatch = async (
+    action: BatchAction,
+    opts?: { pinned?: boolean; tag?: string }
+  ) => {
+    if (selectedIds.length === 0) return;
+
+    // 删除二次确认
+    if (action === "delete") {
+      const ok = await confirm({
+        title: `删除选中的 ${selectedIds.length} 条素材？`,
+        description: "移入回收站，可找回。",
+        variant: "destructive",
+        confirmText: "删除",
+      });
+      if (!ok) return;
+    }
+
+    // 纯计算乐观结果（不在 setState updater 里搞副作用，避 StrictMode 双调）
+    const target = opts?.pinned;
+    const tag = opts?.tag ?? "";
+    const deltas = new Map<string, number>();
+    let nextSnippets = snippets;
+    let nextTags = tags;
+
+    if (action === "delete") {
+      for (const s of selectedSnippets) {
+        for (const t of parseTags(s.tagsJson)) {
+          deltas.set(t, (deltas.get(t) ?? 0) - 1);
+        }
+      }
+      nextSnippets = snippets.filter((s) => !selectedSet.has(s.id));
+      nextTags = applyTagDeltas(tags, deltas);
+    } else if (action === "pin" && typeof target === "boolean") {
+      nextSnippets = snippets.map((s) =>
+        selectedSet.has(s.id) ? { ...s, pinned: target } : s
+      );
+    } else if (action === "addTag" || action === "removeTag") {
+      nextSnippets = snippets.map((s) => {
+        if (!selectedSet.has(s.id)) return s;
+        const before = parseTags(s.tagsJson);
+        const after =
+          action === "addTag" ? mergeTag(before, tag) : removeTag(before, tag);
+        const { added, removed } = diffTagSets(before, after);
+        for (const t of added) deltas.set(t, (deltas.get(t) ?? 0) + 1);
+        for (const t of removed) deltas.set(t, (deltas.get(t) ?? 0) - 1);
+        return { ...s, tagsJson: JSON.stringify(after) };
+      });
+      nextTags = applyTagDeltas(tags, deltas);
+    }
+
+    // 乐观落地 + 退出选择
+    setSnippets(nextSnippets);
+    if (nextTags !== tags) setTags(nextTags);
+    exitSelect();
+    setBatchMsg(null);
+
+    // 发请求；失败回滚（用本次渲染闭包里的 snippets/tags 快照）
+    const body: Record<string, unknown> = { ids: selectedIds, action };
+    if (action === "pin") body.pinned = target;
+    if (action === "addTag" || action === "removeTag") body.tag = tag;
+
+    try {
+      const res = await fetch("/api/snippets/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "操作失败");
+    } catch (e) {
+      setSnippets(snippets);
+      setTags(tags);
+      setBatchMsg(e instanceof Error ? e.message : "操作失败");
+      window.setTimeout(() => setBatchMsg(null), 3000);
+    }
   };
 
   const handleExport = async () => {
@@ -214,6 +305,38 @@ export function SnippetsView({
             >
               导出为草稿
             </button>
+            <BatchTagPicker
+              mode="add"
+              candidates={tags.map((t) => t.name)}
+              label="加标签"
+              disabled={selectedIds.length === 0}
+              onPick={(tag) => void handleBatch("addTag", { tag })}
+            />
+            <BatchTagPicker
+              mode="remove"
+              candidates={removeCandidates}
+              label="移除标签"
+              disabled={selectedIds.length === 0}
+              onPick={(tag) => void handleBatch("removeTag", { tag })}
+            />
+            <button
+              type="button"
+              onClick={() => void handleBatch("pin", { pinned: pinToggle.target })}
+              disabled={selectedIds.length === 0}
+              className="text-xs rounded-md border border-transparent px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50 inline-flex items-center gap-1"
+            >
+              <Pin className="h-3 w-3" />
+              {pinToggle.label}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleBatch("delete")}
+              disabled={selectedIds.length === 0}
+              className="text-xs rounded-md border border-transparent px-2 py-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50 inline-flex items-center gap-1"
+            >
+              <Trash2 className="h-3 w-3" />
+              删除
+            </button>
             <button
               type="button"
               onClick={exitSelect}
@@ -278,6 +401,9 @@ export function SnippetsView({
           {exportMsg && (
             <p className="text-xs text-destructive mb-2">{exportMsg}</p>
           )}
+          {batchMsg && (
+            <p className="text-xs text-destructive mb-2">{batchMsg}</p>
+          )}
           <SnippetList
             snippets={filteredSnippets}
             tagColors={tagColors}
@@ -290,6 +416,7 @@ export function SnippetsView({
           />
         </div>
       </div>
+      {confirmDialog}
     </div>
   );
 }
