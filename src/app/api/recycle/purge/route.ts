@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { purgeArticle, purgeAsset, purgeSpace } from "@/lib/recycle";
+import { purgeArticle, purgeAsset, purgeSpace, purgeSnippet } from "@/lib/recycle";
 import { withApiLog, logMutation } from "@/lib/api-log";
 
 export const runtime = "nodejs";
 
-const itemType = z.enum(["article", "space", "asset"]);
+const itemType = z.enum(["article", "space", "asset", "snippet"]);
 
 // 兼容两种入参：单删 { type, id } 或 批删 { items: [{type,id}...] }
 const singleSchema = z.object({ type: itemType, id: z.string().min(1) });
@@ -13,10 +13,11 @@ const batchSchema = z.object({
   items: z.array(singleSchema).min(1),
 });
 
-async function purgeOne(type: "article" | "space" | "asset", id: string) {
+async function purgeOne(type: "article" | "space" | "asset" | "snippet", id: string) {
   if (type === "article") await purgeArticle(id);
   else if (type === "space") await purgeSpace(id);
-  else await purgeAsset(id);
+  else if (type === "asset") await purgeAsset(id);
+  else await purgeSnippet(id);
 }
 
 /** 彻底删除回收站项（真删：文章删文件、素材删统一存储对象）。支持单个或批量。 */

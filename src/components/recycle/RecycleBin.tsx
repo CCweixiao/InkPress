@@ -7,12 +7,15 @@ import {
   FileText,
   FolderOpen,
   Image as ImageIcon,
+  Quote,
+  Link,
   CheckSquare,
   Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatDate, cn } from "@/lib/utils";
+import { pickSnippetLabel } from "@/lib/snippets/snippet-label";
 
 type ArticleItem = {
   id: string;
@@ -37,7 +40,16 @@ type AssetItem = {
   expiresAt: string | null;
 };
 
-type Type = "article" | "space" | "asset";
+type SnippetItem = {
+  id: string;
+  title: string;
+  content: string;
+  kind: string;
+  trashedAt: string | null;
+  expiresAt: string | null;
+};
+
+type Type = "article" | "space" | "asset" | "snippet";
 
 /** 选中项的唯一键：`${type}:${id}` */
 function keyOf(type: Type, id: string) {
@@ -54,12 +66,14 @@ export function RecycleBin({
   articles,
   spaces,
   assets,
+  snippets,
 }: {
   articles: ArticleItem[];
   spaces: SpaceItem[];
   assets: AssetItem[];
+  snippets: SnippetItem[];
 }) {
-  const [items, setItems] = useState({ articles, spaces, assets });
+  const [items, setItems] = useState({ articles, spaces, assets, snippets });
   const [cleaning, setCleaning] = useState(false);
   const [, startTransition] = useTransition();
   const { confirm: confirmDialog, dialog: confirmElement } = useConfirm();
@@ -67,8 +81,8 @@ export function RecycleBin({
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    setItems({ articles, spaces, assets });
-  }, [articles, spaces, assets]);
+    setItems({ articles, spaces, assets, snippets });
+  }, [articles, spaces, assets, snippets]);
 
   // 打开时懒清理过期项
   useEffect(() => {
@@ -152,6 +166,8 @@ export function RecycleBin({
         return { ...cur, articles: cur.articles.filter((a) => a.id !== id) };
       if (type === "space")
         return { ...cur, spaces: cur.spaces.filter((a) => a.id !== id) };
+      if (type === "snippet")
+        return { ...cur, snippets: cur.snippets.filter((a) => a.id !== id) };
       return { ...cur, assets: cur.assets.filter((a) => a.id !== id) };
     });
     setSelected((cur) => {
@@ -177,6 +193,7 @@ export function RecycleBin({
       ...items.articles.map((a) => keyOf("article", a.id)),
       ...items.spaces.map((s) => keyOf("space", s.id)),
       ...items.assets.map((a) => keyOf("asset", a.id)),
+      ...items.snippets.map((s) => keyOf("snippet", s.id)),
     ];
     setSelected((cur) => {
       // 若已全选 → 清空；否则全选
@@ -191,11 +208,12 @@ export function RecycleBin({
   }
 
   const total =
-    items.articles.length + items.spaces.length + items.assets.length;
+    items.articles.length + items.spaces.length + items.assets.length + items.snippets.length;
   const allKeys = [
     ...items.articles.map((a) => keyOf("article", a.id)),
     ...items.spaces.map((s) => keyOf("space", s.id)),
     ...items.assets.map((a) => keyOf("asset", a.id)),
+    ...items.snippets.map((s) => keyOf("snippet", s.id)),
   ];
   const allSelected = total > 0 && allKeys.every((k) => selected.has(k));
 
@@ -205,7 +223,7 @@ export function RecycleBin({
         <div>
           <h1 className="text-2xl font-bold">回收站</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            删除的文章 / 空间 / 素材暂存于此，
+            删除的文章 / 空间 / 素材 / 灵感暂存于此，
             {cleaning ? "清理中…" : `共 ${total} 项`}。默认保留 30 天，过期自动清理。
           </p>
         </div>
@@ -300,6 +318,25 @@ export function RecycleBin({
                   daysLeft={daysLeft(a.expiresAt)}
                   onRestore={() => restore("asset", a.id)}
                   onPurge={() => purge("asset", a.id)}
+                />
+              ))}
+            </Section>
+          )}
+
+          {/* 灵感 */}
+          {items.snippets.length > 0 && (
+            <Section title="灵感" count={items.snippets.length}>
+              {items.snippets.map((s) => (
+                <Row
+                  key={s.id}
+                  selected={selected.has(keyOf("snippet", s.id))}
+                  onToggleSelect={() => toggleSelect("snippet", s.id)}
+                  icon={snippetIcon(s.kind)}
+                  title={pickSnippetLabel(s.title, s.content)}
+                  subtitle={s.trashedAt ? `删除于 ${formatDate(s.trashedAt)}` : undefined}
+                  daysLeft={daysLeft(s.expiresAt)}
+                  onRestore={() => restore("snippet", s.id)}
+                  onPurge={() => purge("snippet", s.id)}
                 />
               ))}
             </Section>
@@ -403,4 +440,11 @@ function Row({
       </button>
     </div>
   );
+}
+
+function snippetIcon(kind: string) {
+  if (kind === "image") return <ImageIcon className="h-4 w-4 text-muted-foreground" />;
+  if (kind === "quote") return <Quote className="h-4 w-4 text-muted-foreground" />;
+  if (kind === "link") return <Link className="h-4 w-4 text-muted-foreground" />;
+  return <FileText className="h-4 w-4 text-muted-foreground" />;
 }

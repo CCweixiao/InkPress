@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /** 列出回收站内的 文章 / 空间 / 素材（trashed=true 且未过期） */
 export async function GET() {
-  const [articles, spaces, assets] = await Promise.all([
+  const [articles, spaces, assets, snippets] = await Promise.all([
     prisma.article.findMany({
       where: { trashed: true },
       orderBy: { trashedAt: "desc" },
@@ -41,7 +41,12 @@ export async function GET() {
         expiresAt: true,
       },
     }),
+    prisma.snippet.findMany({
+      where: { trashed: true },
+      orderBy: { trashedAt: "desc" },
+      select: { id: true, title: true, content: true, kind: true, trashedAt: true, expiresAt: true },
+    }),
   ]);
 
-  return NextResponse.json({ articles, spaces, assets });
+  return NextResponse.json({ articles, spaces, assets, snippets });
 }

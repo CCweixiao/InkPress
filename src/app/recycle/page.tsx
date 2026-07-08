@@ -6,7 +6,7 @@ import { RecycleBin } from "@/components/recycle/RecycleBin";
 export const dynamic = "force-dynamic";
 
 export default async function RecyclePage() {
-  const [articles, spaces, assets] = await Promise.all([
+  const [articles, spaces, assets, snippets] = await Promise.all([
     prisma.article.findMany({
       where: { trashed: true },
       orderBy: { trashedAt: "desc" },
@@ -36,6 +36,11 @@ export default async function RecyclePage() {
         expiresAt: true,
       },
     }),
+    prisma.snippet.findMany({
+      where: { trashed: true },
+      orderBy: { trashedAt: "desc" },
+      select: { id: true, title: true, content: true, kind: true, trashedAt: true, expiresAt: true },
+    }),
   ]);
 
   return (
@@ -62,6 +67,7 @@ export default async function RecyclePage() {
           articles={JSON.parse(JSON.stringify(articles))}
           spaces={JSON.parse(JSON.stringify(spaces))}
           assets={JSON.parse(JSON.stringify(assets))}
+          snippets={JSON.parse(JSON.stringify(snippets))}
         />
       </main>
     </div>

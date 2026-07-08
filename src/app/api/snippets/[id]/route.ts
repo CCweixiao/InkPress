@@ -99,9 +99,11 @@ export async function DELETE(
     return NextResponse.json({ error: "素材块不存在" }, { status: 404 });
   }
 
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 天
   await prisma.snippet.update({
     where: { id },
-    data: { trashed: true, trashedAt: new Date() },
+    data: { trashed: true, trashedAt: now, expiresAt },
   });
   return NextResponse.json({ ok: true });
 }

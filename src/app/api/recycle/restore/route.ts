@@ -6,7 +6,7 @@ import { withApiLog, logMutation } from "@/lib/api-log";
 export const runtime = "nodejs";
 
 const schema = z.object({
-  type: z.enum(["article", "space", "asset"]),
+  type: z.enum(["article", "space", "asset", "snippet"]),
   id: z.string().min(1),
 });
 
@@ -53,6 +53,15 @@ export const POST = withApiLog("POST /api/recycle/restore", async (req: Request)
     });
     await prisma.asset.updateMany({
       where: { spaceId: id },
+      data: { trashed: false, trashedAt: null, expiresAt: null },
+    });
+    logMutation("recycle", "restore", { type, id });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (type === "snippet") {
+    await prisma.snippet.update({
+      where: { id },
       data: { trashed: false, trashedAt: null, expiresAt: null },
     });
     logMutation("recycle", "restore", { type, id });

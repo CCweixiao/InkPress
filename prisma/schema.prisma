@@ -513,6 +513,7 @@ model Snippet {
   pinned      Boolean   @default(false)
   trashed     Boolean   @default(false)
   trashedAt   DateTime?
+  expiresAt   DateTime?   // 回收站过期时间（trashed 时置 now+30d；恢复/清理时清空）
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

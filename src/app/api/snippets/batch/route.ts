@@ -35,9 +35,10 @@ export const POST = withApiLog(
     try {
       if (body.action === "delete") {
         const now = new Date();
+        const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 天
         await prisma.snippet.updateMany({
           where: { id: { in: foundIds } },
-          data: { trashed: true, trashedAt: now },
+          data: { trashed: true, trashedAt: now, expiresAt },
         });
       } else if (body.action === "pin") {
         await prisma.snippet.updateMany({

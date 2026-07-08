@@ -102,10 +102,16 @@ export async function purgeAsset(id: string) {
   await prisma.asset.delete({ where: { id } });
 }
 
+/** 彻底删除一个灵感：仅删 DB 行（SnippetTagAssignment/SnippetUsage 经 onDelete:Cascade 随主行删除）。
+ *  imageAssetId 是无 @relation 的软引用，关联 Asset 为共享资源，此处不触碰。 */
+export async function purgeSnippet(id: string) {
+  await prisma.snippet.delete({ where: { id } });
+}
+
 /** 清理所有已过期项（expiresAt <= now）。返回各类型清理数量。 */
 export async function cleanupExpired() {
   const now = new Date();
-  const [expiredArticles, expiredSpaces, expiredAssets] = await Promise.all([
+  const [expiredArticles, expiredSpaces, expiredAssets, expiredSnippets] = await Promise.all([
     prisma.article.findMany({
       where: { trashed: true, expiresAt: { lte: now } },
       select: { id: true },
@@ -118,15 +124,21 @@ export async function cleanupExpired() {
       where: { trashed: true, expiresAt: { lte: now } },
       select: { id: true },
     }),
+    prisma.snippet.findMany({
+      where: { trashed: true, expiresAt: { lte: now } },
+      select: { id: true },
+    }),
   ]);
 
   for (const a of expiredArticles) await purgeArticle(a.id);
   for (const s of expiredSpaces) await purgeSpace(s.id);
   for (const a of expiredAssets) await purgeAsset(a.id);
+  for (const s of expiredSnippets) await purgeSnippet(s.id);
 
   return {
     articles: expiredArticles.length,
     spaces: expiredSpaces.length,
     assets: expiredAssets.length,
+    snippets: expiredSnippets.length,
   };
 }
