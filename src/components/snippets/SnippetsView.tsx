@@ -212,6 +212,7 @@ export function SnippetsView({
           <SnippetList
             snippets={filteredSnippets}
             tagColors={tagColors}
+            existingTags={tags.map((t) => t.name)}
             onDeleted={handleDeleted}
             onUpdated={handleUpdated}
           />

@@ -6,11 +6,12 @@ import type { SnippetItem } from "./types";
 interface SnippetListProps {
   snippets: SnippetItem[];
   tagColors: Record<string, string>;
+  existingTags?: string[];
   onDeleted: (id: string) => void;
   onUpdated: (snippet: SnippetItem) => void;
 }
 
-export function SnippetList({ snippets, tagColors, onDeleted, onUpdated }: SnippetListProps) {
+export function SnippetList({ snippets, tagColors, existingTags, onDeleted, onUpdated }: SnippetListProps) {
   if (snippets.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -31,6 +32,7 @@ export function SnippetList({ snippets, tagColors, onDeleted, onUpdated }: Snipp
           key={snippet.id}
           snippet={snippet}
           tagColors={tagColors}
+          existingTags={existingTags}
           onDeleted={onDeleted}
           onUpdated={onUpdated}
         />

@@ -25,9 +25,16 @@ type SearchResult = {
   spaces: ResultItem[];
   assets: ResultItem[];
   skills: ResultItem[];
+  snippets: ResultItem[];
 };
 
-const EMPTY: SearchResult = { articles: [], spaces: [], assets: [], skills: [] };
+const EMPTY: SearchResult = {
+  articles: [],
+  spaces: [],
+  assets: [],
+  skills: [],
+  snippets: [],
+};
 
 /**
  * 全局搜索触发器 + 结果弹窗。
@@ -92,7 +99,8 @@ export function GlobalSearch() {
     result.articles.length +
     result.spaces.length +
     result.assets.length +
-    result.skills.length;
+    result.skills.length +
+    result.snippets.length;
   const trimmed = q.trim();
   const showEmpty = !loading && trimmed.length >= 2 && total === 0;
 
@@ -122,7 +130,7 @@ export function GlobalSearch() {
         >
           <DialogHeader className="sr-only">
             <DialogTitle>全局搜索</DialogTitle>
-            <DialogDescription>搜索文章、空间、素材、技能</DialogDescription>
+            <DialogDescription>搜索文章、空间、素材、技能、灵感</DialogDescription>
           </DialogHeader>
 
           {/* 搜索输入区（固定顶部） */}
@@ -133,7 +141,7 @@ export function GlobalSearch() {
                 ref={inputRef}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="搜索文章、空间、素材、技能…"
+                placeholder="搜索文章、空间、素材、技能、灵感…"
                 className="pl-9"
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setOpen(false);
@@ -186,6 +194,14 @@ export function GlobalSearch() {
                     title="技能"
                     icon={<Sparkles className="h-4 w-4" />}
                     items={result.skills}
+                    onSelect={go}
+                  />
+                )}
+                {result.snippets.length > 0 && (
+                  <ResultSection
+                    title="灵感"
+                    icon={<Sparkles className="h-4 w-4" />}
+                    items={result.snippets}
                     onSelect={go}
                   />
                 )}

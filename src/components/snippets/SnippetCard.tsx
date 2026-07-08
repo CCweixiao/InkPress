@@ -1,17 +1,20 @@
 "use client";
 
-import { Pin, Trash2, Quote, Link as LinkIcon } from "lucide-react";
+import { useState } from "react";
+import { Pin, Trash2, Quote, Link as LinkIcon, Pencil } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   resolveTagColor,
   getTagColorClasses,
 } from "@/lib/snippets/tag-colors";
+import { SnippetEditInline } from "./SnippetEditInline";
 import type { SnippetItem } from "./types";
 
 interface SnippetCardProps {
   snippet: SnippetItem;
   tagColors: Record<string, string>;
+  existingTags?: string[];
   onDeleted: (id: string) => void;
   onUpdated: (snippet: SnippetItem) => void;
 }
@@ -31,7 +34,14 @@ function formatRelativeTime(dateStr: string) {
   return date.toLocaleDateString("zh-CN");
 }
 
-export function SnippetCard({ snippet, tagColors, onDeleted, onUpdated }: SnippetCardProps) {
+export function SnippetCard({
+  snippet,
+  tagColors,
+  existingTags,
+  onDeleted,
+  onUpdated,
+}: SnippetCardProps) {
+  const [editing, setEditing] = useState(false);
   const tags: string[] = JSON.parse(snippet.tagsJson || "[]");
 
   const handlePin = async () => {
@@ -54,6 +64,32 @@ export function SnippetCard({ snippet, tagColors, onDeleted, onUpdated }: Snippe
     }
   };
 
+  if (editing) {
+    return (
+      <Card className="group relative p-4 transition-all break-inside-avoid ring-2 ring-primary/40">
+        {snippet.kind === "image" && snippet.imageUrl && (
+          <div className="mb-3 rounded-lg overflow-hidden">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={snippet.imageUrl}
+              alt={snippet.title}
+              className="w-full h-auto object-cover max-h-48"
+            />
+          </div>
+        )}
+        <SnippetEditInline
+          snippet={snippet}
+          existingTags={existingTags}
+          onSave={(updated) => {
+            setEditing(false);
+            onUpdated(updated);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </Card>
+    );
+  }
+
   return (
     <Card
       className={cn(
@@ -63,6 +99,14 @@ export function SnippetCard({ snippet, tagColors, onDeleted, onUpdated }: Snippe
     >
       {/* 操作按钮（悬停显示） */}
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={() => setEditing(true)}
+          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title="编辑"
+          aria-label="编辑"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
         <button
           onClick={handlePin}
           className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
