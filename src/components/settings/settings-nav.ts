@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { Bot, Sparkles, Cloud, Share2, MessageCircle, ScrollText, Globe2, Coins, Palette, KeyRound } from "lucide-react";
+import { Bot, Sparkles, Cloud, Share2, MessageCircle, ScrollText, Globe2, Coins, Palette, KeyRound, ScanSearch } from "lucide-react";
 
 /** 配置模块 Tab 键（与 SystemConfigManager 保持同步） */
-export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat";
+export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat" | "embedding";
 
 /** 设置导航项的完整键集合：配置模块 + 主题 + 系统日志 + Token 消耗大盘 */
 export type SettingsKey = ConfigTab | "theme" | "license" | "logs" | "usage";
@@ -52,6 +52,13 @@ export const SETTINGS_NAV: NavNode[] = [
     label: "AI 模型",
     description: "配置 AI 模型供应商与凭证，支持多模型切换与加密导出。",
     icon: Sparkles,
+  },
+  {
+    kind: "leaf",
+    key: "embedding",
+    label: "向量检索",
+    description: "配置 OpenAI 兼容 embedding 供应商，为素材块生成语义向量以支持语义检索。",
+    icon: ScanSearch,
   },
   {
     kind: "leaf",

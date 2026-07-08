@@ -51,8 +51,9 @@ export const STORAGE_CONFIG_KEY = "inkpress.storage";
 export const AGENT_CONFIG_KEY = "inkpress.agent";
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
 export const WEB_RESEARCH_CONFIG_KEY = "inkpress.web-research";
+export const EMBEDDING_CONFIG_KEY = "inkpress.embedding";
 
-export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat";
+export type ConfigTab = "llm" | "agent" | "web" | "storage" | "wechat" | "embedding";
 
 type SystemConfig = {
   id: string;
@@ -115,6 +116,21 @@ type AgentForm = {
 type WebResearchForm = {
   tavilyApiKey: string;
   autoApprove: boolean;
+};
+
+type EmbeddingForm = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  dimensions: number;
+};
+
+/** 智谱 OpenAI 兼容 embedding 端点默认值（与 lib/ai/embedding-config 保持一致，本地定义避免把 prisma 拉进 client bundle）。 */
+const DEFAULT_EMBEDDING_FORM: EmbeddingForm = {
+  baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+  apiKey: "",
+  model: "embedding-3",
+  dimensions: 1024,
 };
 
 type WechatForm = {
@@ -382,6 +398,34 @@ function parseWebResearchValue(value?: string): WebResearchForm {
   }
 }
 
+function parseEmbeddingValue(value?: string): EmbeddingForm {
+  if (!value) return { ...DEFAULT_EMBEDDING_FORM };
+  try {
+    const parsed = JSON.parse(value) as Partial<EmbeddingForm>;
+    return {
+      baseUrl:
+        typeof parsed.baseUrl === "string" && parsed.baseUrl
+          ? parsed.baseUrl
+          : DEFAULT_EMBEDDING_FORM.baseUrl,
+      // 脱敏占位 "********" → 空串，输入框显示 placeholder「已保存（留空保持不变）」
+      apiKey:
+        typeof parsed.apiKey === "string" && parsed.apiKey === "********"
+          ? ""
+          : parsed.apiKey ?? "",
+      model:
+        typeof parsed.model === "string" && parsed.model
+          ? parsed.model
+          : DEFAULT_EMBEDDING_FORM.model,
+      dimensions:
+        typeof parsed.dimensions === "number"
+          ? parsed.dimensions
+          : DEFAULT_EMBEDDING_FORM.dimensions,
+    };
+  } catch {
+    return { ...DEFAULT_EMBEDDING_FORM };
+  }
+}
+
 export function SystemConfigManager({
   activeTab,
   configs,
@@ -416,6 +460,9 @@ export function SystemConfigManager({
   const webResearchConfig = configsState.find(
     (c) => c.key === WEB_RESEARCH_CONFIG_KEY
   );
+  const embeddingConfig = configsState.find(
+    (c) => c.key === EMBEDDING_CONFIG_KEY
+  );
 
   const [llmForms, setLlmForms] = useState<LlmForm[]>(() =>
     parseLlmValue(llmConfig?.value)
@@ -428,6 +475,9 @@ export function SystemConfigManager({
   );
   const [webResearchForm, setWebResearchForm] = useState<WebResearchForm>(
     () => parseWebResearchValue(webResearchConfig?.value)
+  );
+  const [embeddingForm, setEmbeddingForm] = useState<EmbeddingForm>(() =>
+    parseEmbeddingValue(embeddingConfig?.value)
   );
   const [wechatForm, setWechatForm] = useState<WechatForm>(() =>
     parseWechatValue(wechatConfig?.value)
@@ -451,6 +501,10 @@ export function SystemConfigManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
   useEffect(() => {
+    setEmbeddingForm(parseEmbeddingValue(embeddingConfig?.value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configsState]);
+  useEffect(() => {
     setWechatForm(parseWechatValue(wechatConfig?.value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configsState]);
@@ -467,6 +521,10 @@ export function SystemConfigManager({
   const webResearchValue = useMemo(
     () => JSON.stringify(webResearchForm, null, 2),
     [webResearchForm]
+  );
+  const embeddingValue = useMemo(
+    () => JSON.stringify(embeddingForm, null, 2),
+    [embeddingForm]
   );
   const wechatValue = useMemo(
     () => JSON.stringify(wechatForm, null, 2),
@@ -544,6 +602,40 @@ export function SystemConfigManager({
       }
       await refreshConfigs();
       setMessage("联网搜索配置已保存。");
+    });
+  }
+
+  function saveEmbedding() {
+    clearMsg();
+    startTransition(async () => {
+      const res = await fetch("/api/system-config", {
+        method: embeddingConfig ? "PUT" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          key: EMBEDDING_CONFIG_KEY,
+          value: embeddingValue,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "保存失败。");
+        return;
+      }
+      await refreshConfigs();
+      setMessage("Embedding 配置已保存。");
+    });
+  }
+
+  function testEmbedding() {
+    clearMsg();
+    startTransition(async () => {
+      const res = await fetch("/api/ai/embeddings/test", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Embedding 连通测试失败。");
+        return;
+      }
+      setMessage(`连通正常：${data.model} / ${data.dimensions} 维。`);
     });
   }
 
@@ -636,6 +728,15 @@ export function SystemConfigManager({
           onSave={saveWechat}
           pending={pending}
           exists={!!wechatConfig}
+        />
+      ) : activeTab === "embedding" ? (
+        <EmbeddingEditor
+          value={embeddingForm}
+          onChange={setEmbeddingForm}
+          onSave={saveEmbedding}
+          onTest={testEmbedding}
+          pending={pending}
+          exists={!!embeddingConfig}
         />
       ) : (
         <StorageEditor
@@ -887,6 +988,93 @@ function WebResearchEditor({
             </Button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function EmbeddingEditor({
+  value,
+  onChange,
+  onSave,
+  onTest,
+  pending,
+  exists,
+}: {
+  value: EmbeddingForm;
+  onChange: (value: EmbeddingForm) => void;
+  onSave: () => void;
+  onTest: () => void;
+  pending: boolean;
+  exists: boolean;
+}) {
+  // 已存在配置且当前输入框为空 → 表示沿用已保存的密钥
+  const keySaved = exists && value.apiKey === "";
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          为素材块生成语义向量（OpenAI 兼容 embedding 端点）。配置后 @面板与素材搜索支持语义召回；未配置则自动回落子串。智谱用户填入与聊天相同的 API Key 即可（端点已预填）。改维度后需重跑回填脚本。
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onTest}
+            disabled={pending || !exists}
+          >
+            测试连通
+          </Button>
+          <Button type="button" onClick={onSave} disabled={pending} size="sm">
+            {pending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            保存配置
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Base URL">
+          <Input
+            value={value.baseUrl}
+            placeholder="https://open.bigmodel.cn/api/paas/v4"
+            onChange={(e) => onChange({ ...value, baseUrl: e.target.value })}
+          />
+        </Field>
+        <Field label="API Key">
+          <Input
+            type="password"
+            value={value.apiKey}
+            placeholder={keySaved ? "已保存（留空保持不变）" : "sk-..."}
+            onChange={(e) => onChange({ ...value, apiKey: e.target.value })}
+          />
+        </Field>
+        <Field label="模型">
+          <Input
+            value={value.model}
+            placeholder="embedding-3"
+            onChange={(e) => onChange({ ...value, model: e.target.value })}
+          />
+        </Field>
+        <Field label="维度">
+          <select
+            value={value.dimensions}
+            onChange={(e) =>
+              onChange({ ...value, dimensions: Number(e.target.value) })
+            }
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {[256, 512, 1024, 2048].map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
     </div>
   );
