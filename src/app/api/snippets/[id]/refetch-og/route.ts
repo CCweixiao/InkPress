@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { generateAndSaveOg } from "@/lib/snippets/link-og";
+import { serializeSnippet, withTagsInclude } from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,9 +20,10 @@ export async function POST(
     await generateAndSaveOg(id, { force: true });
     const snippet = await prisma.snippet.findUnique({
       where: { id },
-      omit: { embedding: true },
+      include: withTagsInclude,
+      omit: { embedding: true, tagsJson: true },
     });
-    return NextResponse.json({ snippet });
+    return NextResponse.json({ snippet: snippet ? serializeSnippet(snippet) : null });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "重新抓取失败" },

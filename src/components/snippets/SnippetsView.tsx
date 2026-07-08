@@ -13,8 +13,6 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { BatchTagPicker } from "./BatchTagPicker";
 import {
   resolvePinToggle,
-  collectTagsUnion,
-  parseTags,
   mergeTag,
   removeTag,
   diffTagSets,
@@ -72,7 +70,9 @@ export function SnippetsView({
   const pinToggle = resolvePinToggle(
     selectedSnippets.map((s) => ({ pinned: !!s.pinned }))
   );
-  const removeCandidates = collectTagsUnion(selectedSnippets);
+  const removeCandidates = Array.from(
+    new Set(selectedSnippets.flatMap((s) => s.tags))
+  );
 
   const handleBatch = async (
     action: BatchAction,
@@ -100,7 +100,7 @@ export function SnippetsView({
 
     if (action === "delete") {
       for (const s of selectedSnippets) {
-        for (const t of parseTags(s.tagsJson)) {
+        for (const t of s.tags) {
           deltas.set(t, (deltas.get(t) ?? 0) - 1);
         }
       }
@@ -113,13 +113,13 @@ export function SnippetsView({
     } else if (action === "addTag" || action === "removeTag") {
       nextSnippets = snippets.map((s) => {
         if (!selectedSet.has(s.id)) return s;
-        const before = parseTags(s.tagsJson);
+        const before = s.tags;
         const after =
           action === "addTag" ? mergeTag(before, tag) : removeTag(before, tag);
         const { added, removed } = diffTagSets(before, after);
         for (const t of added) deltas.set(t, (deltas.get(t) ?? 0) + 1);
         for (const t of removed) deltas.set(t, (deltas.get(t) ?? 0) - 1);
-        return { ...s, tagsJson: JSON.stringify(after) };
+        return { ...s, tags: after };
       });
       nextTags = applyTagDeltas(tags, deltas);
     }
@@ -199,7 +199,7 @@ export function SnippetsView({
 
   const baseList = searchResults ?? snippets;
   const filteredSnippets = baseList.filter((s) => {
-    if (!snippetMatchesAllTags(parseTags(s.tagsJson), activeTags)) return false;
+    if (!snippetMatchesAllTags(s.tags, activeTags)) return false;
     if (activeKind && s.kind !== activeKind) return false;
     return true;
   });
@@ -237,7 +237,7 @@ export function SnippetsView({
 
   const handleCreated = (snippet: SnippetItem) => {
     setSnippets((prev) => [snippet, ...prev]);
-    const newTags = parseTags(snippet.tagsJson);
+    const newTags = snippet.tags;
     if (newTags.length === 0) return;
     setTags((cur) => {
       const map = new Map(cur.map((t) => [t.name, { ...t }]));
@@ -254,7 +254,7 @@ export function SnippetsView({
     const removed = snippets.find((s) => s.id === id);
     setSnippets((prev) => prev.filter((s) => s.id !== id));
     if (!removed) return;
-    const delTags = parseTags(removed.tagsJson);
+    const delTags = removed.tags;
     if (delTags.length === 0) return;
     setTags((cur) =>
       cur

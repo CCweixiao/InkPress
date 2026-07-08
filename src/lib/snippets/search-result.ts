@@ -3,7 +3,6 @@ export type SnippetSearchInput = {
   title: string;
   content: string;
   kind: string;
-  tagsJson: string;
 };
 
 export type SnippetSearchResultItem = {

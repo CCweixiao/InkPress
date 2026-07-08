@@ -9,6 +9,13 @@ import {
   findSemanticSnippets,
   mergeKeywordAndSemantic,
 } from "@/lib/snippets/semantic-search";
+import {
+  syncSnippetTags,
+  serializeSnippet,
+  withTagsInclude,
+  tagWhere,
+  tagSearchWhere,
+} from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,12 +32,12 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = { trashed };
   if (kind) where.kind = kind;
-  if (tag) where.tagsJson = { contains: `"${tag}"` };
+  if (tag) Object.assign(where, tagWhere(tag));
   if (q) {
     where.OR = [
       { title: { contains: q } },
       { content: { contains: q } },
-      { tagsJson: { contains: q } },
+      tagSearchWhere(q),
     ];
   }
 
@@ -38,7 +45,8 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
     take: limit + 1,
-    omit: { embedding: true }, // 不把 KB 级向量灌给前端
+    include: withTagsInclude,
+    omit: { embedding: true, tagsJson: true }, // 不把 KB 级向量/废弃 tagsJson 灌给前端
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
@@ -55,7 +63,8 @@ export async function GET(req: NextRequest) {
       if (hits.length) {
         const semSnippets = await prisma.snippet.findMany({
           where: { id: { in: hits.map((h) => h.id) }, trashed: false },
-          omit: { embedding: true },
+          include: withTagsInclude,
+          omit: { embedding: true, tagsJson: true },
         });
         const scores: Record<string, number> = {};
         for (const h of hits) scores[h.id] = h.score;
@@ -64,7 +73,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ snippets: merged, nextCursor });
+  return NextResponse.json({ snippets: merged.map(serializeSnippet), nextCursor });
 }
 
 const createSchema = z.object({
@@ -103,20 +112,24 @@ export async function POST(req: NextRequest) {
     data.content.trim().split("\n")[0].slice(0, 50) ||
     "无标题";
 
-  const snippet = await prisma.snippet.create({
-    data: {
-      ...data,
-      title,
-      tagsJson: JSON.stringify(tags),
-    },
+  const created = await prisma.snippet.create({
+    data: { ...data, title },
   });
+  await syncSnippetTags(created.id, tags);
 
   // 异步：link 先抓 OG（填 linkDescription）→ aiSummary（copy 策略可命中）→ embedding。
   after(async () => {
-    await generateAndSaveOg(snippet.id, { force: true });
-    void generateAndSaveAiSummary(snippet.id);
-    void generateAndSaveEmbedding(snippet.id);
+    await generateAndSaveOg(created.id, { force: true });
+    void generateAndSaveAiSummary(created.id);
+    void generateAndSaveEmbedding(created.id);
   });
 
+  const snippet = serializeSnippet(
+    await prisma.snippet.findUniqueOrThrow({
+      where: { id: created.id },
+      include: withTagsInclude,
+      omit: { embedding: true, tagsJson: true },
+    })
+  );
   return NextResponse.json({ snippet }, { status: 201 });
 }

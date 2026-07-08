@@ -5,6 +5,7 @@ import {
   findSemanticSnippets,
   mergeKeywordAndSemantic,
 } from "@/lib/snippets/semantic-search";
+import { tagWhere, tagSearchWhere } from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,12 +20,12 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = { trashed: false };
   if (kind) where.kind = kind;
-  if (tag) where.tagsJson = { contains: `"${tag}"` };
+  if (tag) Object.assign(where, tagWhere(tag));
   if (q) {
     where.OR = [
       { title: { contains: q } },
       { content: { contains: q } },
-      { tagsJson: { contains: q } },
+      tagSearchWhere(q),
     ];
   }
 
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
       aiSummary: true,
       content: true,
       kind: true,
-      tagsJson: true,
+      tagAssignments: { include: { tag: { select: { name: true } } } },
       imageUrl: true,
       color: true,
       updatedAt: true,
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
             aiSummary: true,
             content: true,
             kind: true,
-            tagsJson: true,
+            tagAssignments: { include: { tag: { select: { name: true } } } },
             imageUrl: true,
             color: true,
             updatedAt: true,
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
     title: s.title,
     summary: s.aiSummary || s.content.slice(0, 80),
     kind: s.kind,
-    tags: JSON.parse(s.tagsJson) as string[],
+    tags: s.tagAssignments.map((a) => a.tag.name).sort(),
     imageUrl: s.imageUrl,
     color: s.color,
     updatedAt: s.updatedAt,

@@ -63,7 +63,7 @@ export async function GET(req: Request) {
         title: true,
         content: true,
         kind: true,
-        tagsJson: true,
+        tagAssignments: { include: { tag: { select: { name: true } } } },
       },
     }),
   ]);
@@ -106,7 +106,12 @@ export async function GET(req: Request) {
         href: `/skills`,
       })),
     snippets: snippets
-      .filter((s) => match(s.title) || match(s.content) || match(s.tagsJson))
+      .filter(
+        (s) =>
+          match(s.title) ||
+          match(s.content) ||
+          s.tagAssignments.some((a) => match(a.tag.name))
+      )
       .slice(0, 20)
       .map((s) => snippetToSearchResultItem(s)),
   };

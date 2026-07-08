@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { withApiLog, logMutation } from "@/lib/api-log";
-import {
-  validateBatchBody,
-  dedupeIds,
-  parseTags,
-  mergeTag,
-  removeTag,
-} from "@/lib/snippets/batch-ops";
+import { validateBatchBody, dedupeIds } from "@/lib/snippets/batch-ops";
+import { bulkAddTag, bulkRemoveTag } from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,19 +45,13 @@ export const POST = withApiLog(
           data: { pinned: body.pinned },
         });
       } else {
-        // addTag / removeTag：逐条 read-modify-write，事务保原子
+        // addTag / removeTag → bulk（关系表 createMany/deleteMany）
         const tag = body.tag;
-        await prisma.$transaction(async (tx) => {
-          for (const row of found) {
-            const before = parseTags(row.tagsJson);
-            const after =
-              body.action === "addTag" ? mergeTag(before, tag) : removeTag(before, tag);
-            await tx.snippet.update({
-              where: { id: row.id },
-              data: { tagsJson: JSON.stringify(after) },
-            });
-          }
-        });
+        if (body.action === "addTag") {
+          await bulkAddTag(foundIds, tag);
+        } else {
+          await bulkRemoveTag(foundIds, tag);
+        }
       }
     } catch (e) {
       return NextResponse.json(

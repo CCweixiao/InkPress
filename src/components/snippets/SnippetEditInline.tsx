@@ -12,15 +12,6 @@ interface SnippetEditInlineProps {
   onCancel: () => void;
 }
 
-function parseTags(json: string): string[] {
-  try {
-    const v = JSON.parse(json || "[]");
-    return Array.isArray(v) ? v.filter((t) => typeof t === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * 卡片原地编辑态：content + kind 专属字段 + tags。
  * Ctrl+Enter 保存（PATCH /api/snippets/[id]），Esc 取消。
@@ -33,7 +24,7 @@ export function SnippetEditInline({
   onCancel,
 }: SnippetEditInlineProps) {
   const [content, setContent] = useState(snippet.content);
-  const [tags, setTags] = useState<string[]>(() => parseTags(snippet.tagsJson));
+  const [tags, setTags] = useState<string[]>(() => snippet.tags);
   const [quoteSource, setQuoteSource] = useState(snippet.quoteSource ?? "");
   const [linkUrl, setLinkUrl] = useState(snippet.linkUrl ?? "");
   const [linkTitle, setLinkTitle] = useState(snippet.linkTitle ?? "");

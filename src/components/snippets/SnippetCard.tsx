@@ -50,7 +50,7 @@ export function SnippetCard({
   const [editing, setEditing] = useState(false);
   const [refetching, setRefetching] = useState(false);
   const [refetchMsg, setRefetchMsg] = useState<string | null>(null);
-  const tags: string[] = JSON.parse(snippet.tagsJson || "[]");
+  const tags: string[] = snippet.tags;
 
   async function handleRefetch() {
     setRefetching(true);

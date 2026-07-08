@@ -31,9 +31,14 @@ export async function POST(req: NextRequest) {
       quoteSource: true,
       linkUrl: true,
       linkTitle: true,
-      tagsJson: true,
+      tagAssignments: { include: { tag: { select: { name: true } } } },
     },
   });
 
-  return NextResponse.json({ snippets });
+  return NextResponse.json({
+    snippets: snippets.map(({ tagAssignments, ...rest }) => ({
+      ...rest,
+      tags: tagAssignments.map((a) => a.tag.name),
+    })),
+  });
 }

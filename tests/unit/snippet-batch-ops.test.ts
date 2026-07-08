@@ -3,11 +3,9 @@ import {
   MAX_TAGS,
   validateBatchBody,
   dedupeIds,
-  parseTags,
   mergeTag,
   removeTag,
   resolvePinToggle,
-  collectTagsUnion,
   diffTagSets,
   applyTagDeltas,
 } from "@/lib/snippets/batch-ops";
@@ -18,28 +16,6 @@ describe("dedupeIds", () => {
   });
   it("空数组", () => {
     expect(dedupeIds([])).toEqual([]);
-  });
-});
-
-describe("parseTags", () => {
-  it("合法数组", () => {
-    expect(parseTags('["a","b"]')).toEqual(["a", "b"]);
-  });
-  it("空串 → []", () => {
-    expect(parseTags("")).toEqual([]);
-  });
-  it("null/undefined → []", () => {
-    expect(parseTags(null)).toEqual([]);
-    expect(parseTags(undefined)).toEqual([]);
-  });
-  it("非法 JSON → []", () => {
-    expect(parseTags("not json")).toEqual([]);
-  });
-  it("非数组 JSON → []", () => {
-    expect(parseTags('{"a":1}')).toEqual([]);
-  });
-  it("过滤非字符串项", () => {
-    expect(parseTags('["a",1,true,"b"]')).toEqual(["a", "b"]);
   });
 });
 
@@ -92,23 +68,6 @@ describe("resolvePinToggle", () => {
   });
   it("空数组 → 置顶", () => {
     expect(resolvePinToggle([])).toEqual({ target: true, label: "置顶" });
-  });
-});
-
-describe("collectTagsUnion", () => {
-  it("多 snippet 标签并集去重保序", () => {
-    expect(
-      collectTagsUnion([
-        { tagsJson: '["a","b"]' },
-        { tagsJson: '["b","c"]' },
-        { tagsJson: "[]" },
-      ])
-    ).toEqual(["a", "b", "c"]);
-  });
-  it("忽略非法 tagsJson", () => {
-    expect(collectTagsUnion([{ tagsJson: "bad" }, { tagsJson: '["x"]' }])).toEqual([
-      "x",
-    ]);
   });
 });
 

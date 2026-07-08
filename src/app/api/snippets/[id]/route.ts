@@ -4,6 +4,11 @@ import { prisma } from "@/lib/db";
 import { generateAndSaveAiSummary } from "@/lib/snippets/ai-summary";
 import { generateAndSaveEmbedding } from "@/lib/snippets/embedding";
 import { generateAndSaveOg } from "@/lib/snippets/link-og";
+import {
+  syncSnippetTags,
+  serializeSnippet,
+  withTagsInclude,
+} from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,12 +52,11 @@ export async function PATCH(
   }
 
   const { tags, ...rest } = parsed.data;
-  const data: Record<string, unknown> = { ...rest };
-  if (tags !== undefined) {
-    data.tagsJson = JSON.stringify(tags);
-  }
 
-  const snippet = await prisma.snippet.update({ where: { id }, data });
+  await prisma.snippet.update({ where: { id }, data: rest });
+  if (tags !== undefined) {
+    await syncSnippetTags(id, tags);
+  }
 
   // 输入字段变化时异步重生成：link 先抓 OG（linkUrl 变化→force 覆盖）→ aiSummary → embedding。
   const linkUrlChanged =
@@ -76,7 +80,12 @@ export async function PATCH(
     });
   }
 
-  return NextResponse.json({ snippet });
+  const result = await prisma.snippet.findUniqueOrThrow({
+    where: { id },
+    include: withTagsInclude,
+    omit: { embedding: true, tagsJson: true },
+  });
+  return NextResponse.json({ snippet: serializeSnippet(result) });
 }
 
 /** 软删除素材块（移入回收站） */

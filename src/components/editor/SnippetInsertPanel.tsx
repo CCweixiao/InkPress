@@ -22,7 +22,7 @@ function KindIcon({ kind }: { kind: string }) {
   return null;
 }
 
-/** 把 SnippetItem（tagsJson 是字符串）转成 snippetToMarkdown 需要的形状。 */
+/** 把 SnippetItem 转成 snippetToMarkdown 需要的形状。 */
 function toMarkdown(s: SnippetItem): string {
   return snippetToMarkdown({
     kind: s.kind,
@@ -46,14 +46,6 @@ function toDragPayload(s: SnippetItem): string {
     linkUrl: s.linkUrl,
     linkTitle: s.linkTitle,
   });
-}
-
-function parseTags(tagsJson: string): string[] {
-  try {
-    return JSON.parse(tagsJson || "[]");
-  } catch {
-    return [];
-  }
 }
 
 export function SnippetInsertPanel({ onInsertMarkdown }: SnippetInsertPanelProps) {
@@ -137,7 +129,7 @@ export function SnippetInsertPanel({ onInsertMarkdown }: SnippetInsertPanelProps
       {!loading &&
         !error &&
         list.map((s) => {
-          const tags = parseTags(s.tagsJson);
+          const tags = s.tags;
           return (
             <div
               key={s.id}

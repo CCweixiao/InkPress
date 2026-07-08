@@ -11,7 +11,7 @@ export interface SnippetItem {
   linkTitle: string | null;
   linkDescription: string | null;
   linkImage: string | null;
-  tagsJson: string;
+  tags: string[];
   color: string | null;
   sourceArticleId: string | null;
   sourceUrl: string | null;

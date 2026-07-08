@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { collectUniqueTags } from "@/lib/snippets/tag-filter";
+import { countTagsByUsage } from "@/lib/snippets/tag-repo";
 import { TAG_COLOR_NAMES } from "@/lib/snippets/tag-colors";
 import { getTagColors, setTagColor } from "@/lib/snippets/tag-color-store";
 
@@ -10,15 +10,11 @@ export const dynamic = "force-dynamic";
 
 /** 获取所有标签（去重 + 计数 + 颜色） */
 export async function GET() {
-  const snippets = await prisma.snippet.findMany({
-    where: { trashed: false },
-    select: { tagsJson: true },
-  });
-  const tagColors = await getTagColors();
-  const tags = collectUniqueTags(snippets).map((t) => ({
-    ...t,
-    color: tagColors[t.name] ?? null,
-  }));
+  const [tagCounts, tagColors] = await Promise.all([
+    countTagsByUsage(),
+    getTagColors(),
+  ]);
+  const tags = tagCounts.map((t) => ({ ...t, color: tagColors[t.name] ?? null }));
   return NextResponse.json({ tags });
 }
 

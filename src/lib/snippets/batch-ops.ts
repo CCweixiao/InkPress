@@ -37,16 +37,6 @@ export function dedupeIds(ids: string[]): string[] {
   return [...new Set(ids)];
 }
 
-/** 解析 tagsJson 为 string[]；非法/空/非数组一律返 []。 */
-export function parseTags(json: string | null | undefined): string[] {
-  try {
-    const v = JSON.parse(json || "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
 /** 追加 tag（去重 + ≤MAX_TAGS + trim）；已达上限或已存在或空白原样返回。 */
 export function mergeTag(existing: string[], tag: string): string[] {
   const t = tag.trim();
@@ -70,21 +60,6 @@ export function resolvePinToggle(selected: {
     return { target: false, label: "取消置顶" };
   }
   return { target: true, label: "置顶" };
-}
-
-/** 选中项所有标签的并集（去重保序）——移除 picker 候选来源。 */
-export function collectTagsUnion(snippets: { tagsJson: string }[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const s of snippets) {
-    for (const t of parseTags(s.tagsJson)) {
-      if (!seen.has(t)) {
-        seen.add(t);
-        out.push(t);
-      }
-    }
-  }
-  return out;
 }
 
 /** before → after 的标签增删 diff。 */

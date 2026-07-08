@@ -2,30 +2,31 @@ import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { SnippetsView } from "@/components/snippets/SnippetsView";
-import { collectUniqueTags } from "@/lib/snippets/tag-filter";
+import {
+  serializeSnippet,
+  withTagsInclude,
+  countTagsByUsage,
+} from "@/lib/snippets/tag-repo";
 import { getTagColors } from "@/lib/snippets/tag-color-store";
 
 export const dynamic = "force-dynamic";
 
 export default async function SnippetsPage() {
-  const [snippets, allSnippets] = await Promise.all([
+  const [snippets, tagCounts, tagColors, totalCount] = await Promise.all([
     prisma.snippet.findMany({
       where: { trashed: false },
       orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
       take: 40,
-      omit: { embedding: true }, // 不把 KB 级向量序列化给前端
+      include: withTagsInclude,
+      omit: { embedding: true, tagsJson: true }, // 不把 KB 级向量/废弃 tagsJson 灌给前端
     }),
-    // 获取标签计数
-    prisma.snippet.findMany({
-      where: { trashed: false },
-      select: { tagsJson: true },
-    }),
+    countTagsByUsage(),
+    getTagColors(),
+    prisma.snippet.count({ where: { trashed: false } }),
   ]);
 
-  // 统计标签（去重 + 计数）+ 合并标签颜色
-  const tags = collectUniqueTags(allSnippets);
-  const tagColors = await getTagColors();
-  const tagsWithColor = tags.map((t) => ({
+  // 合并标签计数与颜色（计数已由 countTagsByUsage 在 DB 侧算好）
+  const tagsWithColor = tagCounts.map((t) => ({
     ...t,
     color: tagColors[t.name] ?? null,
   }));
@@ -51,9 +52,9 @@ export default async function SnippetsPage() {
 
       <main className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
         <SnippetsView
-          initialSnippets={JSON.parse(JSON.stringify(snippets))}
+          initialSnippets={JSON.parse(JSON.stringify(snippets.map(serializeSnippet)))}
           tags={tagsWithColor}
-          totalCount={allSnippets.length}
+          totalCount={totalCount}
         />
       </main>
     </div>
