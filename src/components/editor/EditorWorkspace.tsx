@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Editor } from "@tiptap/react";
 import {
   Sparkles,
   Send,
@@ -100,6 +101,53 @@ export function EditorWorkspace({
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   const previewScrollRef = useRef<HTMLElement | null>(null);
   const scrollSyncFrame = useRef<number | null>(null);
+  const editorRef = useRef<Editor | null>(null);
+
+  // 稳定回调：TiptapEditor 的 onEditorReady useEffect deps 含 onEditorReady，
+  // 用 useCallback 钉住引用避免每次 render 重置 editor。
+  const handleEditorReady = useCallback((e: Editor) => {
+    editorRef.current = e;
+  }, []);
+
+  /** 光标处插入 Markdown（面板点击用；tiptap-markdown 解析为富文本）。 */
+  const insertMarkdown = useCallback((md: string) => {
+    editorRef.current?.chain().focus().insertContent(md).run();
+  }, []);
+
+  /** 读当前选区文本（摘录用；空选区返回 ""）。 */
+  const getSelectionText = useCallback(() => {
+    const e = editorRef.current;
+    if (!e) return "";
+    const { from, to } = e.state.selection;
+    return e.state.doc.textBetween(from, to, "\n").trim();
+  }, []);
+
+  // 摘录反馈内联消息（无 toast 库；2s 后自动清除）
+  const [excerptMsg, setExcerptMsg] = useState<string | null>(null);
+
+  async function handleExcerpt() {
+    const text = getSelectionText();
+    if (!text) {
+      setExcerptMsg("请先选中文字");
+      window.setTimeout(() => setExcerptMsg(null), 2000);
+      return;
+    }
+    try {
+      const res = await fetch("/api/snippets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: text,
+          kind: "text",
+          sourceArticleId: article.id,
+        }),
+      });
+      setExcerptMsg(res.ok ? "✓ 已保存到灵感" : "保存失败");
+    } catch {
+      setExcerptMsg("保存失败");
+    }
+    window.setTimeout(() => setExcerptMsg(null), 2000);
+  }
 
   const currentTheme =
     themes.find((t) => t.id === themeId) ??
@@ -333,13 +381,15 @@ export function EditorWorkspace({
           <div className="flex items-center gap-2 mb-1">
             <Sparkles className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">
-              {aiMode === "chat" ? "写作助手" : "素材"}
+              {aiMode === "chat" ? "写作助手" : aiMode === "snippets" ? "灵感" : "素材"}
             </h2>
           </div>
           <p className="text-xs text-muted-foreground">
             {aiMode === "chat"
               ? "研究、分析、创作并通过提案安全调整文章"
-              : "上传与管理本文素材，可插入正文"}
+              : aiMode === "snippets"
+                ? "点击或拖拽灵感素材插入正文"
+                : "上传与管理本文素材，可插入正文"}
           </p>
         </div>
         <AIPanel
@@ -357,6 +407,7 @@ export function EditorWorkspace({
           onProfileChange={setProfileId}
           onModeChange={setAiMode}
           onFlushArticle={flushArticle}
+          onInsertMarkdown={insertMarkdown}
         />
       </aside>
 
@@ -380,6 +431,18 @@ export function EditorWorkspace({
               ? "已保存"
               : ""}
           </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExcerpt}
+            title="把当前选区文字保存为灵感素材"
+            className="h-8 shrink-0"
+          >
+            保存选区为灵感
+          </Button>
+          {excerptMsg && (
+            <span className="text-xs text-muted-foreground shrink-0">{excerptMsg}</span>
+          )}
           <Popover open={articleActionsOpen} onOpenChange={setArticleActionsOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -481,7 +544,12 @@ export function EditorWorkspace({
         </div>
         <div ref={editorScrollRef} className="editor-canvas flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-10 py-6">
-            <TiptapEditor value={markdown} onChange={setMarkdown} articleId={article.id} />
+            <TiptapEditor
+              value={markdown}
+              onChange={setMarkdown}
+              articleId={article.id}
+              onEditorReady={handleEditorReady}
+            />
           </div>
         </div>
       </main>

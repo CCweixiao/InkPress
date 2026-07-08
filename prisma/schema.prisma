@@ -35,6 +35,8 @@ model Article {
   space Space? @relation(fields: [spaceId], references: [id])
 
   assets           Asset[]
+  snippets         Snippet[]
+  snippetUsages    SnippetUsage[]
   agentChatSession AgentChatSession?
   agentProposals   AgentArticleProposal[]
 
@@ -468,6 +470,78 @@ model Asset {
   @@index([articleId])
   @@index([trashed])
   @@index([wxSyncStatus])
+}
+
+/// 素材块 — 灵感碎片（文字/图文/引用/链接）
+/// 设计原则：字段平铺（非 JSON 嵌套），便于数据库索引和 AI 工具结构化读取
+model Snippet {
+  id          String    @id @default(cuid())
+
+  // ─── 核心内容 ───
+  title       String    @default("")  // 素材标题（可空，自动从 content 首行提取）
+  content     String    // 正文（纯文本或轻量 Markdown，≤500字）
+  kind        String    @default("text") // "text" | "image" | "quote" | "link"
+
+  // ─── 图文混排 ───
+  imageUrl    String?   // 主图 URL（内联图或粘贴图，直接可用于渲染和 AI 引用）
+  imageAssetId String?  // 关联的 Asset ID（通过素材库上传时建立引用）
+  imagesJson  String    @default("[]") // 多图场景：[{url, caption}] JSON数组
+
+  // ─── 引用块 ───
+  quoteSource String?   // 引用出处/作者
+
+  // ─── 链接块 ───
+  linkUrl     String?   // 原始 URL
+  linkTitle   String?   // 链接标题（OG title 自动抓取 / 手动填写）
+  linkDescription String? // 链接描述（OG description）
+  linkImage   String?   // 链接预览图（OG image）
+
+  // ─── 组织与检索 ───
+  tagsJson    String    @default("[]") // 标签数组 JSON ["产品想法","技术灵感"]
+  color       String?   // 卡片强调色（预设色板，如 "amber" | "blue" | "green"）
+
+  // ─── 来源追踪 ───
+  sourceArticleId String? // 从哪篇文章摘录的（保持引用溯源）
+  sourceUrl    String?    // 外部来源 URL（从网页摘录时记录）
+
+  // ─── AI 辅助字段 ───
+  embedding   String?   // 语义向量（JSON float[]），用于 AI 检索相关素材
+  aiSummary   String?   // AI 生成的一句话摘要（用于 @面板快速预览）
+  usageCount  Int       @default(0) // 被引用/使用次数（排序权重）
+
+  // ─── 状态 ───
+  pinned      Boolean   @default(false)
+  trashed     Boolean   @default(false)
+  trashedAt   DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  sourceArticle Article? @relation(fields: [sourceArticleId], references: [id], onDelete: SetNull)
+  usages        SnippetUsage[]
+
+  @@index([kind])
+  @@index([pinned, createdAt])
+  @@index([trashed])
+  @@index([createdAt])
+  @@index([usageCount])
+  @@index([sourceArticleId])
+}
+
+/// 素材块被文章引用的记录（便于双向溯源：文章用了哪些素材 / 素材被哪些文章用了）
+model SnippetUsage {
+  id          String   @id @default(cuid())
+  snippetId   String
+  articleId   String
+  insertedVia String   @default("at-mention") // "at-mention" | "drag-drop" | "sidebar"
+  createdAt   DateTime @default(now())
+
+  snippet     Snippet  @relation(fields: [snippetId], references: [id], onDelete: Cascade)
+  article     Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([snippetId])
+  @@index([articleId])
+  @@unique([snippetId, articleId])
 }
 
 // P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。
