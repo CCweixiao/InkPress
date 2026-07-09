@@ -1,5 +1,5 @@
 /**
- * 全局拦截 middleware（Edge runtime）。
+ * 全局拦截 proxy（Node.js runtime，Next.js 16 强制）。
  *
  * 核心思路：昂贵的 license 检查留在 server route / instrumentation；
  * 这里只读签名 cookie `ip-gate` 做廉价重定向。
@@ -8,11 +8,15 @@
  * - cookie 缺失/过期/验签失败 → 放行（由页面/弹窗触发 status 刷新并回写 cookie）
  *
  * Matcher 排除：/license、/api/license/*、/_next/*、静态资源。
+ *
+ * Next.js 16 升级要点：
+ * - middleware.ts → proxy.ts（文件名约定改名）
+ * - experimental-edge 运行时已废弃；proxy.ts 强制 Node.js runtime，
+ *   禁止再导出 `runtime` 配置（否则报 Route segment config is not allowed）。
+ * - verifyGate 用 Web Crypto API，Node 18+ 全局可用，无需改动。
  */
 import { NextRequest, NextResponse } from "next/server";
 import { GATE_COOKIE_NAME, verifyGate } from "@/lib/license/gate-cookie";
-
-export const runtime = "experimental-edge";
 
 // 不拦截的路径前缀
 const PUBLIC_PATHS = [
@@ -28,7 +32,7 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p));
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // 公开路径放行
