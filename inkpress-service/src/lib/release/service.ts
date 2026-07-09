@@ -223,7 +223,7 @@ export async function updateVersion(
   const existing = await prisma.releaseVersion.findUnique({ where: { id } });
   if (!existing) throw new AppError(ErrorCode.NOT_FOUND, "版本不存在");
 
-  const data: Prisma.ReleaseVersionUpdateInput = { source: "admin" };
+  const data: Prisma.ReleaseVersionUpdateInput = {};
   if (patch.displayName !== undefined) data.displayName = patch.displayName;
   if (patch.logoUrl !== undefined) data.logoUrl = patch.logoUrl;
   if (patch.changelogMarkdown !== undefined) data.changelogMarkdown = patch.changelogMarkdown;
@@ -291,9 +291,19 @@ export async function uploadAsset(
   const version = await prisma.releaseVersion.findUnique({ where: { id: versionId } });
   if (!version) throw new AppError(ErrorCode.NOT_FOUND, "版本不存在");
 
+  const existingAsset = await prisma.releaseAsset.findUnique({
+    where: { versionId_os_arch: { versionId, os: input.os, arch: input.arch } },
+    select: { storageKey: true },
+  });
+
   const storageKey = assetOssKey(version.packageName, version.version, input.os, input.arch, input.fileName);
   const fileSizeBytes = input.buffer.byteLength;
   const fileHashSha256 = sha256Hex(input.buffer);
+
+  // 删旧 OSS 文件（key 不同时），传新文件
+  if (existingAsset && existingAsset.storageKey !== storageKey) {
+    await deleteObject(existingAsset.storageKey);
+  }
 
   // 上传到 OSS
   await uploadBufferToOssKey(storageKey, input.buffer);
@@ -443,7 +453,7 @@ export async function listPublishedReleases(packageName: string, opts: { history
   const versions = await prisma.releaseVersion.findMany({
     where: { packageName, status: "PUBLISHED" },
     orderBy: [{ releasedAt: "desc" }, { version: "desc" }],
-    include: { assets: true },
+    include: { assets: { orderBy: [{ os: "asc" }, { arch: "asc" }] } },
   });
 
   if (versions.length === 0) return null;

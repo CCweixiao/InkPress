@@ -170,6 +170,7 @@ jobs:
         env:
           RELEASE_REGISTER_TOKEN: ${{ secrets.RELEASE_REGISTER_TOKEN }}
           SYNC_URL: ${{ vars.INKPRESS_SYNC_URL || 'https://www.longoflow.com/api/releases/sync-version' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "$RELEASE_REGISTER_TOKEN" ]; then
             echo "⚠️ RELEASE_REGISTER_TOKEN 未配置，跳过版本同步"
@@ -186,5 +187,3 @@ jobs:
             -d "{\"packageName\":\"inkpress\",\"version\":\"${VERSION#v}\",\"channel\":\"stable\",\"changelogMarkdown\":$BODY_JSON}" \
             && echo "✓ 版本同步成功" \
             || echo "⚠️ 版本同步失败（不阻塞发布）"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 /**
  * /downloads — 公开下载页。
  *
- * 数据从 SoftwareRelease 表读取（status=PUBLISHED，按平台分组取最新）。
+ * 数据从 ReleaseVersion / ReleaseAsset 表读取（status=PUBLISHED，按平台分组取最新）。
  * 未发布过任何版本时展示「即将上线」空态，避免直接 404 让访问者扑空。
  */
 export default async function DownloadsRoutePage() {
