@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { serializeComposer } from "../../src/lib/ai/snippet-serialize";
+import {
+  serializeComposer,
+  serializeInlineSnippetComposer,
+} from "../../src/lib/ai/snippet-serialize";
 
 describe("serializeComposer", () => {
   it("空 refs → message=text，无标记段", () => {
@@ -42,5 +45,41 @@ describe("serializeComposer", () => {
   it("过滤 falsy id", () => {
     const r = serializeComposer("x", ["cl1", "", "cl2"]);
     expect(r.snippetRefs).toEqual(["cl1", "cl2"]);
+  });
+});
+
+describe("serializeInlineSnippetComposer", () => {
+  const refs = [
+    { id: "cl1", token: "[[灵感：持续学习]]" },
+    { id: "cl2", token: "[[灵感：第二段素材]]" },
+  ];
+
+  it("按输入正文中的占位符顺序替换为 snippet marker", () => {
+    const r = serializeInlineSnippetComposer(
+      "我要写一篇文章，[[灵感：持续学习]]\n需要另一段灵感，[[灵感：第二段素材]]",
+      refs
+    );
+
+    expect(r.message).toBe(
+      "我要写一篇文章，{{snippet:cl1}}\n需要另一段灵感，{{snippet:cl2}}"
+    );
+    expect(r.snippetRefs).toEqual(["cl1", "cl2"]);
+  });
+
+  it("忽略已从输入框删除的占位符", () => {
+    const r = serializeInlineSnippetComposer("只保留 [[灵感：第二段素材]]", refs);
+
+    expect(r.message).toBe("只保留 {{snippet:cl2}}");
+    expect(r.snippetRefs).toEqual(["cl2"]);
+  });
+
+  it("同一灵感重复穿插时消息保留所有位置，snippetRefs 去重", () => {
+    const r = serializeInlineSnippetComposer(
+      "[[灵感：持续学习]]\n正文\n[[灵感：持续学习]]",
+      refs
+    );
+
+    expect(r.message).toBe("{{snippet:cl1}}\n正文\n{{snippet:cl1}}");
+    expect(r.snippetRefs).toEqual(["cl1"]);
   });
 });

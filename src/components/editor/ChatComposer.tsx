@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  forwardRef,
   memo,
   useCallback,
   useEffect,
@@ -9,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Send, Square, FileSearch } from "lucide-react";
+import { Send, Square, FileSearch, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SlashMenu } from "./slash-commands";
@@ -22,19 +21,32 @@ import {
   type SlashCommand,
 } from "./slash-commands";
 import {
-  atQuery,
   filterSnippets,
-  type AtQueryResult,
   type SnippetSearchItem,
 } from "./at-commands";
 import { SnippetMentionPopover } from "./SnippetMentionPopover";
-import { SnippetRefChip } from "./SnippetRefChip";
+import type { InlineSnippetRef } from "@/lib/ai/snippet-serialize";
 import type { SkillCatalogItem } from "@/lib/ai/skills";
+import {
+  StructuredChatInput,
+  type StructuredChatInputHandle,
+  type StructuredMentionQuery,
+} from "./StructuredChatInput";
+import type {
+  ComposerDocument,
+  ComposerSnippetSegment,
+} from "@/lib/snippets/injection-review";
+import { SubmissionGuard } from "@/lib/ai/submission-guard";
+import {
+  mentionMenuKeyAction,
+  moveMenuIndex,
+} from "@/lib/ui/menu-navigation";
 
 /** Composer 发送载荷。snippetRefs 与 forceSkillIds 互斥（@ 引用 vs /skill 命令）。 */
 export type ComposerSendPayload = {
   text: string;
-  snippetRefs: string[];
+  composer: ComposerDocument;
+  snippetRefs: InlineSnippetRef[];
   forceSkillIds?: string[];
 };
 
@@ -46,31 +58,14 @@ interface ChatComposerProps {
   placeholder: string;
   /** approval 锁定时额外的占位/样式提示（与 disabled 配合）。 */
   approvalBlocked?: boolean;
-  inputHistory: string[];
-  onSend: (payload: ComposerSendPayload) => void;
+  inputHistory: ComposerDocument[];
+  restoreDraft?: { key: string; document: ComposerDocument } | null;
+  onDraftRestored?: () => void;
+  onSend: (payload: ComposerSendPayload) => void | boolean | Promise<void | boolean>;
   onClearConversation: () => void | Promise<void>;
   onStop: () => void;
   children?: React.ReactNode;
 }
-
-/**
- * 隔离的 textarea：memo 化避免流式 chunk 引起的父级重渲染传递到输入框。
- * 父级用 ref 桥接 onKeyDown，使 handler 引用在渲染间稳定。（自 WritingAssistant L1542-1571 原样搬入）
- */
-const ChatTextarea = memo(
-  forwardRef<HTMLTextAreaElement, {
-    value: string;
-    disabled: boolean;
-    placeholder: string;
-    className: string;
-    onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-    onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
-    onCompositionStart: () => void;
-    onCompositionEnd: () => void;
-  }>(function ChatTextarea(props, ref) {
-    return <textarea ref={ref} {...props} />;
-  })
-);
 
 function ChatComposerImpl({
   disabled,
@@ -78,12 +73,16 @@ function ChatComposerImpl({
   placeholder,
   approvalBlocked = false,
   inputHistory,
+  restoreDraft,
+  onDraftRestored,
   onSend,
   onClearConversation,
   onStop,
   children,
 }: ChatComposerProps) {
   const [input, setInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submissionGuardRef = useRef(new SubmissionGuard());
   const historyIndex = useRef<number | null>(null);
 
   // ── 斜杠命令（自 WritingAssistant L1638-1673 原样搬入）──
@@ -130,35 +129,46 @@ function ChatComposerImpl({
   const [slashNotice, setSlashNotice] = useState("");
 
   // ── @ 灵感引用 ──
-  type SnippetRef = { id: string; displayText: string };
-  const [snippetRefs, setSnippetRefs] = useState<SnippetRef[]>([]);
   const [atItems, setAtItems] = useState<SnippetSearchItem[]>([]);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
   const [atLoading, setAtLoading] = useState(false);
   const [atError, setAtError] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
-  const [atQueryResult, setAtQueryResult] = useState<AtQueryResult | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [atQueryResult, setAtQueryResult] =
+    useState<StructuredMentionQuery | null>(null);
+  const inputRef = useRef<StructuredChatInputHandle | null>(null);
   const atOpen = atQueryResult !== null;
 
-  // ── 稳定 callback（自 WritingAssistant L1911-1925 原样搬入）──
-  // --- 稳定 callback：避免流式重渲染把新函数引用传给 ChatTextarea ---
   const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setInput(e.target.value);
+    (
+      _document: ComposerDocument,
+      plainText: string,
+      mention: StructuredMentionQuery | null
+    ) => {
+      setInput(plainText);
       setSlashForcedClosed(false);
-      const caret = e.target.selectionStart ?? e.target.value.length;
-      setAtQueryResult(atQuery(e.target.value, caret, isComposing));
-      setAtActiveIndex(0);
+      setAtQueryResult(isComposing ? null : mention);
     },
     [isComposing]
   );
-  // keydown 逻辑复杂、依赖多，用 ref 桥接保持引用稳定
+
+  useEffect(() => {
+    setAtActiveIndex(0);
+  }, [atQueryResult?.query]);
+
+  useEffect(() => {
+    if (!restoreDraft) return;
+    inputRef.current?.setDocument(restoreDraft.document);
+    historyIndex.current = null;
+    const frame = requestAnimationFrame(() => onDraftRestored?.());
+    return () => cancelAnimationFrame(frame);
+  }, [restoreDraft, onDraftRestored]);
+
   const chatKeydownRef = useRef<
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+    (e: React.KeyboardEvent<HTMLDivElement>) => void
   >(() => {});
   const stableChatKeydown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => chatKeydownRef.current(e),
+    (e: React.KeyboardEvent<HTMLDivElement>) => chatKeydownRef.current(e),
     []
   );
 
@@ -170,48 +180,45 @@ function ChatComposerImpl({
     setSlashForcedClosed(false);
     if (command.kind === "clear") {
       setInput("");
+      inputRef.current?.setDocument([]);
       void onClearConversation();
       return;
     }
     // skill：插入 /skillKey + 空格，保持焦点继续输入参数（空格后菜单自动关闭）
-    setInput(`${command.token} `);
+    inputRef.current?.insertCommand({
+      token: command.token,
+      label: command.label,
+    });
   }
 
-  /** @ 选中：删 textarea 触发文本 + 进托盘去重 + 关闭 popover。 */
+  /** @ 选中：把原子灵感标签插入当前光标位置。 */
   function selectSnippet(item: SnippetSearchItem) {
-    if (atQueryResult && textareaRef.current) {
-      const next =
-        input.slice(0, atQueryResult.triggerStart) +
-        input.slice(atQueryResult.triggerEnd);
-      setInput(next);
-      const newCaret = atQueryResult.triggerStart;
-      window.setTimeout(() => {
-        textareaRef.current?.focus();
-        textareaRef.current?.setSelectionRange(newCaret, newCaret);
-      }, 0);
-    }
+    inputRef.current?.insertSnippet(item);
     setAtQueryResult(null);
     setAtItems([]);
-    setSnippetRefs((prev) =>
-      prev.some((s) => s.id === item.id)
-        ? prev
-        : [
-            ...prev,
-            {
-              id: item.id,
-              displayText: item.title || item.summary.slice(0, 20),
-            },
-          ]
-    );
   }
 
   async function submit() {
+    if (!submissionGuardRef.current.acquire()) return;
+    setSubmitting(true);
+    try {
     const text = input.trim();
     if (!text || disabled) return;
+    const composer = inputRef.current?.getDocument() ?? [];
+    const snippetRefs = composer
+      .filter(
+        (segment): segment is ComposerSnippetSegment =>
+          segment.type === "snippet"
+      )
+      .map((segment) => ({
+        id: segment.id,
+        token: `[灵感：${segment.title}]`,
+      }));
     const parsed = parseSlashCommand(text, slashCommands);
     if (parsed) {
       if (parsed.command.kind === "clear") {
         setInput("");
+        inputRef.current?.setDocument([]);
         setSlashForcedClosed(false);
         await onClearConversation();
         return;
@@ -227,23 +234,31 @@ function ChatComposerImpl({
       }
       // Correction 2: 发送后重置历史索引，保持原 sendText 行为
       // （"发送后 ↑ 从最新一条开始"）。
-      onSend({
+      const sent = await onSend({
         text,
+        composer,
         snippetRefs: [],
         forceSkillIds: parsed.command.skillKey
           ? [parsed.command.skillKey]
           : undefined,
       });
+      if (sent === false) return;
       historyIndex.current = null;
       setInput("");
+      inputRef.current?.setDocument([]);
       setSlashForcedClosed(false);
       return;
     }
-    onSend({ text, snippetRefs: snippetRefs.map((s) => s.id) });
+    const sent = await onSend({ text, composer, snippetRefs });
+    if (sent === false) return;
     historyIndex.current = null;
     setInput("");
+    inputRef.current?.setDocument([]);
     setSlashForcedClosed(false);
-    setSnippetRefs([]);
+    } finally {
+      submissionGuardRef.current.release();
+      setSubmitting(false);
+    }
   }
 
   // ── keydown（自 WritingAssistant L2068-2128 原样搬入；
@@ -254,12 +269,14 @@ function ChatComposerImpl({
       if (slashOpen) {
         if (event.key === "ArrowDown") {
           event.preventDefault();
-          setSlashIndex((i) => Math.min(slashFiltered.length - 1, i + 1));
+          setSlashIndex((i) => moveMenuIndex(i, "next", slashFiltered.length));
           return;
         }
         if (event.key === "ArrowUp") {
           event.preventDefault();
-          setSlashIndex((i) => Math.max(0, i - 1));
+          setSlashIndex((i) =>
+            moveMenuIndex(i, "previous", slashFiltered.length)
+          );
           return;
         }
         if (event.key === "Enter" || event.key === "Tab") {
@@ -273,30 +290,30 @@ function ChatComposerImpl({
           setSlashForcedClosed(true);
           return;
         }
-      } else if (atOpen && !atLoading) {
-        // @ 与 / 互斥：textarea 不可能同时以 / 开头且含未闭合的 @
-        if (event.key === "ArrowDown") {
-          event.preventDefault();
-          setAtActiveIndex((i) => Math.min(atItems.length - 1, i + 1));
+      } else if (atOpen) {
+        const action = mentionMenuKeyAction(event.key, atLoading);
+        if (action) event.preventDefault();
+        if (action === "next") {
+          setAtActiveIndex((i) => moveMenuIndex(i, "next", atItems.length));
           return;
         }
-        if (event.key === "ArrowUp") {
-          event.preventDefault();
-          setAtActiveIndex((i) => Math.max(0, i - 1));
+        if (action === "previous") {
+          setAtActiveIndex((i) =>
+            moveMenuIndex(i, "previous", atItems.length)
+          );
           return;
         }
-        if (event.key === "Enter" || event.key === "Tab") {
-          event.preventDefault();
+        if (action === "select") {
           const item = atItems[atActiveIndex] ?? atItems[0];
           if (item) selectSnippet(item);
           return;
         }
-        if (event.key === "Escape") {
-          event.preventDefault();
+        if (action === "close") {
           setAtQueryResult(null);
           setAtItems([]);
           return;
         }
+        if (action === "hold") return;
       }
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -305,10 +322,17 @@ function ChatComposerImpl({
       }
       if (event.key === "ArrowUp" || event.key === "ArrowDown") {
         const el = event.currentTarget;
+        const selection = window.getSelection();
+        const beforeRange = document.createRange();
+        beforeRange.selectNodeContents(el);
+        if (selection?.anchorNode && el.contains(selection.anchorNode)) {
+          beforeRange.setEnd(selection.anchorNode, selection.anchorOffset);
+        }
+        const before = beforeRange.toString();
+        const full = el.innerText;
         const atFirstLine =
-          el.value.slice(0, el.selectionStart).indexOf("\n") === -1;
-        const atLastLine =
-          el.value.slice(el.selectionStart).indexOf("\n") === -1;
+          before.indexOf("\n") === -1;
+        const atLastLine = full.slice(before.length).indexOf("\n") === -1;
         if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
           event.preventDefault();
           const next =
@@ -316,7 +340,7 @@ function ChatComposerImpl({
               ? inputHistory.length - 1
               : Math.max(0, historyIndex.current - 1);
           historyIndex.current = next;
-          setInput(inputHistory[next]);
+          inputRef.current?.setDocument(inputHistory[next]);
         } else if (
           event.key === "ArrowDown" &&
           atLastLine &&
@@ -325,10 +349,10 @@ function ChatComposerImpl({
           event.preventDefault();
           if (historyIndex.current < inputHistory.length - 1) {
             historyIndex.current += 1;
-            setInput(inputHistory[historyIndex.current]);
+            inputRef.current?.setDocument(inputHistory[historyIndex.current]);
           } else {
             historyIndex.current = null;
-            setInput("");
+            inputRef.current?.setDocument([]);
           }
         }
       }
@@ -347,7 +371,7 @@ function ChatComposerImpl({
     setAtError(false);
     const timer = window.setTimeout(async () => {
       try {
-        const url = `/api/snippets/search?limit=8${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+        const url = `/api/snippets/search?limit=20${q ? `&q=${encodeURIComponent(q)}` : ""}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error("search failed");
         const data = (await res.json()) as { items: SnippetSearchItem[] };
@@ -394,33 +418,19 @@ function ChatComposerImpl({
             请先完成上方代码源授权，授权后将自动继续分析
           </div>
         )}
-        <ChatTextarea
-          ref={textareaRef}
-          value={input}
-          disabled={approvalBlocked}
-          onChange={handleInputChange}
+        <StructuredChatInput
+          ref={inputRef}
+          disabled={disabled || submitting}
+          onDocumentChange={handleInputChange}
           onKeyDown={stableChatKeydown}
           onCompositionStart={() => setIsComposing(true)}
           onCompositionEnd={() => setIsComposing(false)}
           placeholder={placeholder}
           className={cn(
             "min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none",
-            approvalBlocked && "cursor-not-allowed opacity-60"
+            (disabled || submitting) && "cursor-not-allowed opacity-60"
           )}
         />
-        {snippetRefs.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 pt-1.5">
-            {snippetRefs.map((ref) => (
-              <SnippetRefChip
-                key={ref.id}
-                displayText={ref.displayText}
-                onDelete={() =>
-                  setSnippetRefs((prev) => prev.filter((s) => s.id !== ref.id))
-                }
-              />
-            ))}
-          </div>
-        )}
         {/* Correction 1: 底栏布局保持原 WritingAssistant——左侧为空占位（aria-hidden），
             右侧 shrink-0 容器承载 children（ModelSelector/TokenMeter）+ 发送/停止按钮。
             按钮（含 title / className）原样复制自 WritingAssistant.tsx。 */}
@@ -442,13 +452,17 @@ function ChatComposerImpl({
               <Button
                 size="icon"
                 className="h-8 w-8"
-                disabled={!input.trim() || approvalBlocked}
+                disabled={!input.trim() || disabled || submitting}
                 title={
                   approvalBlocked ? "请先完成代码源授权" : undefined
                 }
                 onClick={() => void submit()}
               >
-                <Send className="h-4 w-4" />
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
               </Button>
             )}
           </div>

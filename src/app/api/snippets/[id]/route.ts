@@ -10,6 +10,7 @@ import {
   withTagsInclude,
   normalizeTagNames,
 } from "@/lib/snippets/tag-repo";
+import { resolveSnippetUpdateTitle } from "@/lib/snippets/title";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,8 +54,17 @@ export async function PATCH(
   }
 
   const { tags, ...rest } = parsed.data;
+  const resolvedTitle = resolveSnippetUpdateTitle({
+    currentTitle: existing.title,
+    content: rest.content,
+    title: rest.title,
+  });
+  const updateData = {
+    ...rest,
+    ...(resolvedTitle !== undefined ? { title: resolvedTitle } : {}),
+  };
 
-  await prisma.snippet.update({ where: { id }, data: rest });
+  await prisma.snippet.update({ where: { id }, data: updateData });
   if (tags !== undefined) {
     await syncSnippetTags(id, normalizeTagNames(tags));
   }

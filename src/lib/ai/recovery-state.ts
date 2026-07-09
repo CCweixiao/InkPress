@@ -21,3 +21,10 @@ export function shouldPollRecoveringTurn({
     messages.at(-1)?.role === "user"
   );
 }
+
+export function selectFinishedMessages(
+  current: UIMessage[],
+  persisted: UIMessage[]
+): UIMessage[] {
+  return persisted.length > 0 ? persisted : current;
+}

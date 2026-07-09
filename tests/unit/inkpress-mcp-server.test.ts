@@ -33,4 +33,15 @@ describe("InkPress MCP tool result formatting", () => {
       assets: [{ id: "img1", url: "https://example.com/img.png" }],
     });
   });
+
+  it("array results stay in text content because MCP structuredContent must be a record", () => {
+    const snippets = [{ id: "snippet-1", content: "灵感正文" }];
+    const result = buildInkPressToolCallResult(
+      toolByName("load_snippets"),
+      snippets
+    );
+
+    expect(result.content[0]?.text).toBe(JSON.stringify(snippets));
+    expect("structuredContent" in result).toBe(false);
+  });
 });

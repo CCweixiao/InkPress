@@ -61,10 +61,23 @@ import {
   type LastTurnUsage,
 } from "./agent-composer-parts";
 import { ChatComposer } from "./ChatComposer";
-import { serializeComposer } from "@/lib/ai/snippet-serialize";
 import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
-import { shouldPollRecoveringTurn } from "@/lib/ai/recovery-state";
+import {
+  selectFinishedMessages,
+  shouldPollRecoveringTurn,
+} from "@/lib/ai/recovery-state";
+import {
+  composerDocumentToRuntimeText,
+  buildSnippetReviewTimeline,
+  hasAssistantTimelineContent,
+  mergeComposerHistory,
+  type ComposerDocument,
+} from "@/lib/snippets/injection-review";
+import {
+  SnippetReviewCard,
+  type SnippetReviewRecord,
+} from "./SnippetReviewCard";
 
 type ProposalSummary = {
   id: string;
@@ -763,6 +776,7 @@ function UserMessageBubble({
   useEffect(() => {
     setDraft(text);
   }, [text]);
+  const displayParts = text.split(/(\[灵感：[^\]]+\])/g).filter(Boolean);
 
   if (editing) {
     return (
@@ -818,8 +832,20 @@ function UserMessageBubble({
 
   return (
     <div className="group flex flex-col items-end">
-      <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground">
-        {text}
+      <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm border border-transparent bg-primary px-3 py-2 text-xs leading-5 text-primary-foreground dark:border-blue-300/10 dark:bg-[#20354d] dark:text-slate-100">
+        {displayParts.map((part, index) =>
+          /^\[灵感：[^\]]+\]$/.test(part) ? (
+            <span
+              key={`${part}-${index}`}
+              className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-full border border-white/25 bg-white/15 px-2 py-0.5 align-middle text-[11px] font-medium dark:border-blue-200/15 dark:bg-black/15 dark:text-blue-100"
+            >
+              <Sparkles className="h-3 w-3 shrink-0" />
+              <span className="truncate">{part.slice(4, -1)}</span>
+            </span>
+          ) : (
+            <Fragment key={`${index}-${part}`}>{part}</Fragment>
+          )
+        )}
       </div>
       {onRerun && (
         <div className="mt-0.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -1571,9 +1597,16 @@ export function WritingAssistant({
   const [initializing, setInitializing] = useState(true);
   const [fullscreenText, setFullscreenText] = useState<string | null>(null);
   const [lastTurnUsage, setLastTurnUsage] = useState<LastTurnUsage>(null);
+  const [snippetReviews, setSnippetReviews] = useState<SnippetReviewRecord[]>([]);
+  const [reviewingSnippets, setReviewingSnippets] = useState(false);
+  const [snippetReviewError, setSnippetReviewError] = useState("");
+  const [restoreDraft, setRestoreDraft] = useState<{
+    key: string;
+    document: ComposerDocument;
+  } | null>(null);
   // 用户历史输入缓存：打开会话时从后端全量加载（仅文本，轻量），新发送的输入追加。
   // 上下键在此列表前后历。与消息分页解耦。（historyIndex 已随 ChatComposer 搬出）
-  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [inputHistory, setInputHistory] = useState<ComposerDocument[]>([]);
   // 消息分页懒加载
   const [hasMore, setHasMore] = useState(false);
   const [oldestPosition, setOldestPosition] = useState<number | null>(null);
@@ -1590,6 +1623,10 @@ export function WritingAssistant({
     () => new DefaultChatTransport<UIMessage>({ api: "/api/ai/chat" }),
     []
   );
+  const setMessagesAfterFinishRef = useRef<
+    ((messages: UIMessage[]) => void) | null
+  >(null);
+  const currentMessagesRef = useRef<UIMessage[]>([]);
 
   // 待代码源授权：锁定 composer，引导用户先完成上方授权卡片操作。
   // composer 锁由两类审批独立贡献（避免互相 reset）：代码源授权 / P3 工具审批。
@@ -1606,17 +1643,27 @@ export function WritingAssistant({
 
 
   const refresh = useCallback(async () => {
-    const response = await fetch(
-      `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`
-    );
+    const [response, reviewResponse] = await Promise.all([
+      fetch(`/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`),
+      fetch(
+        `/api/ai/snippet-reviews?kind=${targetKind}&id=${encodeURIComponent(resolvedTargetId)}`
+      ),
+    ]);
     const data = await response.json().catch(() => ({}));
+    const reviewData = await reviewResponse.json().catch(() => ({}));
+    let messageHistory: ComposerDocument[] = [];
+    let reviews: SnippetReviewRecord[] = [];
     if (response.ok) {
       setProposals(data.proposals ?? []);
-      setInputHistory(
-        Array.isArray(data.userInputs)
-          ? (data.userInputs as string[]).filter((t) => typeof t === "string")
-          : []
-      );
+      messageHistory = Array.isArray(data.userInputs)
+        ? (data.userInputs as unknown[])
+            .map((item) =>
+              typeof item === "string"
+                ? ([{ type: "text", text: item }] as ComposerDocument)
+                : (item as ComposerDocument)
+            )
+            .filter((item) => Array.isArray(item))
+        : [];
       // historyIndex 已随 ChatComposer 搬出；composer 内部自管，刷新历史时不在此复位。
       const session = data.session as
         | {
@@ -1637,8 +1684,32 @@ export function WritingAssistant({
         });
       }
     }
+    if (reviewResponse.ok && Array.isArray(reviewData.reviews)) {
+      reviews = (reviewData.reviews as SnippetReviewRecord[]).reverse();
+      setSnippetReviews(reviews);
+    }
+    setInputHistory(mergeComposerHistory(messageHistory, reviews));
     return data;
   }, [resolvedTargetId, targetKind]);
+
+  useEffect(() => {
+    if (!snippetReviews.some((review) => review.status === "running")) return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      const response = await fetch(
+        `/api/ai/snippet-reviews?kind=${targetKind}&id=${encodeURIComponent(resolvedTargetId)}`
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!active || !response.ok || !Array.isArray(data.reviews)) return;
+      const reviews = (data.reviews as SnippetReviewRecord[]).reverse();
+      setSnippetReviews(reviews);
+      setInputHistory((current) => mergeComposerHistory(current, reviews));
+    }, 1500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [resolvedTargetId, snippetReviews, targetKind]);
 
   const {
     messages,
@@ -1651,7 +1722,15 @@ export function WritingAssistant({
   } = useChat({
     id: `${targetKind}-agent-${resolvedTargetId}`,
     transport,
-    onFinish: () => void refresh(),
+    onFinish: async () => {
+      const data = await refresh();
+      const persisted = Array.isArray(data.messages)
+        ? (data.messages as UIMessage[])
+        : [];
+      setMessagesAfterFinishRef.current?.(
+        selectFinishedMessages(currentMessagesRef.current, persisted)
+      );
+    },
     // 流式更新节流：默认每个 chunk 都触发一次 setMessages → 整个会话重渲染。
     // 长对话里每次渲染要全量重扫 messages（latestContextUsage / latestDirectArticle /
     // proposalIdsInMessages 等多个 O(消息×part) memo）并联动编辑器写入，高频 chunk 会把
@@ -1659,6 +1738,11 @@ export function WritingAssistant({
     // 按 50ms 合并更新，既消除该报错又显著降低长对话的渲染压力。
     experimental_throttle: 50,
   });
+
+  useEffect(() => {
+    setMessagesAfterFinishRef.current = setMessages;
+    currentMessagesRef.current = messages;
+  }, [messages, setMessages]);
 
   useEffect(() => {
     let active = true;
@@ -1775,7 +1859,7 @@ export function WritingAssistant({
       top: el.scrollHeight,
       behavior: status === "streaming" ? "auto" : "smooth",
     });
-  }, [messages, status, proposals]);
+  }, [messages, status, proposals, snippetReviews, reviewingSnippets]);
 
   // 滚动到顶部时懒加载更早一页消息（游标 = 当前最旧 position）
   const loadMore = useCallback(async () => {
@@ -1845,6 +1929,7 @@ export function WritingAssistant({
     if (response.ok) {
       setMessages([]);
       setProposals([]);
+      setSnippetReviews([]);
       setInputHistory([]);
       // historyIndex 已随 ChatComposer 搬出；composer 内部自管。
       setHasMore(false);
@@ -1854,31 +1939,125 @@ export function WritingAssistant({
     }
   }
 
+  async function createSnippetReview(
+    composer: ComposerDocument
+  ): Promise<boolean> {
+    setReviewingSnippets(true);
+    setSnippetReviewError("");
+    try {
+      const response = await fetch("/api/ai/snippet-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: { kind: targetKind, id: resolvedTargetId },
+          composer,
+          currentMarkdown: currentMarkdown ?? "",
+          providerId: providerId || null,
+          modelId: modelId || null,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.review) {
+        setSnippetReviewError(data.error || "灵感审核失败，请稍后重试。");
+        return false;
+      }
+      const review = data.review as SnippetReviewRecord;
+      setSnippetReviews((current) => {
+        const exists = current.some((item) => item.id === review.id);
+        return exists
+          ? current.map((item) => (item.id === review.id ? review : item))
+          : [...current, review];
+      });
+      setInputHistory((current) => [...current, composer].slice(-50));
+      return true;
+    } catch {
+      setSnippetReviewError("灵感审核请求失败，请检查模型与网络配置。");
+      return false;
+    } finally {
+      setReviewingSnippets(false);
+    }
+  }
+
   /**
    * 发送一条普通消息。
    * - text：进 inputHistory（历史干净，不带标记）。
-   * - messageOverride：实际发给 transport 的文本（@ 引用时为 serializeComposer 产出的带标记 message；缺省=text）。
+   * - messageOverride：实际发给 Agent runtime 的文本（@ 引用时为带标记 message）；UI 消息仍展示 text。
    * - forceSkillIds：/skill 强制加载。
    * 注：输入清空（setInput/setSlashForcedClosed）与 historyIndex 复位已由 ChatComposer.submit 负责。
    */
   async function sendText(
     text: string,
     forceSkillIds?: string[],
-    messageOverride?: string
+    messageOverride?: string,
+    composer?: ComposerDocument
   ) {
     if (!text || busy) return;
     await (onFlushTarget ?? onFlushArticle)?.();
-    setInputHistory((prev) =>
-      prev[prev.length - 1] === text ? prev : [...prev, text]
-    );
+    const historyDocument = composer ?? [{ type: "text" as const, text }];
+    setInputHistory((prev) => {
+      const previous = prev[prev.length - 1];
+      return JSON.stringify(previous) === JSON.stringify(historyDocument)
+        ? prev
+        : [...prev, historyDocument].slice(-50);
+    });
     await sendMessage(
-      { text: messageOverride ?? text },
+      { text, metadata: { composer: historyDocument } },
       {
-        body: forceSkillIds?.length
-          ? { ...requestBody, forceSkillIds }
-          : requestBody,
+        body: {
+          ...requestBody,
+          ...(forceSkillIds?.length ? { forceSkillIds } : {}),
+          ...(messageOverride ? { messageOverride } : {}),
+        },
       }
     );
+  }
+
+  async function applySnippetReview(review: SnippetReviewRecord) {
+    if (busy) {
+      throw new Error("Agent 正在执行上一轮任务，请等待完成后再应用灵感。");
+    }
+    const response = await fetch(`/api/ai/snippet-reviews/${review.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "apply" }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "应用灵感失败。");
+    setSnippetReviews((current) =>
+      current.map((item) =>
+        item.id === review.id ? { ...item, status: "applied" } : item
+      )
+    );
+    const serialized = composerDocumentToRuntimeText(review.composer);
+    void Promise.all(
+      serialized.snippetIds.map((id) =>
+        fetch(`/api/snippets/${id}/usage`, { method: "POST" }).catch(
+          () => undefined
+        )
+      )
+    );
+    await sendText(
+      review.visibleText,
+      undefined,
+      review.runtimeText,
+      review.composer
+    );
+  }
+
+  async function rejectSnippetReview(review: SnippetReviewRecord) {
+    const response = await fetch(`/api/ai/snippet-reviews/${review.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reject" }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "放弃灵感失败。");
+    setSnippetReviews((current) =>
+      current.map((item) =>
+        item.id === review.id ? { ...item, status: "rejected" } : item
+      )
+    );
+    setRestoreDraft({ key: `${review.id}:${Date.now()}`, document: review.composer });
   }
 
   /** 重新执行用户消息：编辑后丢弃其后消息并重跑（codex edit & retry）。
@@ -2186,6 +2365,11 @@ export function WritingAssistant({
     return ids;
   }, [messages, busy, lastAssistantIndex, prefixProposalIds]);
 
+  const chatTimeline = useMemo(
+    () => buildSnippetReviewTimeline(messages, snippetReviews),
+    [messages, snippetReviews]
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b px-3 py-2">
@@ -2210,7 +2394,11 @@ export function WritingAssistant({
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             加载写作会话…
           </div>
-        ) : messages.length === 0 && proposals.length === 0 ? (
+        ) : !hasAssistantTimelineContent({
+            messageCount: messages.length,
+            proposalCount: proposals.length,
+            reviewCount: snippetReviews.length,
+          }) ? (
           <div className="py-8 text-center">
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <Sparkles className="h-5 w-5" />
@@ -2227,29 +2415,41 @@ export function WritingAssistant({
                 <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> 加载更早消息…
               </div>
             )}
-            {messages.map((message, idx) => (
-              <AgentMessageRow
-                key={message.id}
-                message={message}
-                messageIndex={idx}
-                settled={!(busy && idx === lastAssistantIndex)}
-                isLastAssistant={idx === lastAssistantIndex}
-                showUserDivider={
-                  idx > 0 && message.role === "user"
-                }
-                targetKind={targetKind}
-                busy={busy}
-                setFullscreenText={setFullscreenText}
-                onApplyArticle={onApplyArticle}
-                onApplyTechnicalDocument={onApplyTechnicalDocument}
-                onRerun={stableRerun}
-                onResumeAfterApproval={stableResumeAfterApproval}
-                onApprovalStatusChange={handleApprovalStatusChange}
-                onApprovalFailed={handleApprovalFailed}
-                onToolApprovalStatusChange={handleToolApprovalStatusChange}
-                profileId={profileId}
-              />
-            ))}
+            {chatTimeline.map((entry) => {
+              if (entry.type === "review") {
+                return (
+                  <SnippetReviewCard
+                    key={`review-${entry.review.id}`}
+                    review={entry.review}
+                    onApply={applySnippetReview}
+                    onReject={rejectSnippetReview}
+                  />
+                );
+              }
+              const message = entry.message;
+              const idx = messages.indexOf(message);
+              return (
+                <AgentMessageRow
+                  key={message.id}
+                  message={message}
+                  messageIndex={idx}
+                  settled={!(busy && idx === lastAssistantIndex)}
+                  isLastAssistant={idx === lastAssistantIndex}
+                  showUserDivider={idx > 0 && message.role === "user"}
+                  targetKind={targetKind}
+                  busy={busy}
+                  setFullscreenText={setFullscreenText}
+                  onApplyArticle={onApplyArticle}
+                  onApplyTechnicalDocument={onApplyTechnicalDocument}
+                  onRerun={stableRerun}
+                  onResumeAfterApproval={stableResumeAfterApproval}
+                  onApprovalStatusChange={handleApprovalStatusChange}
+                  onApprovalFailed={handleApprovalFailed}
+                  onToolApprovalStatusChange={handleToolApprovalStatusChange}
+                  profileId={profileId}
+                />
+              );
+            })}
             {proposals
               .filter(
                 (proposal) =>
@@ -2290,6 +2490,17 @@ export function WritingAssistant({
               ))}
           </>
         )}
+        {reviewingSnippets && (
+          <div className="flex items-center gap-2 rounded-md border border-primary/15 bg-primary/[0.025] px-3 py-2 text-[11px] text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            灵感审核 Agent 正在结合对话与文章上下文分析…
+          </div>
+        )}
+        {snippetReviewError && (
+          <div className="flex items-center gap-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+            {snippetReviewError}
+          </div>
+        )}
         {(busy || recovering) && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -2309,7 +2520,7 @@ export function WritingAssistant({
       </div>
 
       <ChatComposer
-        disabled={approvalBlocked || busy}
+        disabled={approvalBlocked || busy || reviewingSnippets}
         streaming={busy}
         approvalBlocked={approvalBlocked}
         placeholder={
@@ -2318,20 +2529,14 @@ export function WritingAssistant({
             : "让 Agent 研究、创作或调整文章…（输入 / 查看命令 · Enter 发送 · Shift+Enter 换行）"
         }
         inputHistory={inputHistory}
-        onSend={({ text, snippetRefs, forceSkillIds }) => {
+        restoreDraft={restoreDraft}
+        onDraftRestored={() => setRestoreDraft(null)}
+        onSend={async ({ text, composer, snippetRefs, forceSkillIds }) => {
           if (snippetRefs.length) {
-            const { message } = serializeComposer(text, snippetRefs);
-            // fire-and-forget：记录被引用素材的 usageCount++（@面板按热度排序的依据），不阻塞发送、失败静默。
-            void Promise.all(
-              snippetRefs.map((id) =>
-                fetch(`/api/snippets/${id}/usage`, { method: "POST" }).catch(
-                  () => undefined
-                )
-              )
-            );
-            return sendText(text, forceSkillIds, message);
+            return createSnippetReview(composer);
           }
-          return sendText(text, forceSkillIds);
+          await sendText(text, forceSkillIds, undefined, composer);
+          return true;
         }}
         onClearConversation={clearConversation}
         onStop={() => stop()}

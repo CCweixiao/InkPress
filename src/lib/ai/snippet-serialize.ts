@@ -14,6 +14,15 @@ export type ComposerPayload = {
 
 const SNIPPET_REFS_MARKER = "<!-- snippet-refs -->";
 
+export type InlineSnippetRef = {
+  id: string;
+  token: string;
+};
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function serializeComposer(
   text: string,
   snippetRefs: string[]
@@ -31,5 +40,48 @@ export function serializeComposer(
   const message = body.trim().length
     ? `${body}\n\n${SNIPPET_REFS_MARKER}\n${markers}`
     : `${SNIPPET_REFS_MARKER}\n${markers}`;
+  return { message, snippetRefs: ids };
+}
+
+/**
+ * Inline composer mode:
+ * textarea 中保留用户可读的 [[灵感：标题]] 占位符；发送前按正文顺序替换为
+ * Agent tool-routing 能识别的 {{snippet:id}} marker。
+ */
+export function serializeInlineSnippetComposer(
+  text: string,
+  snippetRefs: InlineSnippetRef[]
+): ComposerPayload {
+  const refs = (snippetRefs ?? []).filter((ref) => ref.id && ref.token);
+  if (refs.length === 0) return { message: text, snippetRefs: [] };
+
+  const occurrences = refs.flatMap((ref) => {
+    const indexes: Array<{ index: number; id: string }> = [];
+    let from = 0;
+    while (from < text.length) {
+      const index = text.indexOf(ref.token, from);
+      if (index === -1) break;
+      indexes.push({ index, id: ref.id });
+      from = index + ref.token.length;
+    }
+    return indexes;
+  });
+
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const item of occurrences.sort((a, b) => a.index - b.index)) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    ids.push(item.id);
+  }
+  if (ids.length === 0) return { message: text, snippetRefs: [] };
+
+  let message = text;
+  for (const ref of refs) {
+    message = message.replace(
+      new RegExp(escapeRegExp(ref.token), "g"),
+      `{{snippet:${ref.id}}}`
+    );
+  }
   return { message, snippetRefs: ids };
 }

@@ -17,6 +17,7 @@ import {
   tagWhere,
   tagSearchWhere,
 } from "@/lib/snippets/tag-repo";
+import { deriveSnippetTitle } from "@/lib/snippets/title";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -108,10 +109,7 @@ export async function POST(req: NextRequest) {
 
   const { tags, ...data } = parsed.data;
   // 自动从 content 首行提取 title（trim 避免空白标题）
-  const title =
-    data.title.trim() ||
-    data.content.trim().split("\n")[0].slice(0, 50) ||
-    "无标题";
+  const title = data.title.trim() || deriveSnippetTitle(data.content);
 
   const created = await prisma.snippet.create({
     data: { ...data, title },

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "ai";
-import { shouldPollRecoveringTurn } from "../../src/lib/ai/recovery-state";
+import {
+  selectFinishedMessages,
+  shouldPollRecoveringTurn,
+} from "../../src/lib/ai/recovery-state";
 
 const userMessage = {
   id: "u1",
@@ -55,5 +58,12 @@ describe("shouldPollRecoveringTurn", () => {
         messages: [userMessage, assistantMessage],
       })
     ).toBe(false);
+  });
+
+  it("完成后优先采用服务端持久化消息，避免流式 memo 遗漏最终工具结果", () => {
+    expect(
+      selectFinishedMessages([userMessage], [userMessage, assistantMessage])
+    ).toEqual([userMessage, assistantMessage]);
+    expect(selectFinishedMessages([userMessage], [])).toEqual([userMessage]);
   });
 });

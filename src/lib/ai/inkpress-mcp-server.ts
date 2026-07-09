@@ -10,7 +10,7 @@ export function buildInkPressToolCallResult(
   result: unknown
 ) {
   const structured =
-    result && typeof result === "object"
+    result && typeof result === "object" && !Array.isArray(result)
       ? (result as Record<string, unknown>)
       : undefined;
   const textResult = def.toContentText
@@ -25,7 +25,9 @@ export function buildInkPressToolCallResult(
         text: textResult,
       },
     ],
-    ...(def.modelResultMode === "text-only" ? {} : { structuredContent: structured }),
+    ...(def.modelResultMode !== "text-only" && structured
+      ? { structuredContent: structured }
+      : {}),
     isError: false as const,
   };
 }

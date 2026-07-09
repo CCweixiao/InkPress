@@ -183,7 +183,6 @@ const setArticleDigestDisplay: ToolDisplayFactory = ({ phase }) => ({
 });
 
 const proposeArticleRevisionDisplay: ToolDisplayFactory = ({ phase, output }) => {
-  const o = outOf(output);
   return {
     title: "生成文章修改提案",
     activityKind: "proposal",
@@ -191,9 +190,7 @@ const proposeArticleRevisionDisplay: ToolDisplayFactory = ({ phase, output }) =>
       phase === "failed"
         ? undefined
         : phase === "completed"
-          ? o.mode === "direct"
-            ? "已直接写入正文（首次生成）"
-            : "文章修改提案已生成"
+          ? "文章修改提案已生成"
           : "正在生成文章修改提案",
   };
 };
@@ -438,7 +435,7 @@ const proposeArticleRevisionTool: InkPressToolDefinition = {
   version: "1.0.0",
   display: proposeArticleRevisionDisplay,
   description:
-    "当用户要求创建或修改公众号文章时调用。提交完整 Markdown 快照供用户审阅。首次生成（编辑器为空）会直接写入，后续修改需用户 diff 审查后应用。",
+    "当用户要求创建或修改公众号文章时调用。提交完整 Markdown 快照供用户进行 diff 审阅，首次生成与后续修改都必须由用户确认后应用。",
   inputSchema: {
     title: z.string().max(200).optional(),
     markdown: z.string().min(1),
@@ -451,16 +448,6 @@ const proposeArticleRevisionTool: InkPressToolDefinition = {
     const title = args.title != null ? String(args.title) : undefined;
     const digest = args.digest != null ? String(args.digest) : undefined;
     const summary = String(args.summary ?? "");
-    // 首次生成（编辑器为空，无对比源）：跳过提案创建，前端直接写入编辑器。
-    if (ctx.target.markdown.trim() === "") {
-      return {
-        mode: "direct" as const,
-        markdown,
-        title: title ?? null,
-        digest: digest ?? null,
-        summary,
-      };
-    }
     const oldLines = ctx.target.markdown.split("\n");
     const newLines = markdown.split("\n");
     const proposal = await prisma.agentArticleProposal.create({

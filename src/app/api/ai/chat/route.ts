@@ -16,6 +16,7 @@ import {
   readUsageFromError,
   readSessionFromError,
 } from "@/lib/ai/claude-agent-runtime";
+import { createRunAbortSignal } from "@/lib/ai/run-timeout";
 import { chooseLlmConfig } from "@/lib/ai/llm-config";
 import { upsertUsageTurn } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
@@ -27,6 +28,7 @@ import {
   mergeAndPersistMessages,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
+import { replaceLastUserText } from "@/lib/ai/message-overrides";
 import { abortApproval } from "@/lib/ai/pending-approvals";
 import { classifyError } from "@/lib/ai/error-classify";
 import {
@@ -72,6 +74,8 @@ const postSchema = z
     forceSkillIds: z.array(z.string().min(1)).max(4).optional(),
     // 实时编辑区正文：权威来源，覆盖 DB 读取，避免 flush 时序导致 Agent 拿到空/旧正文。
     currentMarkdown: z.string().nullable().optional(),
+    // UI 保持用户可读文本；Agent runtime 可使用带内部 marker 的覆盖文本。
+    messageOverride: z.string().optional(),
   })
   .refine((value) => value.target || value.articleId, {
     message: "缺少对话目标",
@@ -279,20 +283,27 @@ export async function GET(req: NextRequest) {
           where: { sessionId: session.id, role: "user" },
           orderBy: { position: "desc" },
           take: 50,
-          select: { partsJson: true },
+          select: { partsJson: true, metadataJson: true },
         })
       ).reverse()
     : [];
   const userInputs = userMessages.flatMap((row) => {
     try {
+      if (row.metadataJson) {
+        const metadata = JSON.parse(row.metadataJson) as {
+          composer?: unknown;
+        };
+        if (Array.isArray(metadata.composer)) return [metadata.composer];
+      }
       const parts = JSON.parse(row.partsJson) as Array<{
         type?: string;
         text?: unknown;
       }>;
-      return parts
+      const text = parts
         .filter((p) => p.type === "text")
         .map((p) => (typeof p.text === "string" ? p.text : ""))
-        .filter((t) => t.trim() !== "");
+        .join("");
+      return text.trim() ? [[{ type: "text", text }]] : [];
     } catch {
       return [];
     }
@@ -336,6 +347,10 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   const config = await getAgentConfig();
   // 合并前端（可能因 remount/分页截断）与 DB 历史，避免 delete-all-recreate 永久丢失旧消息。
   const mergedMessages = await mergeAndPersistMessages(session.id, uiMessages);
+  const runtimeMessages = replaceLastUserText(
+    mergedMessages,
+    parsed.data.messageOverride
+  );
 
   log.info(
     {
@@ -533,7 +548,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           turnId,
           source: "claude-agent-sdk",
         });
-        const messageText = lastUserText(mergedMessages);
+        const messageText = lastUserText(runtimeMessages);
         const articleBodyTokens = estimateTokens(
           `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
         );
@@ -755,8 +770,9 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               preferredSkillIds,
               providerId: newProviderId,
               modelId: newModelId,
-              messages: mergedMessages,
-              abortSignal: req.signal,
+              messages: runtimeMessages,
+              // 主动早于路由 maxDuration 收口，避免 SDK 无终止事件时客户端永久 streaming。
+              abortSignal: createRunAbortSignal(req.signal, 110_000),
             },
             ew
           );
@@ -921,6 +937,9 @@ export async function DELETE(req: NextRequest) {
     const sdkSessionId = session.claudeAgentSessionId;
     await prisma.$transaction([
       prisma.agentChatMessage.deleteMany({ where: { sessionId: session.id } }),
+      prisma.snippetInjectionReview.deleteMany({
+        where: { sessionId: session.id },
+      }),
       // 提案硬删（防 DB 膨胀）：应用过的正文已在文章文件/技术文档版本里，不依赖提案行
       target.kind === "article"
         ? prisma.agentArticleProposal.deleteMany({

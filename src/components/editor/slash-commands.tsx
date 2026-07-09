@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { SkillCatalogItem } from "@/lib/ai/skills";
 
@@ -103,43 +103,59 @@ export function SlashMenu({
   activeIndex: number;
   onSelect: (command: SlashCommand) => void;
 }) {
+  const activeItemRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
   if (!commands.length) return null;
   return (
-    <div className="absolute bottom-full left-0 z-20 mb-1 max-h-64 w-72 overflow-y-auto rounded-lg border bg-background p-1 shadow-md">
-      {commands.map((cmd, index) => {
-        const showHeader =
-          index === 0 || commands[index - 1].group !== cmd.group;
-        return (
-          <Fragment key={cmd.token}>
-            {showHeader && <GroupHeader group={cmd.group} />}
-            <button
-              type="button"
-              // onMouseDown 防止 textarea 失焦；点击即选中
-              onMouseDown={(event) => {
-                event.preventDefault();
-                onSelect(cmd);
-              }}
-              className={cn(
-                "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent",
-                index === activeIndex && "bg-accent"
-              )}
-            >
-              <span className="shrink-0 font-mono text-[11px] font-medium text-primary">
-                {cmd.token}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate font-medium text-foreground">
-                  {cmd.label}
+    <div className="absolute bottom-full left-0 z-20 mb-1 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-background shadow-lg">
+      <div className="flex h-9 items-center justify-between border-b px-3">
+        <span className="text-xs font-medium">命令与 Skill</span>
+        <span className="text-[10px] text-muted-foreground">
+          {commands.length} 项
+        </span>
+      </div>
+      <div className="max-h-64 overflow-y-auto p-1">
+        {commands.map((cmd, index) => {
+          const showHeader =
+            index === 0 || commands[index - 1].group !== cmd.group;
+          return (
+            <Fragment key={cmd.token}>
+              {showHeader && <GroupHeader group={cmd.group} />}
+              <button
+                ref={index === activeIndex ? activeItemRef : undefined}
+                type="button"
+                aria-selected={index === activeIndex}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onSelect(cmd);
+                }}
+                className={cn(
+                  "relative flex min-h-12 w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent",
+                  index === activeIndex &&
+                    "bg-accent text-accent-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
+                )}
+              >
+                <span className="shrink-0 font-mono text-[11px] font-medium text-primary">
+                  {cmd.token}
                 </span>
-                <span className="block truncate text-[10px] text-muted-foreground">
-                  {cmd.description}
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-foreground">
+                    {cmd.label}
+                  </span>
+                  <span className="line-clamp-2 text-[10px] leading-4 text-muted-foreground">
+                    {cmd.description}
+                  </span>
                 </span>
-              </span>
-            </button>
-          </Fragment>
-        );
-      })}
-      <div className="mt-0.5 border-t px-2 py-1 text-[10px] text-muted-foreground">
+              </button>
+            </Fragment>
+          );
+        })}
+      </div>
+      <div className="border-t bg-muted/20 px-3 py-1.5 text-[10px] text-muted-foreground">
         ↑↓ 选择 · Tab/Enter 确认 · Esc 关闭
       </div>
     </div>
