@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin-guard";
-import { listAllReleases } from "@/lib/release/service";
+import { listAllVersions } from "@/lib/release/service";
 import { ok, failFromError, getRequestId } from "@/lib/api-response";
 
 /**
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     const page = Math.max(1, Number(sp.get("page") ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(sp.get("pageSize") ?? 50)));
 
-    const result = await listAllReleases({
+    const result = await listAllVersions({
       packageName: sp.get("package") ?? undefined,
       status: sp.get("status") ?? undefined,
       page,
