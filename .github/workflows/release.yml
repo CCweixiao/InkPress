@@ -164,3 +164,26 @@ jobs:
             ---
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync version to inkpress-service
+        continue-on-error: true
+        env:
+          RELEASE_REGISTER_TOKEN: ${{ secrets.RELEASE_REGISTER_TOKEN }}
+          SYNC_URL: ${{ vars.INKPRESS_SYNC_URL || 'https://www.longoflow.com/api/releases/sync-version' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_REGISTER_TOKEN" ]; then
+            echo "⚠️ RELEASE_REGISTER_TOKEN 未配置，跳过版本同步"
+            exit 0
+          fi
+          VERSION="${{ steps.tag.outputs.tag }}"
+          # 从 GH Release 获取 body（generate_release_notes 生成的内容）
+          GH_RELEASE_BODY=$(gh release view "$VERSION" --json body -q .body 2>/dev/null || echo "")
+          BODY_JSON=$(jq -Rs . <<< "$GH_RELEASE_BODY")
+          echo "同步版本 ${VERSION#v} → $SYNC_URL"
+          curl -fsS -X POST "$SYNC_URL" \
+            -H "X-Release-Token: $RELEASE_REGISTER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"packageName\":\"inkpress\",\"version\":\"${VERSION#v}\",\"channel\":\"stable\",\"changelogMarkdown\":$BODY_JSON}" \
+            && echo "✓ 版本同步成功" \
+            || echo "⚠️ 版本同步失败（不阻塞发布）"

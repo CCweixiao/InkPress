@@ -143,6 +143,35 @@ function buildDownloadResponse(
   return { "content-disposition": `attachment; filename="${safe}"` };
 }
 
+/**
+ * 构造 OSS 对象的公开直链 URL（不签名）。
+ * 用于 ReleaseAsset.downloadUrl 持久化——下载时再通过 signOssUrlFromUrl 签名。
+ */
+export function publicUrl(key: string): string {
+  const regionRaw = process.env.OSS_PUBLISH_REGION?.trim();
+  const bucket = process.env.OSS_PUBLISH_BUCKET?.trim();
+  if (!regionRaw || !bucket) {
+    throw new AppError(
+      ErrorCode.INTERNAL_ERROR,
+      "OSS 未配置（缺少 OSS_PUBLISH_REGION/BUCKET）"
+    );
+  }
+  const region = normalizeRegion(regionRaw);
+  return `https://${bucket}.oss-${region}.aliyuncs.com/${key}`;
+}
+
+/**
+ * 上传 Buffer 到指定 OSS key（简洁签名，供 release asset 上传使用）。
+ * 默认 Content-Type: application/octet-stream（安装包无需预览）。
+ */
+export async function uploadBufferToOssKey(
+  key: string,
+  buffer: Buffer,
+  contentType = "application/octet-stream"
+): Promise<void> {
+  await putObject(key, buffer, contentType);
+}
+
 /** 删除对象（用于用户移除已上传图片，避免孤儿） */
 export async function deleteObject(key: string): Promise<void> {
   try {
