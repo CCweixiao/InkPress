@@ -24,7 +24,7 @@ export function ReleasesAdminTable(props: {
   function toggleStatus() {
     const next = status === "PUBLISHED" ? "HIDDEN" : "PUBLISHED";
     start(async () => {
-      const res = await fetch(`/api/admin/releases/${props.id}`, {
+      const res = await fetch(`/api/admin/releases/versions/${props.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: next }),
@@ -47,7 +47,7 @@ export function ReleasesAdminTable(props: {
       return;
     }
     start(async () => {
-      const res = await fetch(`/api/admin/releases/${props.id}`, {
+      const res = await fetch(`/api/admin/releases/versions/${props.id}`, {
         method: "DELETE",
       });
       const data = await res.json();
