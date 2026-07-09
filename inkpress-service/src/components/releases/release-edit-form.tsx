@@ -87,7 +87,7 @@ export function ReleaseEditForm(props: ReleaseEditFormProps) {
         body.highlights = cleanedHighlights;
       }
 
-      const res = await fetch(`/api/admin/releases/${props.id}`, {
+      const res = await fetch(`/api/admin/releases/versions/${props.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -116,7 +116,7 @@ export function ReleaseEditForm(props: ReleaseEditFormProps) {
     }
     setError(null);
     start(async () => {
-      const res = await fetch(`/api/admin/releases/${props.id}`, {
+      const res = await fetch(`/api/admin/releases/versions/${props.id}`, {
         method: "DELETE",
       });
       const data = await res.json();
