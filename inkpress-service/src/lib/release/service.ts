@@ -434,6 +434,8 @@ type SerializedAsset = {
   channel: ReleaseChannel;
   changelogMarkdown: string | null;
   highlights: string[];
+  platform: string;
+  platformLabel: string;
 };
 
 /** 公开查询：按 packageName 取所有 PUBLISHED，组装为兼容旧「每平台最新版」形状 */
@@ -492,8 +494,9 @@ export async function listPublishedReleases(packageName: string, opts: { history
 
 function serializeAsset(
   version: { id: string; version: string; releasedAt: Date; channel: string; changelogMarkdown: string | null; highlightsJson: string },
-  asset: { id: string; fileName: string; fileSizeBytes: number; fileHashSha256: string | null }
+  asset: { id: string; fileName: string; fileSizeBytes: number; fileHashSha256: string | null; os: string; arch: string }
 ): SerializedAsset {
+  const platform = composePlatform(asset.os, asset.arch);
   return {
     id: asset.id,
     version: version.version,
@@ -505,6 +508,8 @@ function serializeAsset(
     channel: version.channel as ReleaseChannel,
     changelogMarkdown: version.changelogMarkdown,
     highlights: parseHighlights(version.highlightsJson),
+    platform,
+    platformLabel: PLATFORM_LABELS[platform] ?? platform,
   };
 }
 

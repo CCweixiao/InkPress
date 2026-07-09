@@ -12,11 +12,6 @@ function ChannelBadge({ channel }: { channel: string }) {
   return <Badge variant={meta.tone}>{meta.label}</Badge>;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 export default async function AdminReleasesPage() {
   await requireAdmin();
   const { items } = await listAllVersions({ page: 1, pageSize: 100 });
