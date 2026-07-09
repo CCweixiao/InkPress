@@ -354,6 +354,24 @@ export const ReleasePlatformSchema = z.enum([
 ]);
 export type ReleasePlatform = z.infer<typeof ReleasePlatformSchema>;
 
+export const ReleaseOsSchema = z.enum(["darwin", "win32", "linux"]);
+export type ReleaseOs = z.infer<typeof ReleaseOsSchema>;
+
+export const ReleaseArchSchema = z.enum(["arm64", "x64"]);
+export type ReleaseArch = z.infer<typeof ReleaseArchSchema>;
+
+/** 对外兼容：将 os + arch 拼回合并串 platform（供客户端 API 响应） */
+export function composePlatform(os: string, arch: string): string {
+  return `${os}-${arch}`;
+}
+
+/** 对外兼容：将客户端上报的合并串 platform 拆成 os + arch */
+export function splitPlatform(platform: string): { os: string; arch: string } {
+  const idx = platform.indexOf("-");
+  if (idx <= 0) return { os: platform, arch: "" };
+  return { os: platform.slice(0, idx), arch: platform.slice(idx + 1) };
+}
+
 export const ReleaseStatusSchema = z.enum(["PUBLISHED", "HIDDEN"]);
 export type ReleaseStatus = z.infer<typeof ReleaseStatusSchema>;
 
@@ -389,14 +407,44 @@ export const registerReleaseSchema = z.object({
 });
 export type RegisterReleaseInput = z.infer<typeof registerReleaseSchema>;
 
-/** 管理员编辑请求体（只允许改这些字段，不能改 packageName/platform/version） */
-export const updateReleaseSchema = z.object({
+/**
+ * CI / GH Action 同步版本元信息请求体。
+ * 不含文件信息——包由管理员后续上传。
+ */
+export const syncVersionSchema = z.object({
+  packageName: z.string().trim().min(1).max(64),
+  version: looseSemver,
+  channel: ReleaseChannelSchema.default("stable"),
+  changelogMarkdown: z.string().trim().max(20000).optional(),
+  highlights: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
   displayName: z.string().trim().min(1).max(120).optional(),
+  releasedAt: z.string().datetime().optional(),
+});
+export type SyncVersionInput = z.infer<typeof syncVersionSchema>;
+
+/** 管理员手动新建版本请求体（只建版本骨架，不含包） */
+export const createVersionSchema = z.object({
+  packageName: z.string().trim().min(1).max(64).default("inkpress"),
+  version: looseSemver,
+  displayName: z.string().trim().min(1).max(120),
   logoUrl: z.string().trim().url().max(2048).optional(),
   changelogMarkdown: z.string().trim().max(20000).optional(),
+  highlights: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+  channel: ReleaseChannelSchema.default("stable"),
+  status: ReleaseStatusSchema.default("PUBLISHED"),
+  releasedAt: z.string().datetime().optional(),
+});
+export type CreateVersionInput = z.infer<typeof createVersionSchema>;
+
+/** 管理员编辑版本元信息（不能改 packageName/version） */
+export const updateVersionSchema = z.object({
+  displayName: z.string().trim().min(1).max(120).optional(),
+  logoUrl: z.string().trim().url().max(2048).nullable().optional(),
+  changelogMarkdown: z.string().trim().max(20000).nullable().optional(),
   highlights: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
   status: ReleaseStatusSchema.optional(),
   channel: ReleaseChannelSchema.optional(),
 });
+export type UpdateVersionInput = z.infer<typeof updateVersionSchema>;
 
 
