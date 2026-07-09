@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "ai";
 import {
+  getRecoveredTurnNotice,
   selectFinishedMessages,
   shouldPollRecoveringTurn,
 } from "../../src/lib/ai/recovery-state";
@@ -65,5 +66,35 @@ describe("shouldPollRecoveringTurn", () => {
       selectFinishedMessages([userMessage], [userMessage, assistantMessage])
     ).toEqual([userMessage, assistantMessage]);
     expect(selectFinishedMessages([userMessage], [])).toEqual([userMessage]);
+  });
+
+  it("返回页面后明确展示上一轮的中断或失败状态", () => {
+    expect(
+      getRecoveredTurnNotice({
+        clientStatus: "ready",
+        sessionStatus: "error",
+        sessionError: "模型服务暂时不可用",
+      })
+    ).toEqual({
+      tone: "error",
+      message: "模型服务暂时不可用",
+    });
+    expect(
+      getRecoveredTurnNotice({
+        clientStatus: "ready",
+        sessionStatus: "interrupted",
+        sessionError: null,
+      })
+    ).toEqual({
+      tone: "warning",
+      message: "上一轮生成已中断，已保留发送内容与生成进度，可重新发送。",
+    });
+    expect(
+      getRecoveredTurnNotice({
+        clientStatus: "streaming",
+        sessionStatus: "error",
+        sessionError: "旧错误",
+      })
+    ).toBeNull();
   });
 });

@@ -1083,6 +1083,25 @@ body {
 .dark .wechat-article-content table td {
   border-color: #3a3a3a !important;
 }
+.dark .wechat-article-content table,
+.dark .wechat-article-content thead,
+.dark .wechat-article-content tbody,
+.dark .wechat-article-content tr,
+.dark .wechat-article-content td {
+  background: #1e1e1e !important;
+  background-color: #1e1e1e !important;
+  color: #cfcfcf !important;
+}
+.dark .wechat-article-content tbody tr:nth-child(even),
+.dark .wechat-article-content tbody tr:nth-child(even) td {
+  background: #232323 !important;
+  background-color: #232323 !important;
+}
+.dark .wechat-article-content tbody tr:hover,
+.dark .wechat-article-content tbody tr:hover td {
+  background: #292929 !important;
+  background-color: #292929 !important;
+}
 .wechat-article-content .mermaid-preview {
   margin: 1.05em 0;
   overflow-x: auto;

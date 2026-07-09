@@ -16,6 +16,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  CircleAlert,
   Clipboard,
   Copy,
   Eye,
@@ -64,9 +65,14 @@ import { ChatComposer } from "./ChatComposer";
 import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
 import {
+  getRecoveredTurnNotice,
   selectFinishedMessages,
   shouldPollRecoveringTurn,
 } from "@/lib/ai/recovery-state";
+import {
+  isArticleProposalPart,
+  moveProposalPartsToEnd,
+} from "@/lib/ai/message-order";
 import {
   composerDocumentToRuntimeText,
   buildSnippetReviewTimeline,
@@ -1455,12 +1461,16 @@ const AgentMessageRow = memo(function AgentMessageRow({
       break;
     }
   }
-  const parts =
+  const filteredParts =
     lastRetryIdx >= 0
       ? allParts.filter(
           (p, i) => p.type !== "data-agent-retry" || i === lastRetryIdx
         )
       : allParts;
+  const parts = useMemo(
+    () => moveProposalPartsToEnd(filteredParts),
+    [filteredParts]
+  );
   const items = useMemo(() => aggregateParts(parts), [parts]);
 
   const ctx: RenderCtx = useMemo(
@@ -1529,6 +1539,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
           );
         }
         const part = item.part;
+        if (!settled && isArticleProposalPart(part)) return null;
         const isProcessPart =
           part.type === "data-agent-step" ||
           part.type === "data-context-usage" ||
@@ -1640,6 +1651,9 @@ export function WritingAssistant({
   const [serverSessionStatus, setServerSessionStatus] = useState<string | null>(
     null
   );
+  const [serverSessionError, setServerSessionError] = useState<string | null>(
+    null
+  );
 
 
   const refresh = useCallback(async () => {
@@ -1672,9 +1686,11 @@ export function WritingAssistant({
             lastReasoningTokens?: number;
             lastTotalTokens?: number;
             claudeAgentSessionStatus?: string;
+            claudeAgentLastError?: string | null;
           }
         | undefined;
       setServerSessionStatus(session?.claudeAgentSessionStatus ?? null);
+      setServerSessionError(session?.claudeAgentLastError ?? null);
       if (session) {
         setLastTurnUsage({
           inputTokens: session.lastInputTokens ?? 0,
@@ -1910,6 +1926,11 @@ export function WritingAssistant({
   };
 
   const busy = status === "streaming" || status === "submitted";
+  const recoveredTurnNotice = getRecoveredTurnNotice({
+    clientStatus: status,
+    sessionStatus: serverSessionStatus,
+    sessionError: serverSessionError,
+  });
 
   async function clearConversation() {
     // PDC §8.3：/clear 文案需明确三件事——清聊天、开新 Claude 会话、不清 Token 消耗大盘。
@@ -2505,6 +2526,19 @@ export function WritingAssistant({
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             {recovering ? "正在同步上一轮输出…" : "Agent 正在规划并执行…"}
+          </div>
+        )}
+        {!busy && !recovering && recoveredTurnNotice && !error && (
+          <div
+            className={cn(
+              "flex items-start gap-2 rounded-md border px-3 py-2 text-[11px] leading-5",
+              recoveredTurnNotice.tone === "error"
+                ? "border-destructive/25 bg-destructive/5 text-destructive"
+                : "border-amber-500/25 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+            )}
+          >
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{recoveredTurnNotice.message}</span>
           </div>
         )}
         {error && (

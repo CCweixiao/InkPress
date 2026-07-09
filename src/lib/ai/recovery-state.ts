@@ -28,3 +28,28 @@ export function selectFinishedMessages(
 ): UIMessage[] {
   return persisted.length > 0 ? persisted : current;
 }
+
+export function getRecoveredTurnNotice({
+  clientStatus,
+  sessionStatus,
+  sessionError,
+}: {
+  clientStatus: ChatStatus;
+  sessionStatus?: string | null;
+  sessionError?: string | null;
+}): { tone: "error" | "warning"; message: string } | null {
+  if (clientStatus !== "ready") return null;
+  if (sessionStatus === "error") {
+    return {
+      tone: "error",
+      message: sessionError?.trim() || "上一轮生成失败，请稍后重试。",
+    };
+  }
+  if (sessionStatus === "interrupted") {
+    return {
+      tone: "warning",
+      message: "上一轮生成已中断，已保留发送内容与生成进度，可重新发送。",
+    };
+  }
+  return null;
+}
