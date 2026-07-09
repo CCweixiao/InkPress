@@ -91,3 +91,7 @@ next-env.d.ts
 
 # Codex CLI 本地技能缓存（AI 工具产物，非项目代码）
 /.codex/
+
+# Claude Code / Superpowers 插件产物（本地工具，非项目代码）
+/.claude/skills/
+/.superpowers/
