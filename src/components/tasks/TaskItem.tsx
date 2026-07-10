@@ -49,7 +49,7 @@ export function TaskItem({
   }, [editing]);
 
   const handleToggle = () => {
-    if (task.status === "done") {
+    if (task.status === "done" || task.status === "cancelled") {
       onToggleStatus(task.id, task.status);
     } else {
       setAnimatingDone(true);
@@ -75,12 +75,13 @@ export function TaskItem({
     }
   };
 
-  const completedChildren = task.children?.filter((c) => c.status === "done").length ?? 0;
+  const completedChildren =
+    task.children?.filter((c) => c.status === "done" || c.status === "cancelled").length ?? 0;
   const totalChildren = task.children?.length ?? 0;
   const hasChildren = totalChildren > 0;
   const progressPct = totalChildren > 0 ? (completedChildren / totalChildren) * 100 : 0;
 
-  const isDone = task.status === "done";
+  const isDone = task.status === "done" || task.status === "cancelled";
   const isOverdue =
     task.dueDate && !isDone && new Date(task.dueDate) < new Date();
 

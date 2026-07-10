@@ -1,4 +1,4 @@
-export type TaskStatus = "todo" | "in_progress" | "done" | "archived";
+export type TaskStatus = "todo" | "in_progress" | "done" | "cancelled" | "archived";
 export type TaskPriority = 0 | 1 | 2 | 3 | 4;
 
 export interface Task {
@@ -8,6 +8,8 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   dueDate: string | null;
+  dueTime: string | null; // "HH:mm" 格式；isAllDay=true 时忽略
+  isAllDay: boolean;
   completedAt: string | null;
   parentId: string | null;
   spaceId: string | null;
@@ -31,6 +33,7 @@ export const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }>
   todo: { label: "待办", color: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300" },
   in_progress: { label: "进行中", color: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" },
   done: { label: "已完成", color: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" },
+  cancelled: { label: "已取消", color: "bg-gray-100 text-gray-500 line-through dark:bg-gray-800" },
   archived: { label: "已归档", color: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500" },
 };
 
