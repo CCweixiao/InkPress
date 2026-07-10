@@ -119,3 +119,27 @@ describe("filterBySmartView", () => {
     expect(r.map((t) => t.id)).toEqual(["d"]);
   });
 });
+
+describe("filterBySmartView trashed 过滤", () => {
+  const now = new Date("2026-07-10T12:00:00.000Z");
+  const todayTask = {
+    id: "t1",
+    status: "todo",
+    dueDate: "2026-07-10T12:00:00.000Z",
+    completedAt: null,
+    spaceId: null,
+    trashed: true,
+  } as any;
+
+  it("trashed 任务即使 dueDate 在今天也不进入 today 视图", () => {
+    expect(filterBySmartView([todayTask], "today", now)).toEqual([]);
+  });
+
+  it("trashed 任务不进入 next7days 视图", () => {
+    expect(filterBySmartView([todayTask], "next7days", now)).toEqual([]);
+  });
+
+  it("trashed 任务不进入 inbox 视图", () => {
+    expect(filterBySmartView([todayTask], "inbox", now)).toEqual([]);
+  });
+});

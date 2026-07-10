@@ -45,14 +45,15 @@ export function isInbox(task: Task): boolean {
   return task.spaceId === null;
 }
 
-/** 按智能视图批量过滤。now 默认 new Date()。 */
+/** 按智能视图批量过滤。now 默认 new Date()。trashed 任务一律排除。 */
 export function filterBySmartView(tasks: Task[], view: SmartView, now: Date = new Date()): Task[] {
+  const active = tasks.filter((t) => !(t as any).trashed);
   switch (view) {
     case "today":
-      return tasks.filter((t) => isToday(t, now));
+      return active.filter((t) => isToday(t, now));
     case "next7days":
-      return tasks.filter((t) => isNext7Days(t, now));
+      return active.filter((t) => isNext7Days(t, now));
     case "inbox":
-      return tasks.filter((t) => isInbox(t));
+      return active.filter((t) => isInbox(t));
   }
 }
