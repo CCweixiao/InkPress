@@ -8,6 +8,7 @@ import { TaskListView } from "./TaskListView";
 import { KanbanView } from "./KanbanView";
 import { CalendarView } from "./CalendarView";
 import type { ViewMode, TaskStatus } from "./types";
+import type { SmartView } from "@/lib/tasks/smart-views";
 
 interface TaskPanelProps {
   spaceId?: string;
@@ -16,8 +17,13 @@ interface TaskPanelProps {
 export function TaskPanel({ spaceId }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [smartView, setSmartView] = useState<SmartView | null>(null);
   const { tasks, loading, createTask, updateTask, deleteTask, reorderTasks, toggleStatus } =
-    useTasks({ spaceId, status: statusFilter || undefined });
+    useTasks({
+      spaceId,
+      status: statusFilter || undefined,
+      smartView: smartView ?? undefined,
+    });
 
   const views: { mode: ViewMode; icon: React.ElementType; label: string }[] = [
     { mode: "list", icon: List, label: "列表" },
@@ -71,8 +77,32 @@ export function TaskPanel({ spaceId }: TaskPanelProps) {
             <option value="todo">待办</option>
             <option value="in_progress">进行中</option>
             <option value="done">已完成</option>
+            <option value="cancelled">已取消</option>
           </select>
         </div>
+      </div>
+
+      {/* Smart view segmented control */}
+      <div className="flex gap-1 border-b border-border pb-2">
+        {([
+          { key: null, label: "全部" },
+          { key: "today", label: "今天" },
+          { key: "next7days", label: "最近 7 天" },
+          { key: "inbox", label: "收集箱" },
+        ] as { key: SmartView | null; label: string }[]).map((opt) => (
+          <button
+            key={opt.label}
+            onClick={() => setSmartView(opt.key)}
+            className={cn(
+              "px-3 py-1 text-sm rounded-md transition-colors",
+              smartView === opt.key
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent"
+            )}
+          >
+            {opt.label}
+          </button>
+        ))}
       </div>
 
       {/* View content */}
