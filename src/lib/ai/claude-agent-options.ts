@@ -60,6 +60,11 @@ export type BuildClaudeAgentOptionsInput = {
   lastUserText?: string;
 };
 
+type InkPressClaudeAgentOptions = Options & {
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+};
+
 /** sha256(token)，落 approvalTokenHash（mirror CodeSourceGrant 的 hashToken 约定）。 */
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -251,7 +256,7 @@ function buildCompactHooks(ctx: { sessionId: string }): Options["hooks"] {
  */
 export async function buildClaudeAgentOptions(
   input: BuildClaudeAgentOptionsInput
-): Promise<Options> {
+): Promise<InkPressClaudeAgentOptions> {
   const selected = await chooseLlmConfig(input.providerId, input.modelId);
   if (!selected || !selected.apiKey) {
     throw new Error(
@@ -301,6 +306,8 @@ export async function buildClaudeAgentOptions(
         : undefined,
     }),
     model: selected.model.id,
+    maxTurns: agentConfig.maxSteps,
+    maxBudgetUsd: agentConfig.maxBudgetUsd,
     // 固定 cwd，避免 SDK 默认绑定到 InkPress 开发仓库或用户本地 Claude Code 工作目录。
     cwd: claudeWorkspaceDir,
     includePartialMessages: true,

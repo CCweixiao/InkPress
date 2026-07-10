@@ -9,6 +9,7 @@ describe("parseAgentConfig", () => {
           tavilyApiKey: "tvly-test",
           githubToken: "github-test",
           maxSteps: 99,
+          maxBudgetUsd: 999,
           contextBudgetTokens: 999999,
           projects: [
             { id: "demo", name: "Demo", root: "/tmp/demo" },
@@ -19,8 +20,18 @@ describe("parseAgentConfig", () => {
       tavilyApiKey: "tvly-test",
       githubToken: "github-test",
       maxSteps: 20,
+      maxBudgetUsd: 5,
       contextBudgetTokens: 200000,
       projects: [{ id: "demo", name: "Demo", root: "/tmp/demo" }],
+    });
+  });
+
+  it("clamps maxSteps and maxBudgetUsd to lower bounds", () => {
+    expect(
+      parseAgentConfig(JSON.stringify({ maxSteps: 1, maxBudgetUsd: -10 }))
+    ).toMatchObject({
+      maxSteps: 3,
+      maxBudgetUsd: 0.1,
     });
   });
 

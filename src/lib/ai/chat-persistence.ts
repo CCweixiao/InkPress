@@ -407,7 +407,8 @@ export async function mergeAndPersistMessages(
 export async function mergeAndPersistMessagesIfGenerationCurrent(
   sessionId: string,
   generation: number,
-  uiMessages: UIMessage[]
+  uiMessages: UIMessage[],
+  opts: { activeTurnId?: string } = {}
 ): Promise<{
   ignored: boolean;
   conflict?: "initializing-client";
@@ -416,9 +417,15 @@ export async function mergeAndPersistMessagesIfGenerationCurrent(
   return prisma.$transaction(async (tx) => {
     const session = await tx.agentChatSession.findUnique({
       where: { id: sessionId },
-      select: { generation: true },
+      select: { generation: true, activeTurnId: true },
     });
     if (session?.generation !== generation) return { ignored: true };
+    if (
+      opts.activeTurnId !== undefined &&
+      session.activeTurnId !== opts.activeTurnId
+    ) {
+      return { ignored: true };
+    }
 
     const dbMessages = await loadAllWithin(tx, sessionId);
     const merged = computeMergedMessages(dbMessages, uiMessages);

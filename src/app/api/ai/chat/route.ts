@@ -29,6 +29,10 @@ import {
   captureSessionGeneration,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
+import {
+  acquireTurnLease,
+  releaseTurnLease,
+} from "@/lib/ai/chat-turn-lease";
 import { replaceLastUserText } from "@/lib/ai/message-overrides";
 import { abortApproval } from "@/lib/ai/pending-approvals";
 import { classifyError } from "@/lib/ai/error-classify";
@@ -343,6 +347,20 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
 
   const session = await getOrCreateAgentSession(target);
   const turnGeneration = await captureSessionGeneration(session.id);
+  const turnId = crypto.randomUUID();
+  const turnStartedAt = new Date();
+  const lease = await acquireTurnLease({
+    sessionId: session.id,
+    generation: turnGeneration,
+    turnId,
+    ttlMs: 120_000,
+  });
+  if (!lease.ok) {
+    return NextResponse.json(
+      { error: "已有一轮 Agent 对话正在运行，请稍后再试。", code: lease.reason },
+      { status: lease.status }
+    );
+  }
   const uiMessages = parsed.data.messages as UIMessage[];
   const userText = lastUserText(uiMessages);
   const referencesArticle = referencesCurrentArticle(userText);
@@ -351,12 +369,15 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
   const initialMerge = await mergeAndPersistMessagesIfGenerationCurrent(
     session.id,
     turnGeneration,
-    uiMessages
+    uiMessages,
+    { activeTurnId: turnId }
   );
   if (initialMerge.ignored) {
+    await releaseTurnLease({ sessionId: session.id, generation: turnGeneration, turnId });
     return NextResponse.json({ error: "对话已清空，请重试。" }, { status: 409 });
   }
   if (initialMerge.conflict === "initializing-client") {
+    await releaseTurnLease({ sessionId: session.id, generation: turnGeneration, turnId });
     return NextResponse.json(
       { error: "客户端历史尚未初始化完成，请刷新后重试。", code: "initializing-client" },
       { status: 409 }
@@ -391,7 +412,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           const result = await mergeAndPersistMessagesIfGenerationCurrent(
             session.id,
             turnGeneration,
-            messages
+            messages,
+            { activeTurnId: turnId }
           );
           if (result.ignored || result.conflict) return;
         } catch (error) {
@@ -400,6 +422,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             { err: error, sessionId: session.id },
             "onFinish 持久化失败（下次发送可自愈）"
           );
+        } finally {
+          await releaseTurnLease({ sessionId: session.id, generation: turnGeneration, turnId });
         }
       },
       onError: errorMessage,
@@ -437,7 +461,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           const result = await mergeAndPersistMessagesIfGenerationCurrent(
             session.id,
             turnGeneration,
-            messages
+            messages,
+            { activeTurnId: turnId }
           );
           if (result.ignored || result.conflict) return;
         } catch (error) {
@@ -446,6 +471,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             { err: error, sessionId: session.id },
             "onFinish 持久化失败（下次发送可自愈）"
           );
+        } finally {
+          await releaseTurnLease({ sessionId: session.id, generation: turnGeneration, turnId });
         }
       },
       onError: errorMessage,
@@ -484,7 +511,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           const result = await mergeAndPersistMessagesIfGenerationCurrent(
             session.id,
             turnGeneration,
-            messages
+            messages,
+            { activeTurnId: turnId }
           );
           if (result.ignored || result.conflict) return;
         } catch (error) {
@@ -493,6 +521,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             { err: error, sessionId: session.id },
             "onFinish 持久化失败（下次发送可自愈）"
           );
+        } finally {
+          await releaseTurnLease({ sessionId: session.id, generation: turnGeneration, turnId });
         }
       },
       onError: errorMessage,
@@ -562,7 +592,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           const result = await mergeAndPersistMessagesIfGenerationCurrent(
             session.id,
             turnGeneration,
-            persisted
+            persisted,
+            { activeTurnId: turnId }
           );
           if (result.ignored || result.conflict) return;
         } catch (error) {
@@ -571,6 +602,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             { err: error, sessionId: session.id },
             "onFinish 持久化失败（下次发送可自愈）"
           );
+        } finally {
+          await releaseTurnLease({ sessionId: session.id, generation: turnGeneration, turnId });
         }
       },
       onError: errorMessage,
@@ -578,8 +611,6 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         // P0：包一层 seq 注入器，为本 turn 的 data/tool part 打上单调 seq + turnId + source。
         // 下游 runtime/adapter/MCP/canUseTool/工具 execute 都汇流到 ew，保证无断号。
         // P1.5：turnId 同时作为 AgentUsageTurn 的应用级轮次键（按 (sessionId, turnId) upsert）。
-        const turnId = crypto.randomUUID();
-        const turnStartedAt = new Date();
         const ew = createAgentEventWriter(writer, {
           turnId,
           source: "claude-agent-sdk",
@@ -770,7 +801,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         }
 
         const runningUpdate = await prisma.agentChatSession.updateMany({
-          where: { id: session.id, generation: turnGeneration },
+          where: { id: session.id, generation: turnGeneration, activeTurnId: turnId },
           data: {
             selectedProjectId: session.selectedProjectId,
             providerId: newProviderId,
@@ -834,7 +865,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           // 成功结束时无论 SDK 是否返回 usage，都要保存 sessionId/status（PDC §5.1/§7.3）。
           // last*Tokens 仅作 composer 计量快捷显示，不是历史统计事实源（PDC §12.3）。
           const readyUpdate = await prisma.agentChatSession.updateMany({
-            where: { id: session.id, generation: turnGeneration },
+            where: { id: session.id, generation: turnGeneration, activeTurnId: turnId },
             data: {
               ...(outcome.usage
                 ? {
@@ -889,7 +920,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           // interrupted/error（PDC §7.3），否则 UI 会误判为仍在运行。
           const errorUpdate = await prisma.agentChatSession
             .updateMany({
-              where: { id: session.id, generation: turnGeneration },
+              where: { id: session.id, generation: turnGeneration, activeTurnId: turnId },
               data: {
                 ...(sdkSessionId ? { claudeAgentSessionId: sdkSessionId } : {}),
                 // P2 状态机：中断 → interrupted（可继续）；错误 → error（可能可继续）。
@@ -1001,6 +1032,8 @@ export async function DELETE(req: NextRequest) {
         where: { id: session.id },
         data: {
           generation: { increment: 1 },
+          activeTurnId: null,
+          activeTurnExpiresAt: null,
           summary: "",
           summaryUpToPosition: -1,
           selectedProjectId: null,

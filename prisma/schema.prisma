@@ -55,6 +55,8 @@ model AgentChatSession {
   summaryUpToPosition Int      @default(-1)
   // Monotonic clear epoch; stale turns must never resurrect messages after /clear.
   generation          Int      @default(0)
+  activeTurnId        String?
+  activeTurnExpiresAt DateTime?
   selectedProjectId   String?
   providerId          String?
   modelId             String?
@@ -86,6 +88,7 @@ model AgentChatSession {
 
   @@index([articleId])
   @@index([technicalDocumentId])
+  @@index([activeTurnExpiresAt])
 }
 
 model SnippetInjectionReview {

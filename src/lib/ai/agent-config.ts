@@ -14,6 +14,7 @@ export type AgentConfig = {
   githubToken?: string;
   projects: AgentProjectConfig[];
   maxSteps: number;
+  maxBudgetUsd: number;
   contextBudgetTokens: number;
 };
 
@@ -22,6 +23,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   githubToken: "",
   projects: [],
   maxSteps: 12,
+  maxBudgetUsd: 1,
   contextBudgetTokens: 32_000,
 };
 
@@ -57,6 +59,10 @@ export function parseAgentConfig(value?: string | null): AgentConfig {
     Number.isFinite(raw.contextBudgetTokens)
       ? Math.round(raw.contextBudgetTokens)
       : DEFAULT_AGENT_CONFIG.contextBudgetTokens;
+  const requestedMaxBudgetUsd =
+    typeof raw.maxBudgetUsd === "number" && Number.isFinite(raw.maxBudgetUsd)
+      ? raw.maxBudgetUsd
+      : DEFAULT_AGENT_CONFIG.maxBudgetUsd;
   return {
     tavilyApiKey:
       typeof raw.tavilyApiKey === "string" ? raw.tavilyApiKey.trim() : "",
@@ -64,6 +70,7 @@ export function parseAgentConfig(value?: string | null): AgentConfig {
       typeof raw.githubToken === "string" ? raw.githubToken.trim() : "",
     projects,
     maxSteps: Math.min(20, Math.max(3, requestedSteps)),
+    maxBudgetUsd: Math.min(5, Math.max(0.1, requestedMaxBudgetUsd)),
     contextBudgetTokens: Math.min(200_000, Math.max(8_000, requestedBudget)),
   };
 }
