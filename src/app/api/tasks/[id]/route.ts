@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { computeExpiresAt } from "@/lib/tasks/trash-lifecycle";
 
 const updateSchema = z.object({
   title: z.string().min(1).max(500).optional(),
@@ -81,13 +82,30 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
   }
 }
 
-// DELETE /api/tasks/[id]
+// DELETE /api/tasks/[id] — 软删除（移入垃圾箱，级联后代，30 天后过期）
 export async function DELETE(_req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   try {
-    await prisma.task.delete({ where: { id } });
+    const now = new Date();
+    const expiresAt = computeExpiresAt(now);
+    await trashSubtree(id, now, expiresAt);
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "删除任务失败" }, { status: 500 });
+  }
+}
+
+/** 递归标记任务及其所有后代为 trashed。 */
+async function trashSubtree(rootId: string, now: Date, expiresAt: Date): Promise<void> {
+  await prisma.task.update({
+    where: { id: rootId },
+    data: { trashed: true, trashedAt: now, expiresAt },
+  });
+  const children = await prisma.task.findMany({
+    where: { parentId: rootId },
+    select: { id: true },
+  });
+  for (const child of children) {
+    await trashSubtree(child.id, now, expiresAt);
   }
 }
