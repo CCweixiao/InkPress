@@ -6,6 +6,7 @@ import {
   contentExistsAt,
   writeContentAt,
   articleFilePath,
+  withArticleContentWriteLock,
 } from "@/lib/content-store";
 import { withApiLog, logMutation } from "@/lib/api-log";
 import { TITLE_REGEX } from "@/lib/validation";
@@ -35,22 +36,6 @@ type Params = { params: Promise<{ id: string }> };
 // 文件是正文真相源，故在同一进程内让同一文章的 CAS claim 和原子文件写串行。
 // 数据库 revision 仍是跨请求/跨进程的最终仲裁；写失败只在 claim 未被后续写入
 // 推进时回滚，绝不写回旧正文覆盖成功的并发更新。
-const contentWriteTails = new Map<string, Promise<void>>();
-async function withContentWriteLock<T>(id: string, operation: () => Promise<T>) {
-  const previous = contentWriteTails.get(id) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => { release = resolve; });
-  const tail = previous.then(() => current);
-  contentWriteTails.set(id, tail);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (contentWriteTails.get(id) === tail) contentWriteTails.delete(id);
-  }
-}
-
 function revisionConflict() {
   return NextResponse.json(
     { error: "文章已被其他修改更新，请刷新后重试。", code: "revision-conflict" },
@@ -94,7 +79,7 @@ async function updateArticle(id: string, req: NextRequest) {
   // 正文写文件，不落库（contentMd 列仅作兼容）
   const { contentMd, expectedContentRevision, ...rest } = parsed.data;
   if (typeof contentMd === "string") {
-    return withContentWriteLock(id, async () => {
+    return withArticleContentWriteLock(id, async () => {
       // contentPath 为正文位置的唯一真相源；缺失时按 spaceId 算出并随 claim 回写。
       const existing = await prisma.article.findUnique({ where: { id } });
       if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });

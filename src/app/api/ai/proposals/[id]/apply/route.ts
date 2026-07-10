@@ -7,12 +7,13 @@ import {
   readTechnicalDocumentContent,
   writeTechnicalDocumentContent,
   articleFilePath,
+  withArticleContentWriteLock,
 } from "@/lib/content-store";
 import { articleVersionHash } from "@/lib/ai/article-version";
 
 type Params = { params: Promise<{ id: string }> };
 
-async function applyArticle(id: string, overrideMarkdown?: string) {
+async function applyArticleLocked(id: string, overrideMarkdown?: string) {
   const proposal = await prisma.agentArticleProposal.findUnique({
     where: { id },
     include: { article: true },
@@ -155,6 +156,17 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
       { status: 500 }
     );
   }
+}
+
+async function applyArticle(id: string, overrideMarkdown?: string) {
+  const proposal = await prisma.agentArticleProposal.findUnique({
+    where: { id },
+    select: { articleId: true },
+  });
+  if (!proposal) return null;
+  return withArticleContentWriteLock(proposal.articleId, () =>
+    applyArticleLocked(id, overrideMarkdown)
+  );
 }
 
 async function applyTechnicalDocument(id: string) {

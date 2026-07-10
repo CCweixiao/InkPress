@@ -10,6 +10,7 @@ const {
   readContentAt,
   writeContentAt,
   contentExistsAt,
+  withArticleContentWriteLock,
 } = vi.hoisted(() => ({
   findUnique: vi.fn(),
   proposalUpdateMany: vi.fn(),
@@ -19,6 +20,7 @@ const {
   readContentAt: vi.fn(),
   writeContentAt: vi.fn(),
   contentExistsAt: vi.fn(),
+  withArticleContentWriteLock: vi.fn((_: string, operation: () => unknown) => operation()),
 }));
 
 vi.mock("@/lib/db", () => {
@@ -37,6 +39,7 @@ vi.mock("@/lib/db", () => {
 vi.mock("@/lib/content-store", () => ({
   readContentAt,
   contentExistsAt,
+  withArticleContentWriteLock,
   writeContentAt,
   readTechnicalDocumentContent: vi.fn(),
   writeTechnicalDocumentContent: vi.fn(),
@@ -57,8 +60,14 @@ describe("article proposal revision claim", () => {
     writeContentAt.mockReset().mockResolvedValue(undefined);
   });
 
+  function mockProposal(value: Record<string, unknown>) {
+    findUnique.mockImplementation(({ select }: { select?: { articleId?: boolean } }) =>
+      select?.articleId ? { articleId: value.articleId } : value
+    );
+  }
+
   it("uses a migrated fallback file instead of legacy contentMd when contentPath is absent", async () => {
-    findUnique.mockResolvedValue({
+    mockProposal({
       id: "proposal-1",
       articleId: "article-1",
       status: "pending",
@@ -74,12 +83,13 @@ describe("article proposal revision claim", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(withArticleContentWriteLock).toHaveBeenCalledWith("article-1", expect.any(Function));
     expect(readContentAt).toHaveBeenCalledWith("articles/article-1.md");
     expect(writeContentAt).toHaveBeenCalledWith("articles/article-1.md", "proposal body");
   });
 
   it("does not restore title or digest when a file write fails after a revision claim", async () => {
-    findUnique.mockResolvedValue({
+    mockProposal({
       id: "proposal-1", articleId: "article-1", status: "pending", markdown: "proposal body",
       title: "new title", digest: "new digest",
       baseVersionHash: articleVersionHash({ title: "title", markdown: "migrated file body", digest: "digest" }),
@@ -103,7 +113,7 @@ describe("article proposal revision claim", () => {
   it("treats an existing empty fallback file as authoritative over legacy contentMd", async () => {
     readContentAt.mockResolvedValue("");
     contentExistsAt.mockResolvedValue(true);
-    findUnique.mockResolvedValue({
+    mockProposal({
       id: "proposal-1", articleId: "article-1", status: "pending", markdown: "proposal body", title: null, digest: null,
       baseVersionHash: articleVersionHash({ title: "title", markdown: "", digest: "digest" }),
       article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: null, spaceId: null, contentRevision: 0 },
@@ -118,7 +128,7 @@ describe("article proposal revision claim", () => {
   });
 
   it("marks the proposal error without reverting its revision after body write finalization fails", async () => {
-    findUnique.mockResolvedValue({
+    mockProposal({
       id: "proposal-1", articleId: "article-1", status: "pending", markdown: "proposal body", title: "new title", digest: null,
       baseVersionHash: articleVersionHash({ title: "title", markdown: "migrated file body", digest: "digest" }),
       article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: "articles/article-1.md", spaceId: null, contentRevision: 0 },
@@ -142,7 +152,10 @@ describe("article proposal revision claim", () => {
       baseVersionHash: articleVersionHash({ title: "title", markdown: "migrated file body", digest: "digest" }),
       article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: "articles/article-1.md", spaceId: null, contentRevision: 0 },
     };
-    findUnique.mockImplementation(({ where }: { where: { id: string } }) => ({ ...base, id: where.id }));
+    findUnique.mockImplementation(({ where, select }: { where: { id: string }; select?: { articleId?: boolean } }) => {
+      const proposal = { ...base, id: where.id };
+      return select?.articleId ? { articleId: proposal.articleId } : proposal;
+    });
     articleUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
 
     const [first, second] = await Promise.all([

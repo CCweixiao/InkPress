@@ -18,6 +18,22 @@ const STORAGE_ROOT = storageDir();
 
 const TECHNICAL_DOCUMENTS_DIR = path.join(STORAGE_ROOT, "technical-documents");
 
+const articleWriteTails = new Map<string, Promise<void>>();
+/** Serialize article body read/claim/write/finalize flows in this process. */
+export async function withArticleContentWriteLock<T>(articleId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = articleWriteTails.get(articleId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.then(() => current);
+  articleWriteTails.set(articleId, tail);
+  await previous;
+  try { return await operation(); }
+  finally {
+    release();
+    if (articleWriteTails.get(articleId) === tail) articleWriteTails.delete(articleId);
+  }
+}
+
 function sanitizeId(id: string): string {
   // 仅允许 cuid 字符，避免路径穿越
   return id.replace(/[^a-zA-Z0-9_-]/g, "");
