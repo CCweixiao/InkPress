@@ -163,6 +163,7 @@ export function EditorWorkspace({
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const dirty = useRef(false);
   const dirtyGeneration = useRef(0);
+  const unloadFlushStarted = useRef(false);
   const enqueueSave = (payload: Partial<ArticleData>, generation: number) => {
     const task = saveQueue.current.then(async () => {
       const response = await fetch(`/api/articles/${article.id}`, {
@@ -314,34 +315,11 @@ export function EditorWorkspace({
   // 页面卸载/刷新前立即落盘未保存内容（防止仅改标题未等 5s 防抖就离开导致丢失）
   useEffect(() => {
     const flushPending = () => {
-      const pending = pendingSave.current;
-      // 合并当前最新值（防抖尚未触发的改动也一并带上）
-      const payload = {
-        ...pending,
-        title,
-        contentMd: markdown,
-        digest,
-        themeId,
-        profileId,
-        expectedContentRevision: serverRevision.current,
-      };
-      // 优先用 sendBeacon（页面卸载时仍可送达），fetch 会被浏览器取消
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(
-          `/api/articles/${article.id}`,
-          new Blob([JSON.stringify(payload)], { type: "application/json" })
-        );
-        pendingSave.current = {};
-        return;
-      }
-      // 兜底：同步 fetch（部分浏览器在 unload 阶段不保证送达）
-      fetch(`/api/articles/${article.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-        keepalive: true,
-      }).catch(() => {});
-      pendingSave.current = {};
+      if (unloadFlushStarted.current || !dirty.current) return;
+      unloadFlushStarted.current = true;
+      // Do not bypass saveQueue with sendBeacon: it can race an in-flight PUT
+      // and make an older unload snapshot arrive after a newer autosave.
+      void flushArticle().catch(() => {});
     };
     window.addEventListener("pagehide", flushPending);
     window.addEventListener("beforeunload", flushPending);

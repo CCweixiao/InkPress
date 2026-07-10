@@ -31,9 +31,12 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
       articleId: proposal.articleId,
       spaceId: proposal.article.spaceId,
     });
+  const fileMarkdown = await readContentAt(articleRel);
+  // Pre-contentPath articles may already have a migrated file. Prefer it when
+  // present, and retain contentMd only as the compatibility fallback.
   const currentMarkdown = proposal.article.contentPath
-    ? await readContentAt(articleRel)
-    : proposal.article.contentMd;
+    ? fileMarkdown
+    : fileMarkdown || proposal.article.contentMd;
   const currentHash = articleVersionHash({
     title: proposal.article.title,
     markdown: currentMarkdown,
@@ -128,8 +131,6 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
         where: { id: proposal.articleId, contentRevision: revision + 1 },
         data: {
           contentRevision: revision,
-          title: proposal.article.title,
-          digest: proposal.article.digest,
           ...(proposal.article.contentPath ? {} : { contentPath: null }),
         },
       }).catch(() => {});

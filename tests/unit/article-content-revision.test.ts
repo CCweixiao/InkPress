@@ -16,7 +16,7 @@ vi.mock("@/lib/content-store", () => ({
   articleFilePath: vi.fn(() => "articles/article-1.md"),
 }));
 
-import { PUT } from "../../src/app/api/articles/[id]/route";
+import { POST, PUT } from "../../src/app/api/articles/[id]/route";
 
 describe("article content revisions", () => {
   beforeEach(() => {
@@ -50,5 +50,39 @@ describe("article content revisions", () => {
     });
     expect(writeContentAt).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("returns the advanced revision after a successful body PUT", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+    update.mockResolvedValue({ id: "article-1", contentRevision: 3 });
+
+    const response = await PUT(
+      new Request("http://localhost/api/articles/article-1", {
+        method: "PUT",
+        body: JSON.stringify({ contentMd: "new body", expectedContentRevision: 2 }),
+      }),
+      { params: Promise.resolve({ id: "article-1" }) }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      article: { contentMd: "new body", contentRevision: 3 },
+    });
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "article-1", contentRevision: 2 },
+    }));
+    expect(writeContentAt).toHaveBeenCalledWith("articles/article-1.md", "new body");
+  });
+
+  it("enforces revision CAS for POST beacon saves too", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/articles/article-1", {
+        method: "POST",
+        body: JSON.stringify({ contentMd: "stale", expectedContentRevision: 1 }),
+      }),
+      { params: Promise.resolve({ id: "article-1" }) }
+    );
+
+    expect(response.status).toBe(409);
+    expect(writeContentAt).not.toHaveBeenCalled();
   });
 });

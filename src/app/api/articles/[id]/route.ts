@@ -69,7 +69,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   }
   const contentMd = article.contentPath
     ? await readContentAt(article.contentPath)
-    : (article.contentMd ?? "");
+    : (await readContentAt(articleFilePath({ articleId: article.id, spaceId: article.spaceId }))) || (article.contentMd ?? "");
   return NextResponse.json({ article: { ...article, contentMd } });
 }
 
@@ -133,6 +133,23 @@ async function updateArticle(id: string, req: NextRequest) {
         );
       }
     });
+  }
+  // Title/digest participate in articleVersionHash used by proposals.  Advance
+  // the same revision even without a body write so a proposal cannot apply a
+  // metadata base that changed after its hash check.
+  if (Object.hasOwn(rest, "title") || Object.hasOwn(rest, "digest")) {
+    const existing = await prisma.article.findUnique({ where: { id } });
+    if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
+    if (expectedContentRevision !== undefined && expectedContentRevision !== existing.contentRevision) {
+      return revisionConflict();
+    }
+    const updated = await prisma.article.updateMany({
+      where: { id, contentRevision: existing.contentRevision },
+      data: { ...rest, contentRevision: { increment: 1 } },
+    });
+    if (updated.count !== 1) return revisionConflict();
+    const article = await prisma.article.findUnique({ where: { id } });
+    return NextResponse.json({ article });
   }
   const article = await prisma.article.update({
     where: { id },
