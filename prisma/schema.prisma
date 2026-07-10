@@ -619,18 +619,24 @@ model Task {
   sortOrder   Int       @default(0) // 拖拽排序
   tagsJson    String    @default("[]") // 标签 JSON 数组
   isCollapsed Boolean   @default(false) // 子任务折叠状态
+  // 软删除 / 回收站
+  trashed   Boolean   @default(false)
+  trashedAt DateTime?
+  expiresAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   parent   Task?  @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
   children Task[] @relation("TaskSubtasks")
   space    Space? @relation(fields: [spaceId], references: [id])
+  tags     TaskTag[]
 
   // 复合索引：精准命中"按清单/状态分组 + 排序显示"主查询路径
   @@index([spaceId, status, sortOrder])
   @@index([status, dueDate])
   @@index([parentId])
   @@index([priority, status])
+  @@index([trashed])
 }
 
 // P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。
@@ -644,4 +650,24 @@ model WebFetchDomainAllowlist {
   updatedAt DateTime @updatedAt
 
   @@index([domain])
+}
+
+model Tag {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String    @default("#6b7280")
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  tasks     TaskTag[]
+}
+
+model TaskTag {
+  taskId String
+  tagId  String
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@index([tagId])
 }
