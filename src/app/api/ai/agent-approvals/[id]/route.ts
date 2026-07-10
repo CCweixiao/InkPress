@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { resolveApproval } from "@/lib/ai/pending-approvals";
+import { PENDING_APPROVAL_TTL_MS, resolveApproval } from "@/lib/ai/pending-approvals";
 import { addAllowedDomain } from "@/lib/ai/web-allowlist";
 import {
   assessWebUrlRisk,
@@ -74,6 +74,19 @@ export async function POST(
     if (!grant) {
       return NextResponse.json({ error: "审批记录不存在。" }, { status: 404 });
     }
+    if (
+      grant.status === "pending" &&
+      Date.now() - grant.createdAt.getTime() > PENDING_APPROVAL_TTL_MS
+    ) {
+      await prisma.toolActionGrant.update({
+        where: { id: grant.id },
+        data: { status: "expired", approvalTokenHash: null },
+      });
+      return NextResponse.json(
+        { error: "审批已过期，请重新发送。", status: "expired" },
+        { status: 409 }
+      );
+    }
     if (grant.status !== "pending") {
       return NextResponse.json(
         { error: `审批已处理（${grant.status}）。`, status: grant.status },
@@ -86,22 +99,40 @@ export async function POST(
     ) {
       return NextResponse.json({ error: "令牌无效。" }, { status: 409 });
     }
+    const nextStatus = decision === "allow" ? "approved" : "rejected";
     let trustedDomain: string | null = null;
     if (decision === "allow") {
       trustedDomain = await trustGrantDomain(grant);
     }
-    // 唤醒 canUseTool 的 blocking-Promise；同一 in-flight query 自动恢复，无需用户重发。
-    const woken = resolveApproval(grant.id, decision);
-    const updated = await prisma.toolActionGrant.update({
-      where: { id: grant.id },
+    const claimed = await prisma.toolActionGrant.updateMany({
+      where: {
+        id: grant.id,
+        status: "pending",
+        approvalTokenHash: grant.approvalTokenHash,
+      },
       data: {
-        status: decision === "allow" ? "approved" : "rejected",
+        status: nextStatus,
         approvalTokenHash: null,
       },
     });
+    if (claimed.count !== 1) {
+      const latest = await prisma.toolActionGrant.findUnique({
+        where: { id: grant.id },
+        select: { status: true },
+      });
+      return NextResponse.json(
+        {
+          error: `审批已处理（${latest?.status ?? "unknown"}）。`,
+          status: latest?.status ?? "unknown",
+        },
+        { status: 409 }
+      );
+    }
+    // DB 已完成 claim 后再唤醒 canUseTool，避免 agent 继续执行时审批事实源仍是 pending。
+    const woken = resolveApproval(grant.id, decision);
     return NextResponse.json({
       ok: true,
-      status: updated.status,
+      status: nextStatus,
       woken,
       trustedDomain,
     });

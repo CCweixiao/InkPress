@@ -3,6 +3,213 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkToUiAdapter } from "../../src/lib/ai/agent-sdk-stream-adapter";
 
 describe("createSdkToUiAdapter task events", () => {
+  it("emits final result text after earlier partial delta when result carries a fuller answer", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "草稿片段" },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "最终完整答复：这里是修订后的全文。",
+      usage: {},
+    } as unknown as SDKMessage);
+
+    adapter.flush();
+
+    const streamedText = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => String(p.delta ?? ""))
+      .join("");
+    expect(streamedText).toContain("草稿片段");
+    expect(streamedText).toContain("最终完整答复：这里是修订后的全文。");
+  });
+
+  it("does not duplicate a result answer that was already streamed", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "完整答复" },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "message_stop" },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "完整答复",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    const deltas = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => String(p.delta ?? ""));
+    expect(deltas).toEqual(["完整答复"]);
+  });
+
+  it("appends only the missing suffix when the final result repeats a streamed prefix", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "完整答" },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "message_stop" },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "完整答复",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    const deltas = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => String(p.delta ?? ""));
+    expect(deltas).toEqual(["完整答", "复"]);
+    expect(deltas.join("")).toBe("完整答复");
+  });
+
+  it("appends only the non-overlapping suffix when streamed text overlaps the result start", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "前文：完整" },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "完整答复",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    const deltas = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => String(p.delta ?? ""));
+    expect(deltas).toEqual(["前文：完整", "答复"]);
+    expect(deltas.join("")).toBe("前文：完整答复");
+  });
+
+  it("prefers fuller result text over a non-streamed assistant fallback", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "assistant",
+      message: {
+        id: "msg-1",
+        content: [{ type: "text", text: "较短答复" }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "最终完整答复：较短答复之外还有关键收尾。",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    const text = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => String(p.delta ?? ""))
+      .join("");
+    expect(text).toBe("最终完整答复：较短答复之外还有关键收尾。");
+  });
+
+  it("uses stable ids for compacting status and compact boundary events", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "system",
+      subtype: "status",
+      status: "compacting",
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 1000, post_tokens: 500 },
+    } as unknown as SDKMessage);
+
+    const stepIds = parts
+      .filter((p) => p.type === "data-agent-step")
+      .map((p) => p.id);
+    expect(stepIds).toEqual(["claude-agent-compacting", "claude-agent-compacting"]);
+  });
+
   it("streams step usage updates and overwrites with final result usage", () => {
     const parts: Array<Record<string, unknown>> = [];
     const adapter = createSdkToUiAdapter({

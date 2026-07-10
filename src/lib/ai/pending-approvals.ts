@@ -13,18 +13,67 @@ type PendingApproval = {
   grantId: string;
   toolName: string;
   resolve: (decision: "allow" | "deny") => void;
-  reject: (error: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  abortHandler?: () => void;
+  onExpire?: () => void | Promise<void>;
 };
 
 const pending = new Map<string, PendingApproval>();
 
+/** 审批等待时间需短于本轮 agent run deadline，避免 UI 卡片还在、后端流已死。 */
+export const PENDING_APPROVAL_TTL_MS = 110_000;
+
+function removePending(grantId: string): PendingApproval | undefined {
+  const entry = pending.get(grantId);
+  if (!entry) return undefined;
+  pending.delete(grantId);
+  if (entry.timer) clearTimeout(entry.timer);
+  if (entry.signal && entry.abortHandler) {
+    entry.signal.removeEventListener("abort", entry.abortHandler);
+  }
+  return entry;
+}
+
+function expireApproval(grantId: string) {
+  const entry = removePending(grantId);
+  if (!entry) return;
+  entry.resolve("deny");
+  void Promise.resolve(entry.onExpire?.()).catch(() => undefined);
+}
+
 /** 注册一个待审批项，返回会在用户决定或中止时 settle 的 Promise。 */
 export function registerPendingApproval(
   grantId: string,
-  toolName: string
+  toolName: string,
+  options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    onExpire?: () => void | Promise<void>;
+  } = {}
 ): Promise<"allow" | "deny"> {
-  return new Promise<"allow" | "deny">((resolve, reject) => {
-    pending.set(grantId, { grantId, toolName, resolve, reject });
+  return new Promise<"allow" | "deny">((resolve) => {
+    expireApproval(grantId);
+    const entry: PendingApproval = {
+      grantId,
+      toolName,
+      resolve,
+      signal: options.signal,
+      onExpire: options.onExpire,
+    };
+    entry.abortHandler = () => expireApproval(grantId);
+    entry.timer = setTimeout(
+      () => expireApproval(grantId),
+      Math.max(1, options.timeoutMs ?? PENDING_APPROVAL_TTL_MS)
+    );
+    pending.set(grantId, entry);
+    if (options.signal) {
+      if (options.signal.aborted) {
+        expireApproval(grantId);
+        return;
+      }
+      options.signal.addEventListener("abort", entry.abortHandler, { once: true });
+    }
   });
 }
 
@@ -33,19 +82,17 @@ export function resolveApproval(
   grantId: string,
   decision: "allow" | "deny"
 ): boolean {
-  const entry = pending.get(grantId);
+  const entry = removePending(grantId);
   if (!entry) return false;
-  pending.delete(grantId);
   entry.resolve(decision);
   return true;
 }
 
-/** 流中止/关闭：pop 并 reject，让 canUseTool 的 await 抛出（SDK 收到错误结束本轮）。 */
+/** 流中止/关闭：pop 并 deny，让 canUseTool 的 await 总能 settle。 */
 export function abortApproval(grantId: string): void {
-  const entry = pending.get(grantId);
+  const entry = removePending(grantId);
   if (!entry) return;
-  pending.delete(grantId);
-  entry.reject(new Error("approval aborted"));
+  entry.resolve("deny");
 }
 
 /** 诊断/清理用。 */

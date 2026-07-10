@@ -22,7 +22,7 @@ import {
   stripToolPrefix,
 } from "@/lib/ai/permission-engine";
 import {
-  abortApproval,
+  PENDING_APPROVAL_TTL_MS,
   registerPendingApproval,
 } from "@/lib/ai/pending-approvals";
 import { createPrismaSessionStore } from "@/lib/ai/claude-session-store";
@@ -186,24 +186,33 @@ function buildCanUseTool(ctx: {
       },
     } as never);
 
-    // 请求中止（断连/用户停止）→ 唤醒 await 并标 expired，避免 Promise 永挂。
-    const onAbort = () => {
-      abortApproval(grant.id);
-      void prisma.toolActionGrant
-        .update({ where: { id: grant.id }, data: { status: "expired" } })
+    const expireGrant = async () => {
+      await prisma.toolActionGrant
+        .update({
+          where: { id: grant.id },
+          data: { status: "expired", approvalTokenHash: null },
+        })
         .catch(() => undefined);
     };
-    if (!options.signal.aborted) {
-      options.signal.addEventListener("abort", onAbort, { once: true });
+
+    const userDecision = await registerPendingApproval(grant.id, bareName, {
+      signal: options.signal,
+      timeoutMs: PENDING_APPROVAL_TTL_MS,
+      onExpire: expireGrant,
+    });
+
+    if (userDecision === "deny" && options.signal.aborted) {
+      await expireGrant();
+      return { behavior: "deny", message: "审批已过期或连接已断开，请重新发送。" };
     }
 
-    let userDecision: "allow" | "deny";
-    try {
-      userDecision = await registerPendingApproval(grant.id, bareName);
-    } catch {
-      return { behavior: "deny", message: "审批已中止（连接断开）。" };
-    } finally {
-      options.signal.removeEventListener("abort", onAbort);
+    if (userDecision === "deny") {
+      const latest = await prisma.toolActionGrant
+        .findUnique({ where: { id: grant.id }, select: { status: true } })
+        .catch(() => null);
+      if (latest?.status === "expired") {
+        return { behavior: "deny", message: "审批已过期，请重新发送。" };
+      }
     }
 
     // grant.status 由 POST /api/ai/agent-approvals 写（单一事实源）；此处只据用户决定返回。

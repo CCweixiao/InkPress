@@ -57,6 +57,20 @@ export type ClaudeAgentTurnResult = {
   errorMessage?: string;
 };
 
+function unstreamedFinalText(streamedText: string, resultText: string): string {
+  if (!streamedText || !resultText) return resultText;
+  if (streamedText.includes(resultText)) return "";
+  if (resultText.startsWith(streamedText)) return resultText.slice(streamedText.length);
+
+  const maxOverlap = Math.min(streamedText.length, resultText.length);
+  for (let length = maxOverlap; length > 0; length -= 1) {
+    if (streamedText.slice(-length) === resultText.slice(0, length)) {
+      return resultText.slice(length);
+    }
+  }
+  return resultText;
+}
+
 type Delta = {
   type: string;
   text?: string;
@@ -96,7 +110,10 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   let textId: string | null = null;
   let reasoningId: string | null = null;
   let streamedAnyText = false;
+  let streamedText = "";
   let lastText = "";
+  let finalResultText = "";
+  let receivedResult = false;
   const blockKind = new Map<number, "text" | "thinking" | "other">();
   const taskTypeById = new Map<string, string>();
   const openTaskIds = new Set<string>();
@@ -278,6 +295,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
           openText();
           writer.write({ type: "text-delta", id: textId as string, delta: d.text } as never);
           streamedAnyText = true;
+          streamedText += d.text;
         } else if (d?.type === "thinking_delta" && typeof d.thinking === "string") {
           openReasoning();
           writer.write({
@@ -332,6 +350,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         break;
       }
       case "result": {
+        receivedResult = true;
         const r = m as unknown as ResultLike;
         if (r.session_id) result.sessionId = r.session_id;
         if (typeof r.total_cost_usd === "number") result.costUsd = r.total_cost_usd;
@@ -369,8 +388,18 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             (Array.isArray(r.errors) && r.errors[0]) ||
             (typeof r.result === "string" && r.result) ||
             "Claude Agent 运行出错。";
-        } else if (typeof r.result === "string" && r.result && !lastText) {
-          lastText = r.result;
+        } else if (typeof r.result === "string" && r.result) {
+          if (!streamedAnyText && !lastText) {
+            lastText = r.result;
+          } else if (!streamedAnyText) {
+            const existingText = lastText.trim();
+            const finalText = r.result.trim();
+            if (finalText && existingText !== finalText && !existingText.includes(finalText)) {
+              lastText = r.result;
+            }
+          } else if (streamedAnyText) {
+            finalResultText = unstreamedFinalText(streamedText, r.result);
+          }
         }
         break;
       }
@@ -437,7 +466,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             typeof cm.post_tokens === "number" ? cm.post_tokens : undefined;
           writer.write({
             type: "data-agent-step",
-            id: crypto.randomUUID(),
+            id: "claude-agent-compacting",
             data: {
               kind: "intent",
               title: "上下文已自动压缩",
@@ -703,6 +732,11 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
       writer.write({ type: "text-start", id } as never);
       writer.write({ type: "text-delta", id, delta: lastText } as never);
       writer.write({ type: "text-end", id } as never);
+    } else if (finalResultText) {
+      const id = crypto.randomUUID();
+      writer.write({ type: "text-start", id } as never);
+      writer.write({ type: "text-delta", id, delta: finalResultText } as never);
+      writer.write({ type: "text-end", id } as never);
     }
   }
 
@@ -717,5 +751,9 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     return buildStepFallbackSummary("partial");
   }
 
-  return { result, consume, flush, getSummary };
+  function hasResult(): boolean {
+    return receivedResult;
+  }
+
+  return { result, consume, flush, getSummary, hasResult };
 }

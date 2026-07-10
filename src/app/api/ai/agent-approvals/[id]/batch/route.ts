@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { resolveApproval } from "@/lib/ai/pending-approvals";
+import { PENDING_APPROVAL_TTL_MS, resolveApproval } from "@/lib/ai/pending-approvals";
 import { addAllowedDomain } from "@/lib/ai/web-allowlist";
 import {
   assessWebUrlRisk,
@@ -69,6 +69,18 @@ function grantToBatchItem(grant: {
   };
 }
 
+async function expireStalePendingWebFetchGrants(sessionId: string) {
+  await prisma.toolActionGrant.updateMany({
+    where: {
+      sessionId,
+      toolName: "web_fetch",
+      status: "pending",
+      createdAt: { lt: new Date(Date.now() - PENDING_APPROVAL_TTL_MS) },
+    },
+    data: { status: "expired", approvalTokenHash: null },
+  });
+}
+
 export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> }
@@ -81,6 +93,7 @@ export async function GET(
   if (current.toolName !== "web_fetch") {
     return NextResponse.json({ items: [], total: 0 });
   }
+  await expireStalePendingWebFetchGrants(current.sessionId);
   const grants = await prisma.toolActionGrant.findMany({
     where: {
       sessionId: current.sessionId,
@@ -122,15 +135,29 @@ export async function POST(
         { status: 400 }
       );
     }
-    if (!current.approvalTokenHash) {
+    await expireStalePendingWebFetchGrants(current.sessionId);
+    const refreshedCurrent = await prisma.toolActionGrant.findUnique({ where: { id } });
+    if (!refreshedCurrent || refreshedCurrent.status !== "pending") {
       return NextResponse.json(
-        { error: `审批已处理（${current.status}）。`, status: current.status },
+        {
+          error: `审批已处理（${refreshedCurrent?.status ?? "expired"}）。`,
+          status: refreshedCurrent?.status ?? "expired",
+        },
+        { status: 409 }
+      );
+    }
+    if (!refreshedCurrent.approvalTokenHash) {
+      return NextResponse.json(
+        {
+          error: `审批已处理（${refreshedCurrent.status}）。`,
+          status: refreshedCurrent.status,
+        },
         { status: 409 }
       );
     }
     if (
-      !current.approvalTokenHash ||
-      hashToken(parsed.data.approvalToken) !== current.approvalTokenHash
+      !refreshedCurrent.approvalTokenHash ||
+      hashToken(parsed.data.approvalToken) !== refreshedCurrent.approvalTokenHash
     ) {
       return NextResponse.json({ error: "令牌无效。" }, { status: 409 });
     }
@@ -155,24 +182,30 @@ export async function POST(
       }
     }
 
+    const nextStatus = decision === "allow" ? "approved" : "rejected";
     let woken = 0;
+    let claimed = 0;
     for (const grant of grants) {
-      if (resolveApproval(grant.id, decision)) woken += 1;
-    }
-
-    const ids = grants.map((grant) => grant.id);
-    if (ids.length) {
-      await prisma.toolActionGrant.updateMany({
-        where: { id: { in: ids } },
+      const updated = await prisma.toolActionGrant.updateMany({
+        where: {
+          id: grant.id,
+          sessionId: refreshedCurrent.sessionId,
+          toolName: "web_fetch",
+          status: "pending",
+        },
         data: {
-          status: decision === "allow" ? "approved" : "rejected",
+          status: nextStatus,
           approvalTokenHash: null,
         },
       });
+      if (updated.count !== 1) continue;
+      claimed += 1;
+      // DB 已完成 claim 后再唤醒 canUseTool，避免 agent 继续执行时审批事实源仍是 pending。
+      if (resolveApproval(grant.id, decision)) woken += 1;
     }
     const remaining = await prisma.toolActionGrant.count({
       where: {
-        sessionId: current.sessionId,
+        sessionId: refreshedCurrent.sessionId,
         toolName: "web_fetch",
         status: "pending",
       },
@@ -180,7 +213,7 @@ export async function POST(
     if (remaining === 0) {
       await prisma.toolActionGrant.updateMany({
         where: {
-          sessionId: current.sessionId,
+          sessionId: refreshedCurrent.sessionId,
           toolName: "web_fetch",
           status: { not: "pending" },
           approvalTokenHash: { not: null },
@@ -191,8 +224,8 @@ export async function POST(
 
     return NextResponse.json({
       ok: true,
-      status: decision === "allow" ? "approved" : "rejected",
-      count: ids.length,
+      status: nextStatus,
+      count: claimed,
       remaining,
       woken,
       trustedDomains: Array.from(trustedDomains),

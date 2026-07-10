@@ -196,6 +196,111 @@ describe("abort before result：runtime 错误仍带 sessionId（PDC §5.2/§10.
     }
     expect(readSessionFromError(caught)).toBe("sdk-error-session");
   });
+
+  it("SDK stream after abort ends without result: rejects as timeout and keeps partial session", async () => {
+    const controller = new AbortController();
+    const query = vi.fn().mockReturnValueOnce(
+      (async function* () {
+        yield {
+          type: "system",
+          subtype: "init",
+          session_id: "sdk-timeout-session",
+          tools: [],
+          mcp_servers: [],
+          model: "m",
+        };
+        controller.abort();
+      })()
+    );
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
+    vi.doMock("@/lib/ai/claude-agent-options", () => ({
+      buildClaudeAgentOptions: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { runClaudeAgentRuntime, readSessionFromError } = await import(
+      "../../src/lib/ai/claude-agent-runtime"
+    );
+
+    let caught: unknown;
+    try {
+      await runClaudeAgentRuntime(
+        {
+          target: {
+            kind: "article",
+            id: "article-1",
+            title: "Article",
+            markdown: "Body",
+          },
+          sessionId: "session-1",
+          abortSignal: controller.signal,
+          messages: [
+            {
+              id: "u1",
+              role: "user",
+              parts: [{ type: "text", text: "继续" }],
+            } as UIMessage,
+          ],
+        },
+        { write: () => undefined }
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).toMatchObject({ name: "AbortError", code: "timeout" });
+    expect(readSessionFromError(caught)).toBe("sdk-timeout-session");
+  });
+
+  it("SDK stream that ends without result and without abort is a missing-result error", async () => {
+    const query = vi.fn().mockReturnValueOnce(
+      streamOf({
+        type: "system",
+        subtype: "init",
+        session_id: "sdk-missing-result-session",
+        tools: [],
+        mcp_servers: [],
+        model: "m",
+      })
+    );
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
+    vi.doMock("@/lib/ai/claude-agent-options", () => ({
+      buildClaudeAgentOptions: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { runClaudeAgentRuntime, readSessionFromError } = await import(
+      "../../src/lib/ai/claude-agent-runtime"
+    );
+
+    let caught: unknown;
+    try {
+      await runClaudeAgentRuntime(
+        {
+          target: {
+            kind: "article",
+            id: "article-1",
+            title: "Article",
+            markdown: "Body",
+          },
+          sessionId: "session-1",
+          messages: [
+            {
+              id: "u1",
+              role: "user",
+              parts: [{ type: "text", text: "继续" }],
+            } as UIMessage,
+          ],
+        },
+        { write: () => undefined }
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).toMatchObject({ code: "missing-result" });
+    expect(readSessionFromError(caught)).toBe("sdk-missing-result-session");
+  });
 });
 
 describe("resume 契约（PDC §7.6 / 重点目标 #5/#6）", () => {

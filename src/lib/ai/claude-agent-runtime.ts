@@ -148,6 +148,16 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+function terminalStreamError(input: {
+  code: "timeout" | "missing-result";
+  message: string;
+}): Error & { code: string } {
+  const error = new Error(input.message) as Error & { code: string };
+  error.code = input.code;
+  if (input.code === "timeout") error.name = "AbortError";
+  return error;
+}
+
 /**
  * 单轮运行：构造 options + 跑 SDK query 流 + 适配进 UIMessage。
  *
@@ -199,6 +209,27 @@ async function runOnce(
       adapter.consume(message as SDKMessage);
     }
     adapter.flush();
+    if (!adapter.hasResult()) {
+      const aborted = input.abortSignal?.aborted || abortController.signal.aborted;
+      return {
+        outcome: {
+          usageSummary: adapter.getSummary(),
+          sessionId: adapter.result.sessionId,
+        },
+        error: terminalStreamError(
+          aborted
+            ? {
+                code: "timeout",
+                message: "Claude Agent 运行已中止或超时，SDK 流未返回最终结果。",
+              }
+            : {
+                code: "missing-result",
+                message: "Claude Agent SDK 流已结束，但未返回最终结果。",
+              }
+        ),
+        errorKind: aborted ? "abort" : "throw",
+      };
+    }
   } catch (err) {
     // for-await 抛错（abort / 网络 / 限流穿透）：尽量用 step fallback 兜底 usage。
     const error = err instanceof Error ? err : new Error(String(err));
