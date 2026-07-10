@@ -19,7 +19,7 @@ export default function TasksPage() {
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
         return;
 
-      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "t" || e.key === "T")) {
         e.preventDefault();
         setQuickAddOpen(true);
       }
@@ -65,7 +65,7 @@ export default function TasksPage() {
           >
             <Plus className="h-4 w-4" />
             新建任务
-            <kbd className="ml-1 text-[10px] opacity-60 hidden sm:inline">⌘N</kbd>
+            <kbd className="ml-1 text-[10px] opacity-60 hidden sm:inline">⌘⇧T</kbd>
           </Button>
         </div>
       </header>
