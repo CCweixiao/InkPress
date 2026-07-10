@@ -53,6 +53,8 @@ model AgentChatSession {
   targetKind          String   @default("article") // article | technical-document
   summary             String   @default("")
   summaryUpToPosition Int      @default(-1)
+  // Monotonic clear epoch; stale turns must never resurrect messages after /clear.
+  generation          Int      @default(0)
   selectedProjectId   String?
   providerId          String?
   modelId             String?

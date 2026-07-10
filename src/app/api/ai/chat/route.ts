@@ -18,14 +18,15 @@ import {
 } from "@/lib/ai/claude-agent-runtime";
 import { createRunAbortSignal } from "@/lib/ai/run-timeout";
 import { chooseLlmConfig } from "@/lib/ai/llm-config";
-import { upsertUsageTurn } from "@/lib/ai/usage-ledger";
+import { upsertUsageTurnIfSessionGenerationCurrent } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
 import { createAgentEventWriter } from "@/lib/ai/agent-event-writer";
 import {
   findAgentSession,
   getOrCreateAgentSession,
   loadAgentMessages,
-  mergeAndPersistMessages,
+  mergeAndPersistMessagesIfGenerationCurrent,
+  captureSessionGeneration,
   type AgentTarget,
 } from "@/lib/ai/chat-persistence";
 import { replaceLastUserText } from "@/lib/ai/message-overrides";
@@ -340,13 +341,28 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       ? parsed.data.currentMarkdown
       : (loaded.markdown ?? "");
 
+  const session = await getOrCreateAgentSession(target);
+  const turnGeneration = await captureSessionGeneration(session.id);
   const uiMessages = parsed.data.messages as UIMessage[];
   const userText = lastUserText(uiMessages);
   const referencesArticle = referencesCurrentArticle(userText);
-  const session = await getOrCreateAgentSession(target);
   const config = await getAgentConfig();
   // 合并前端（可能因 remount/分页截断）与 DB 历史，避免 delete-all-recreate 永久丢失旧消息。
-  const mergedMessages = await mergeAndPersistMessages(session.id, uiMessages);
+  const initialMerge = await mergeAndPersistMessagesIfGenerationCurrent(
+    session.id,
+    turnGeneration,
+    uiMessages
+  );
+  if (initialMerge.ignored) {
+    return NextResponse.json({ error: "对话已清空，请重试。" }, { status: 409 });
+  }
+  if (initialMerge.conflict === "initializing-client") {
+    return NextResponse.json(
+      { error: "客户端历史尚未初始化完成，请刷新后重试。", code: "initializing-client" },
+      { status: 409 }
+    );
+  }
+  const mergedMessages = initialMerge.messages ?? uiMessages;
   const runtimeMessages = replaceLastUserText(
     mergedMessages,
     parsed.data.messageOverride
@@ -372,7 +388,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       onFinish: async ({ messages }) => {
         try {
           // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
-          await mergeAndPersistMessages(session.id, messages);
+          const result = await mergeAndPersistMessagesIfGenerationCurrent(
+            session.id,
+            turnGeneration,
+            messages
+          );
+          if (result.ignored || result.conflict) return;
         } catch (error) {
           // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
           log.error(
@@ -413,7 +434,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       onFinish: async ({ messages }) => {
         try {
           // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
-          await mergeAndPersistMessages(session.id, messages);
+          const result = await mergeAndPersistMessagesIfGenerationCurrent(
+            session.id,
+            turnGeneration,
+            messages
+          );
+          if (result.ignored || result.conflict) return;
         } catch (error) {
           // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
           log.error(
@@ -455,7 +481,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
       onFinish: async ({ messages }) => {
         try {
           // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
-          await mergeAndPersistMessages(session.id, messages);
+          const result = await mergeAndPersistMessagesIfGenerationCurrent(
+            session.id,
+            turnGeneration,
+            messages
+          );
+          if (result.ignored || result.conflict) return;
         } catch (error) {
           // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
           log.error(
@@ -528,7 +559,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             };
           });
           // 基于最新 DB 合并后落盘：避免与并发轮次互相覆盖丢失回复（merge 保留历史前缀）。
-          await mergeAndPersistMessages(session.id, persisted);
+          const result = await mergeAndPersistMessagesIfGenerationCurrent(
+            session.id,
+            turnGeneration,
+            persisted
+          );
+          if (result.ignored || result.conflict) return;
         } catch (error) {
           // 持久化失败不阻断已返回给用户的流；前端内存仍持有本轮回复，下次发送经 merge 自愈。
           log.error(
@@ -733,8 +769,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           });
         }
 
-        await prisma.agentChatSession.update({
-          where: { id: session.id },
+        const runningUpdate = await prisma.agentChatSession.updateMany({
+          where: { id: session.id, generation: turnGeneration },
           data: {
             selectedProjectId: session.selectedProjectId,
             providerId: newProviderId,
@@ -750,6 +786,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               : {}),
           },
         });
+        if (runningUpdate.count === 0) return;
 
         try {
           const outcome = await runClaudeAgentRuntime(
@@ -796,8 +833,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           }
           // 成功结束时无论 SDK 是否返回 usage，都要保存 sessionId/status（PDC §5.1/§7.3）。
           // last*Tokens 仅作 composer 计量快捷显示，不是历史统计事实源（PDC §12.3）。
-          await prisma.agentChatSession.update({
-            where: { id: session.id },
+          const readyUpdate = await prisma.agentChatSession.updateMany({
+            where: { id: session.id, generation: turnGeneration },
             data: {
               ...(outcome.usage
                 ? {
@@ -818,9 +855,10 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               claudeAgentInterruptedAt: null,
             },
           });
+          if (readyUpdate.count === 0) return;
           // 独立 usage ledger：正常完成也写入（status=completed）。
           if (outcome.usageSummary) {
-            await upsertUsageTurn(
+            const usageWrite = await upsertUsageTurnIfSessionGenerationCurrent(
               {
                 sessionId: session.id,
                 turnId,
@@ -831,10 +869,15 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 sdkSessionId: completedSessionId,
                 startedAt: turnStartedAt,
               },
-              outcome.usageSummary
+              outcome.usageSummary,
+              turnGeneration
             ).catch((error) =>
-              log.warn({ err: error, sessionId: session.id }, "AgentUsageTurn 写入失败（不阻断对话）")
+              log.warn(
+                { err: error, sessionId: session.id },
+                "AgentUsageTurn 写入失败（不阻断对话）"
+              )
             );
+            if (usageWrite?.ignored) return;
           }
         } catch (error) {
           // 失败/中断轮次：runtime 已把 usage summary + sessionId 挂到 error 上（PDC §7.2/§7.3）。
@@ -844,9 +887,9 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             readSessionFromError(error) ?? effectiveClaudeAgentSessionId ?? null;
           // 状态必须在错误/中断三路都落库；即便 sessionId 与旧值相同，也要从 running 收口到
           // interrupted/error（PDC §7.3），否则 UI 会误判为仍在运行。
-          await prisma.agentChatSession
-            .update({
-              where: { id: session.id },
+          const errorUpdate = await prisma.agentChatSession
+            .updateMany({
+              where: { id: session.id, generation: turnGeneration },
               data: {
                 ...(sdkSessionId ? { claudeAgentSessionId: sdkSessionId } : {}),
                 // P2 状态机：中断 → interrupted（可继续）；错误 → error（可能可继续）。
@@ -867,6 +910,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                   : "会话状态写入失败（不阻断对话）"
               )
             );
+          if (errorUpdate?.count === 0) return;
           if (summary) {
             // 仍记入 ledger（PDC §12.4：成功、错误 result 都要记录 usage；中断用 step fallback 兜底）。
             turnUsage = {
@@ -885,7 +929,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               id: "turn-usage",
               data: turnUsage,
             } as never);
-            await upsertUsageTurn(
+            const usageWrite = await upsertUsageTurnIfSessionGenerationCurrent(
               {
                 sessionId: session.id,
                 turnId,
@@ -896,10 +940,15 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 sdkSessionId,
                 startedAt: turnStartedAt,
               },
-              summary
+              summary,
+              turnGeneration
             ).catch((writeError) =>
-              log.warn({ err: writeError, sessionId: session.id }, "AgentUsageTurn 写入失败（不阻断对话）")
+              log.warn(
+                { err: writeError, sessionId: session.id },
+                "AgentUsageTurn 写入失败（不阻断对话）"
+              )
             );
+            if (usageWrite?.ignored) return;
           }
           throw error;
         }
@@ -951,6 +1000,7 @@ export async function DELETE(req: NextRequest) {
       prisma.agentChatSession.update({
         where: { id: session.id },
         data: {
+          generation: { increment: 1 },
           summary: "",
           summaryUpToPosition: -1,
           selectedProjectId: null,

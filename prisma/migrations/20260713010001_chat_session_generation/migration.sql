@@ -1,0 +1,1 @@
+ALTER TABLE "AgentChatSession" ADD COLUMN "generation" INTEGER NOT NULL DEFAULT 0;

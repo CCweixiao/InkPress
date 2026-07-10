@@ -5,10 +5,10 @@ import { moduleLogger } from "@/lib/logger";
 const log = moduleLogger("ai.chat-persistence");
 
 /**
- * 读/写 helper 的客户端约束：结构化地只要求 agentChatMessage 委托。
+ * 读/写 helper 的客户端约束：结构化地只要求相关 Prisma 委托。
  * 全局 prisma 与交互式事务的 tx 客户端都满足，故同一份 helper 既可独立调用、也可绑定到同一 tx。
  */
-type DbClient = Pick<typeof prisma, "agentChatMessage">;
+type DbClient = Pick<typeof prisma, "agentChatMessage" | "agentChatSession">;
 
 export type AgentTarget =
   | { kind: "article"; id: string }
@@ -247,6 +247,64 @@ export async function saveAgentMessages(sessionId: string, messages: UIMessage[]
 
 export type MergeRelation = "new" | "truncate" | "append" | "disjoint";
 
+/** Conservative merge result used by initializing clients. */
+export function computeMergedMessages(
+  persisted: UIMessage[],
+  incoming: UIMessage[]
+): { messages: UIMessage[]; conflict?: "initializing-client" } {
+  const relation = detectRelation(incoming, persisted);
+  if (relation === "disjoint" && persisted.length > 0 && incoming.length > 0) {
+    return { messages: persisted, conflict: "initializing-client" };
+  }
+  return { messages: computeMerged(relation, incoming, persisted) };
+}
+
+/** Merge a refreshed newest page into already loaded history without dropping it. */
+export function mergeFinishedMessages(
+  existing: UIMessage[],
+  newest: UIMessage[]
+): UIMessage[] {
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  for (const m of newest) byId.set(m.id, m);
+  const result = existing.map((m) => byId.get(m.id)!).filter(Boolean);
+  const existingIds = new Set(existing.map((m) => m.id));
+  for (const m of newest) if (!existingIds.has(m.id)) result.push(m);
+  return result;
+}
+
+const sessionGenerations = new Map<string, number>();
+export async function captureSessionGeneration(sessionId: string): Promise<number> {
+  const row = await prisma.agentChatSession.findUnique({
+    where: { id: sessionId },
+    select: { generation: true },
+  });
+  const generation = row?.generation ?? sessionGenerations.get(sessionId) ?? 0;
+  sessionGenerations.set(sessionId, generation);
+  return generation;
+}
+export async function isSessionGenerationCurrent(sessionId: string, generation: number): Promise<boolean> {
+  const row = await prisma.agentChatSession.findUnique({
+    where: { id: sessionId },
+    select: { generation: true },
+  });
+  return (row?.generation ?? sessionGenerations.get(sessionId) ?? 0) === generation;
+}
+export async function clearSession(sessionId: string) {
+  sessionGenerations.set(sessionId, (sessionGenerations.get(sessionId) ?? 0) + 1);
+  await prisma.agentChatSession.update({
+    where: { id: sessionId },
+    data: { generation: { increment: 1 } },
+  });
+}
+export async function persistTurnResult(input: { sessionId: string; generation: number }) {
+  const row = await prisma.agentChatSession.findUnique({
+    where: { id: input.sessionId },
+    select: { generation: true },
+  });
+  const current = row?.generation ?? sessionGenerations.get(input.sessionId) ?? 0;
+  return current !== input.generation ? { ignored: true } : { ignored: false };
+}
+
 /**
  * 判定前端消息列表相对 DB 历史的关系，驱动 mergeAndPersistMessages 的合并策略。纯函数，便于单测。
  *
@@ -343,5 +401,55 @@ export async function mergeAndPersistMessages(
 
     await saveWithin(tx, sessionId, merged);
     return merged;
+  });
+}
+
+export async function mergeAndPersistMessagesIfGenerationCurrent(
+  sessionId: string,
+  generation: number,
+  uiMessages: UIMessage[]
+): Promise<{
+  ignored: boolean;
+  conflict?: "initializing-client";
+  messages?: UIMessage[];
+}> {
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.agentChatSession.findUnique({
+      where: { id: sessionId },
+      select: { generation: true },
+    });
+    if (session?.generation !== generation) return { ignored: true };
+
+    const dbMessages = await loadAllWithin(tx, sessionId);
+    const merged = computeMergedMessages(dbMessages, uiMessages);
+    if (merged.conflict) {
+      log.warn(
+        {
+          sessionId,
+          conflict: merged.conflict,
+          frontendCount: uiMessages.length,
+          dbCount: dbMessages.length,
+        },
+        "mergeAndPersistMessagesIfGenerationCurrent 检测到初始化冲突"
+      );
+      return {
+        ignored: false,
+        conflict: merged.conflict,
+        messages: dbMessages,
+      };
+    }
+
+    log.debug(
+      {
+        sessionId,
+        frontendCount: uiMessages.length,
+        dbCount: dbMessages.length,
+        mergedCount: merged.messages.length,
+      },
+      "mergeAndPersistMessagesIfGenerationCurrent 合并结果"
+    );
+
+    await saveWithin(tx, sessionId, merged.messages);
+    return { ignored: false, messages: merged.messages };
   });
 }

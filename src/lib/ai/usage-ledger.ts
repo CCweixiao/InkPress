@@ -21,12 +21,40 @@ export type UsageTurnInput = {
   startedAt?: Date;
 };
 
+type DbClient = Pick<typeof prisma, "agentChatSession" | "agentUsageTurn">;
+
 /**
  * 按 (sessionId, turnId) upsert 一条轮次用量。
  * summary 缺省（无任何 SDK usage）时不写（PDC §12.4：「没有任何 SDK usage，不写统计」）。
  * 同一 turnId 重复写（先 partial 后 completed 的恢复场景）以最新结果覆盖，避免重复计费。
  */
 export async function upsertUsageTurn(
+  input: UsageTurnInput,
+  summary: AgentTurnUsageSummary | undefined
+): Promise<void> {
+  await upsertUsageTurnWithin(prisma, input, summary);
+}
+
+export async function upsertUsageTurnIfSessionGenerationCurrent(
+  input: UsageTurnInput,
+  summary: AgentTurnUsageSummary | undefined,
+  generation: number
+): Promise<{ ignored: boolean }> {
+  if (!summary) return { ignored: false };
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.agentChatSession.findUnique({
+      where: { id: input.sessionId },
+      select: { generation: true },
+    });
+    if (session?.generation !== generation) return { ignored: true };
+
+    await upsertUsageTurnWithin(tx, input, summary);
+    return { ignored: false };
+  });
+}
+
+async function upsertUsageTurnWithin(
+  client: DbClient,
   input: UsageTurnInput,
   summary: AgentTurnUsageSummary | undefined
 ): Promise<void> {
@@ -38,7 +66,7 @@ export async function upsertUsageTurn(
     summary.outputTokens +
     summary.cacheReadInputTokens +
     summary.cacheCreationInputTokens;
-  await prisma.agentUsageTurn.upsert({
+  await client.agentUsageTurn.upsert({
     where: {
       sessionId_turnId: { sessionId: input.sessionId, turnId: input.turnId },
     },

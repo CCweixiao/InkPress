@@ -3,6 +3,7 @@ import type { UIMessage } from "ai";
 import {
   computeMerged,
   detectRelation,
+  mergeFinishedMessages,
   normalizeLoadedParts,
 } from "../../src/lib/ai/chat-persistence";
 
@@ -132,6 +133,49 @@ describe("computeMerged", () => {
     const ui = [msg("x"), msg("y")];
     // 关系误标 append 但实际无交集：不丢前端数据
     expect(ids(computeMerged("append", ui, db))).toEqual(["x", "y"]);
+  });
+});
+
+describe("mergeFinishedMessages", () => {
+  it("保留已加载旧页，并追加/更新刷新后的最新页", () => {
+    const firstTen = Array.from({ length: 10 }, (_, index) =>
+      msg(`old-${index + 1}`, index % 2 === 0 ? "user" : "assistant")
+    );
+    const newestTen = [
+      ...Array.from({ length: 5 }, (_, index) =>
+        msg(`old-${index + 6}`, index % 2 === 0 ? "assistant" : "user")
+      ),
+      ...Array.from({ length: 5 }, (_, index) =>
+        msg(`new-${index + 1}`, index % 2 === 0 ? "user" : "assistant")
+      ),
+    ];
+    newestTen[0] = {
+      ...newestTen[0],
+      parts: [{ type: "text", text: "updated old-6" }],
+    };
+
+    const merged = mergeFinishedMessages(firstTen, newestTen);
+
+    expect(ids(merged)).toEqual([
+      "old-1",
+      "old-2",
+      "old-3",
+      "old-4",
+      "old-5",
+      "old-6",
+      "old-7",
+      "old-8",
+      "old-9",
+      "old-10",
+      "new-1",
+      "new-2",
+      "new-3",
+      "new-4",
+      "new-5",
+    ]);
+    expect((merged[5].parts[0] as { text: string }).text).toBe(
+      "updated old-6"
+    );
   });
 });
 

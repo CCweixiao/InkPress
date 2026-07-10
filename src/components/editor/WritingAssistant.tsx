@@ -66,9 +66,9 @@ import { Markdown } from "@/components/ai/Markdown";
 import { MarkdownFullscreenDialog } from "@/components/ai/MarkdownFullscreenDialog";
 import {
   getRecoveredTurnNotice,
-  selectFinishedMessages,
   shouldPollRecoveringTurn,
 } from "@/lib/ai/recovery-state";
+import { mergeFinishedMessages } from "@/lib/ai/chat-persistence";
 import {
   isArticleProposalPart,
   moveProposalPartsToEnd,
@@ -1638,6 +1638,7 @@ export function WritingAssistant({
     ((messages: UIMessage[]) => void) | null
   >(null);
   const currentMessagesRef = useRef<UIMessage[]>([]);
+  const generationRef = useRef(0);
 
   // 待代码源授权：锁定 composer，引导用户先完成上方授权卡片操作。
   // composer 锁由两类审批独立贡献（避免互相 reset）：代码源授权 / P3 工具审批。
@@ -1739,12 +1740,18 @@ export function WritingAssistant({
     id: `${targetKind}-agent-${resolvedTargetId}`,
     transport,
     onFinish: async () => {
+      const generation = generationRef.current;
       const data = await refresh();
+      if (generation !== generationRef.current) return;
       const persisted = Array.isArray(data.messages)
         ? (data.messages as UIMessage[])
         : [];
       setMessagesAfterFinishRef.current?.(
-        selectFinishedMessages(currentMessagesRef.current, persisted)
+        mergeFinishedMessages(currentMessagesRef.current, persisted)
+      );
+      setHasMore(Boolean(data.hasMore));
+      setOldestPosition(
+        data.oldestPosition == null ? null : Number(data.oldestPosition)
       );
     },
     // 流式更新节流：默认每个 chunk 都触发一次 setMessages → 整个会话重渲染。
@@ -1940,6 +1947,7 @@ export function WritingAssistant({
       )
     )
       return;
+    generationRef.current += 1;
     await stop();
     const response = await fetch(
       `/api/ai/chat?targetKind=${targetKind}&targetId=${resolvedTargetId}`,
@@ -2554,7 +2562,7 @@ export function WritingAssistant({
       </div>
 
       <ChatComposer
-        disabled={approvalBlocked || busy || reviewingSnippets}
+        disabled={initializing || approvalBlocked || busy || reviewingSnippets}
         streaming={busy}
         approvalBlocked={approvalBlocked}
         placeholder={
