@@ -81,6 +81,16 @@ export async function readContentAt(relPath: string): Promise<string> {
   }
 }
 
+/** Whether an article body file exists, including a deliberately empty body. */
+export async function contentExistsAt(relPath: string): Promise<boolean> {
+  try {
+    await fs.access(resolveAbsolute(relPath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 删除文章正文文件（按相对路径；忽略不存在） */
 export async function deleteContentAt(relPath: string): Promise<void> {
   try {

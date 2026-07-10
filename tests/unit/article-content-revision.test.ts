@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findUnique, update, updateMany, writeContentAt } = vi.hoisted(() => ({
+const { findUnique, update, updateMany, writeContentAt, contentExistsAt } = vi.hoisted(() => ({
   findUnique: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
   writeContentAt: vi.fn(),
+  contentExistsAt: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -13,6 +14,7 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/content-store", () => ({
   readContentAt: vi.fn(),
   writeContentAt,
+  contentExistsAt,
   articleFilePath: vi.fn(() => "articles/article-1.md"),
 }));
 

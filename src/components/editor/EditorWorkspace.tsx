@@ -164,11 +164,12 @@ export function EditorWorkspace({
   const dirty = useRef(false);
   const dirtyGeneration = useRef(0);
   const unloadFlushStarted = useRef(false);
-  const enqueueSave = (payload: Partial<ArticleData>, generation: number) => {
+  const enqueueSave = (payload: Partial<ArticleData>, generation: number, keepalive = false) => {
     const task = saveQueue.current.then(async () => {
       const response = await fetch(`/api/articles/${article.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
+        keepalive,
         body: JSON.stringify({
           ...payload,
           expectedContentRevision: serverRevision.current,
@@ -210,7 +211,7 @@ export function EditorWorkspace({
     }, 5000);
   };
 
-  const flushArticle = async (patch: Partial<ArticleData> = {}) => {
+  const flushArticle = async (patch: Partial<ArticleData> = {}, keepalive = false) => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
@@ -228,7 +229,7 @@ export function EditorWorkspace({
     dirty.current = true;
     dirtyGeneration.current += 1;
     setSaveState("saving");
-    await enqueueSave(payload, dirtyGeneration.current);
+    await enqueueSave(payload, dirtyGeneration.current, keepalive);
   };
 
   const copyMarkdown = async () => {
@@ -319,7 +320,9 @@ export function EditorWorkspace({
       unloadFlushStarted.current = true;
       // Do not bypass saveQueue with sendBeacon: it can race an in-flight PUT
       // and make an older unload snapshot arrive after a newer autosave.
-      void flushArticle().catch(() => {});
+      // keepalive improves delivery during unload while the request still
+      // follows the same queue as autosave (so no stale snapshot can race it).
+      void flushArticle({}, true).catch(() => {});
     };
     window.addEventListener("pagehide", flushPending);
     window.addEventListener("beforeunload", flushPending);

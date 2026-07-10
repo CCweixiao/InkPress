@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
   readContentAt,
+  contentExistsAt,
   writeContentAt,
   articleFilePath,
 } from "@/lib/content-store";
@@ -67,9 +68,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!article) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+  const fallbackPath = articleFilePath({ articleId: article.id, spaceId: article.spaceId });
   const contentMd = article.contentPath
     ? await readContentAt(article.contentPath)
-    : (await readContentAt(articleFilePath({ articleId: article.id, spaceId: article.spaceId }))) || (article.contentMd ?? "");
+    : (await contentExistsAt(fallbackPath)) ? await readContentAt(fallbackPath) : (article.contentMd ?? "");
   return NextResponse.json({ article: { ...article, contentMd } });
 }
 

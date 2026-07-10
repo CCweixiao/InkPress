@@ -9,6 +9,7 @@ const {
   findUniqueOrThrow,
   readContentAt,
   writeContentAt,
+  contentExistsAt,
 } = vi.hoisted(() => ({
   findUnique: vi.fn(),
   proposalUpdateMany: vi.fn(),
@@ -17,6 +18,7 @@ const {
   findUniqueOrThrow: vi.fn(),
   readContentAt: vi.fn(),
   writeContentAt: vi.fn(),
+  contentExistsAt: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => {
@@ -34,6 +36,7 @@ vi.mock("@/lib/db", () => {
 });
 vi.mock("@/lib/content-store", () => ({
   readContentAt,
+  contentExistsAt,
   writeContentAt,
   readTechnicalDocumentContent: vi.fn(),
   writeTechnicalDocumentContent: vi.fn(),
@@ -50,6 +53,7 @@ describe("article proposal revision claim", () => {
     proposalUpdate.mockReset().mockResolvedValue({});
     findUniqueOrThrow.mockReset().mockResolvedValue({ id: "article-1", contentRevision: 1 });
     readContentAt.mockReset().mockResolvedValue("migrated file body");
+    contentExistsAt.mockReset().mockResolvedValue(true);
     writeContentAt.mockReset().mockResolvedValue(undefined);
   });
 
@@ -88,9 +92,48 @@ describe("article proposal revision claim", () => {
     });
 
     expect(response.status).toBe(500);
+    const claim = articleUpdateMany.mock.calls[0]?.[0];
     const rollback = articleUpdateMany.mock.calls.at(-1)?.[0];
+    expect(claim.data).not.toHaveProperty("title");
+    expect(claim.data).not.toHaveProperty("digest");
     expect(rollback.data).not.toHaveProperty("title");
     expect(rollback.data).not.toHaveProperty("digest");
+  });
+
+  it("treats an existing empty fallback file as authoritative over legacy contentMd", async () => {
+    readContentAt.mockResolvedValue("");
+    contentExistsAt.mockResolvedValue(true);
+    findUnique.mockResolvedValue({
+      id: "proposal-1", articleId: "article-1", status: "pending", markdown: "proposal body", title: null, digest: null,
+      baseVersionHash: articleVersionHash({ title: "title", markdown: "", digest: "digest" }),
+      article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: null, spaceId: null, contentRevision: 0 },
+    });
+
+    const response = await POST(new Request("http://localhost", { method: "POST", body: "{}" }), {
+      params: Promise.resolve({ id: "proposal-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(writeContentAt).toHaveBeenCalled();
+  });
+
+  it("marks the proposal error without reverting its revision after body write finalization fails", async () => {
+    findUnique.mockResolvedValue({
+      id: "proposal-1", articleId: "article-1", status: "pending", markdown: "proposal body", title: "new title", digest: null,
+      baseVersionHash: articleVersionHash({ title: "title", markdown: "migrated file body", digest: "digest" }),
+      article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: "articles/article-1.md", spaceId: null, contentRevision: 0 },
+    });
+    articleUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+    const response = await POST(new Request("http://localhost", { method: "POST", body: "{}" }), {
+      params: Promise.resolve({ id: "proposal-1" }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(proposalUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "proposal-1", status: "applying" },
+      data: expect.objectContaining({ status: "error" }),
+    }));
   });
 
   it("allows only one of two pending proposals on the same article revision to apply", async () => {

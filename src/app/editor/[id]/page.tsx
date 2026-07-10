@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { articleFilePath, readContentAt } from "@/lib/content-store";
+import { articleFilePath, contentExistsAt, readContentAt } from "@/lib/content-store";
 import { EditorWorkspace } from "@/components/editor/EditorWorkspace";
 import { licenseGuard } from "@/lib/license/guard";
 
@@ -18,9 +18,10 @@ export default async function EditorPage({ params }: Params) {
   });
   if (!article) notFound();
 
+  const fallbackPath = articleFilePath({ articleId: article.id, spaceId: article.spaceId });
   const contentMd = article.contentPath
     ? await readContentAt(article.contentPath)
-    : (await readContentAt(articleFilePath({ articleId: article.id, spaceId: article.spaceId }))) || (article.contentMd ?? "");
+    : (await contentExistsAt(fallbackPath)) ? await readContentAt(fallbackPath) : (article.contentMd ?? "");
 
   const themes = await prisma.theme.findMany({
     orderBy: [{ isBuiltIn: "desc" }, { createdAt: "asc" }],

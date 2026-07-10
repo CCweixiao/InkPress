@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import {
   readContentAt,
+  contentExistsAt,
   writeContentAt,
   readTechnicalDocumentContent,
   writeTechnicalDocumentContent,
@@ -34,9 +35,9 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
   const fileMarkdown = await readContentAt(articleRel);
   // Pre-contentPath articles may already have a migrated file. Prefer it when
   // present, and retain contentMd only as the compatibility fallback.
-  const currentMarkdown = proposal.article.contentPath
+  const currentMarkdown = proposal.article.contentPath || await contentExistsAt(articleRel)
     ? fileMarkdown
-    : fileMarkdown || proposal.article.contentMd;
+    : proposal.article.contentMd;
   const currentHash = articleVersionHash({
     title: proposal.article.title,
     markdown: currentMarkdown,
@@ -62,8 +63,6 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
       where: { id: proposal.articleId, contentRevision: revision },
       data: {
         contentRevision: { increment: 1 },
-        ...(proposal.title !== null ? { title: proposal.title } : {}),
-        ...(proposal.digest !== null ? { digest: proposal.digest } : {}),
         ...(proposal.article.contentPath ? {} : { contentPath: articleRel }),
       },
     });
@@ -93,9 +92,15 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
     await writeContentAt(articleRel, targetMarkdown);
     contentWritten = true;
     const article = await prisma.$transaction(async (tx) => {
-      const updated = await tx.article.findUniqueOrThrow({
-        where: { id: proposal.articleId },
+      const metadataUpdated = await tx.article.updateMany({
+        where: { id: proposal.articleId, contentRevision: revision + 1 },
+        data: {
+          ...(proposal.title !== null ? { title: proposal.title } : {}),
+          ...(proposal.digest !== null ? { digest: proposal.digest } : {}),
+        },
       });
+      if (metadataUpdated.count !== 1) throw new Error("article-finalize-failed");
+      const updated = await tx.article.findUniqueOrThrow({ where: { id: proposal.articleId } });
       await tx.agentArticleProposal.update({
         where: { id },
         data: {
@@ -138,6 +143,12 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
         where: { id, status: "applying" },
         data: { status: "pending" },
       });
+    }
+    if (contentWritten) {
+      await prisma.agentArticleProposal.updateMany({
+        where: { id, status: "applying" },
+        data: { status: "error", decidedAt: new Date() },
+      }).catch(() => {});
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "应用文章提案失败。" },
