@@ -33,7 +33,7 @@ export type InkPressSystemPromptInput = {
 };
 
 /** 正文注入预算（超长则截断，避免撑爆上下文；逐字改写长文后续可换更长上下文模型）。 */
-const ARTICLE_BODY_BUDGET = 12_000;
+export const ARTICLE_BODY_BUDGET = 12_000;
 
 /** P1：消息含 {{snippet:id}} 时注入的灵感融入指令。 */
 export const SNIPPET_FUSION_HINT = `## 灵感素材融入
@@ -115,7 +115,7 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
     ? body.length > ARTICLE_BODY_BUDGET
       ? `${body.slice(0, ARTICLE_BODY_BUDGET)}\n\n<!-- 正文过长（约 ${body.length} 字），已截断前 ${ARTICLE_BODY_BUDGET} 字 -->`
       : body
-    : "（编辑器为空——这是首次生成，调用 propose_* 会直接写入）";
+    : "（编辑器为空——这是首次生成，也必须调用 propose_* 创建提案）";
   const codeSection = input.codeSource
     ? [
         "",
@@ -171,6 +171,7 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
     "- mcp__inkpress__load_skill：按需加载完整写作 Skill 手册（目录见文末）。",
     "- mcp__inkpress__read_skill_resource：读取已加载 Skill 声明的资源文件。",
     "- mcp__inkpress__article_assets：读取当前文章已上传的素材（图片/视频/文件），创作或配图时优先调用。",
+    "- mcp__inkpress__read_current_article：按字符范围读取当前文章完整正文。当前正文被截断时，必须用它覆盖全文后，才能提交完整替换提案。",
     "- mcp__inkpress__set_article_digest：为文章生成摘要（≤120 字）并写回摘要字段；摘要要写入字段时**必须**用此工具，不要贴在正文里。",
     "- mcp__inkpress__propose_article_revision：创建或修改公众号文章时**必须**调用，提交完整 Markdown，不要在聊天里直接贴完整正文。",
     "- mcp__inkpress__propose_technical_document_revision：创建或修改技术文档时同理。",
@@ -185,8 +186,9 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
     "- 需要专门写作方法时，从可用 Skill 列表中选择相关项并调用 load_skill；不要等待外层系统预先加载。",
     "- 需要文章素材时调用 article_assets；不要假设素材已经在系统提示里完整列出。",
     "- 需要外部资料时优先调用 web_search / web_fetch（见「联网与外部资料」）。搜索到权威 URL 后先抓正文，再写结论；不要臆测未经验证的事实。",
-    "- 修改正文一律走对应的 propose_* 工具：首次生成（编辑器为空）会直接写入，后续修改生成提案供用户 diff 审阅后再应用。",
+    "- 修改正文一律走对应的 propose_* 工具：首次生成和后续改写都创建提案，供用户 diff 审阅后再应用。",
     "- 调用 propose_* 时提交**完整的**新版本 Markdown（不是片段）。",
+    "- 如果「当前正文」提示正文过长/已截断，说明你只看到了前段：必须先调用 mcp__inkpress__read_current_article，用 start/end 范围读取并覆盖全文，再才能调用 mcp__inkpress__propose_article_revision 提交完整 Markdown 替换；不要基于未读到的尾部生成全文替换。",
     "- 回答使用中文，风格简洁、专业；联网与代码证据要区分事实、来源与推断。",
     "",
     "## 当前正文",

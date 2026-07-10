@@ -27,6 +27,7 @@ import type {
   ToolDisplayPhase,
 } from "@/lib/ai/agent-runtime-events";
 import { searchWithTavily, fetchWebPage } from "@/lib/ai/tools/web-research";
+import { ARTICLE_BODY_BUDGET } from "@/lib/ai/system-prompt";
 
 /**
  * InkPress MCP 工具的声明式注册表（单一事实源）。
@@ -60,6 +61,11 @@ export type InkPressToolContext = {
   webResearch: WebResearchConfig;
   /** load_skill 的 description / system prompt 摘要用。 */
   skillCatalog: SkillCatalogItem[];
+  /** 本轮 read_current_article 已读取的正文范围，用于长文完整替换提案守门。 */
+  currentArticleReadState?: {
+    contentRevision: string;
+    ranges: Array<{ start: number; end: number }>;
+  };
   /**
    * 向 UI 流写 UIMessage chunk（与 writer.write 同源）。MCP handler 在进程内执行时
    * 直接用它发 tool-input-available / tool-output-available 等 chunk，渲染工具卡片，
@@ -183,6 +189,7 @@ const setArticleDigestDisplay: ToolDisplayFactory = ({ phase }) => ({
 });
 
 const proposeArticleRevisionDisplay: ToolDisplayFactory = ({ phase, output }) => {
+  const o = outOf(output);
   return {
     title: "生成文章修改提案",
     activityKind: "proposal",
@@ -190,8 +197,25 @@ const proposeArticleRevisionDisplay: ToolDisplayFactory = ({ phase, output }) =>
       phase === "failed"
         ? undefined
         : phase === "completed"
-          ? "文章修改提案已生成"
+          ? o.ok === false
+            ? String(o.message ?? "文章修改提案未生成")
+            : "文章修改提案已生成"
           : "正在生成文章修改提案",
+  };
+};
+
+const readCurrentArticleDisplay: ToolDisplayFactory = ({ phase, args, output, error }) => {
+  const a = argOf(args);
+  const o = outOf(output);
+  return {
+    title: "读取当前文章正文",
+    activityKind: "read",
+    summary:
+      phase === "failed"
+        ? error
+        : phase === "completed"
+          ? `已读取 ${Number(o.start ?? 0)}-${Number(o.end ?? 0)} / ${Number(o.totalCharacters ?? 0)}`
+          : `正在读取 ${Number(a.start ?? 0)}-${Number(a.end ?? 0)}`,
   };
 };
 
@@ -428,6 +452,107 @@ const loadSnippetsTool: InkPressToolDefinition = {
   },
 };
 
+function mergeRanges(ranges: Array<{ start: number; end: number }>) {
+  const sorted = ranges
+    .filter((range) => range.end > range.start)
+    .slice()
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of sorted) {
+    const last = merged[merged.length - 1];
+    if (!last || range.start > last.end) {
+      merged.push({ ...range });
+      continue;
+    }
+    last.end = Math.max(last.end, range.end);
+  }
+  return merged;
+}
+
+function rangesCover(
+  ranges: Array<{ start: number; end: number }>,
+  start: number,
+  end: number
+) {
+  if (end <= start) return true;
+  let cursor = start;
+  for (const range of mergeRanges(ranges)) {
+    if (range.end <= cursor) continue;
+    if (range.start > cursor) return false;
+    cursor = Math.max(cursor, range.end);
+    if (cursor >= end) return true;
+  }
+  return false;
+}
+
+const readCurrentArticleTool: InkPressToolDefinition = {
+  name: "read_current_article",
+  permission: "allow",
+  category: "article",
+  version: "1.0.0",
+  display: readCurrentArticleDisplay,
+  description:
+    "按字符范围读取当前文章完整正文。正文在系统提示中被截断时，先用 start/end 分段读取并覆盖全文，再提交完整 Markdown 提案。",
+  inputSchema: {
+    start: z.number().int().min(0),
+    end: z.number().int().min(1),
+  },
+  outputSchema: {
+    markdown: z.string(),
+    start: z.number().int(),
+    end: z.number().int(),
+    totalCharacters: z.number().int(),
+    contentRevision: z.string(),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+  execute: async (ctx, args) => {
+    if (ctx.target.kind !== "article") throw new Error("当前目标不是公众号文章。");
+    const totalCharacters = ctx.target.markdown.length;
+    const requestedStart = typeof args.start === "number" ? args.start : 0;
+    const requestedEnd = typeof args.end === "number" ? args.end : totalCharacters;
+    const start = Math.min(Math.max(0, requestedStart), totalCharacters);
+    const end = Math.min(Math.max(start, requestedEnd), totalCharacters);
+    const contentRevision = baseVersionHashOf(ctx);
+    if (ctx.currentArticleReadState?.contentRevision !== contentRevision) {
+      ctx.currentArticleReadState = { contentRevision, ranges: [] };
+    }
+    ctx.currentArticleReadState.ranges.push({ start, end });
+    return {
+      markdown: ctx.target.markdown.slice(start, end),
+      start,
+      end,
+      totalCharacters,
+      contentRevision,
+    };
+  },
+};
+
+function articleProposalContextError(ctx: InkPressToolContext) {
+  const totalCharacters = ctx.target.markdown.length;
+  if (totalCharacters <= ARTICLE_BODY_BUDGET) return null;
+  const contentRevision = baseVersionHashOf(ctx);
+  const readState = ctx.currentArticleReadState;
+  if (
+    readState?.contentRevision === contentRevision &&
+    rangesCover(readState.ranges, 0, totalCharacters)
+  ) {
+    return null;
+  }
+  return {
+    ok: false as const,
+    code: "article-context-incomplete",
+    message:
+      "当前文章正文在系统上下文中被截断。请先调用 read_current_article，用 range 覆盖读取全文后，再提交完整 Markdown 提案。",
+    totalCharacters,
+    requiredRange: { start: 0, end: totalCharacters },
+    contentRevision,
+    readRanges:
+      readState?.contentRevision === contentRevision
+        ? mergeRanges(readState.ranges)
+        : [],
+  };
+}
+
 const proposeArticleRevisionTool: InkPressToolDefinition = {
   name: "propose_article_revision",
   permission: "allow",
@@ -444,6 +569,8 @@ const proposeArticleRevisionTool: InkPressToolDefinition = {
   },
   execute: async (ctx, args) => {
     if (ctx.target.kind !== "article") throw new Error("当前目标不是公众号文章。");
+    const contextError = articleProposalContextError(ctx);
+    if (contextError) return contextError;
     const markdown = String(args.markdown ?? "");
     const title = args.title != null ? String(args.title) : undefined;
     const digest = args.digest != null ? String(args.digest) : undefined;
@@ -942,6 +1069,7 @@ export const INKPRESS_TOOLS: InkPressToolDefinition[] = [
   readSkillResourceTool,
   articleAssetsTool,
   loadSnippetsTool,
+  readCurrentArticleTool,
   setArticleDigestTool,
   proposeArticleRevisionTool,
   proposeTechnicalDocumentRevisionTool,

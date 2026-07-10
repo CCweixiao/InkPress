@@ -20,6 +20,22 @@ describe("buildInkPressSystemPrompt", () => {
     expect(prompt).toContain("必须继续调用 web_fetch 读取正文");
     expect(prompt).toContain("没有调用 web_fetch、或没有收到错误结果时，不得声称网页抓取失败");
   });
+
+  it("instructs agents to range-read oversized article context before full replacement proposals", () => {
+    const prompt = buildInkPressSystemPrompt({
+      target: {
+        kind: "article",
+        title: "长文",
+        markdown: "a".repeat(12_200),
+      },
+      skillCatalog: [],
+    });
+
+    expect(prompt).toContain("mcp__inkpress__read_current_article");
+    expect(prompt).toContain("正文过长");
+    expect(prompt).toContain("覆盖全文");
+    expect(prompt).toContain("才能调用 mcp__inkpress__propose_article_revision");
+  });
 });
 
 describe("snippetsHint section", () => {
