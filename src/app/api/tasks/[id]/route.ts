@@ -14,6 +14,7 @@ const updateSchema = z.object({
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
   isCollapsed: z.boolean().optional(),
+  tagIds: z.array(z.string()).optional(),
 });
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -47,7 +48,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     }
 
     const data: Record<string, unknown> = {};
-    const { title, content, status, priority, dueDate, parentId, spaceId, sortOrder, tagsJson, isCollapsed } =
+    const { title, content, status, priority, dueDate, parentId, spaceId, sortOrder, tagsJson, isCollapsed, tagIds } =
       parsed.data;
 
     if (title !== undefined) data.title = title;
@@ -69,10 +70,23 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (tagsJson !== undefined) data.tagsJson = tagsJson;
     if (isCollapsed !== undefined) data.isCollapsed = isCollapsed;
 
-    const task = await prisma.task.update({
-      where: { id },
-      data,
-      include: { children: true },
+    const task = await prisma.$transaction(async (tx) => {
+      if (tagIds !== undefined) {
+        await tx.taskTag.deleteMany({ where: { taskId: id } });
+        if (tagIds.length > 0) {
+          await tx.taskTag.createMany({
+            data: tagIds.map((tagId) => ({ taskId: id, tagId })),
+          });
+        }
+      }
+      return tx.task.update({
+        where: { id },
+        data,
+        include: {
+          children: true,
+          tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
+        },
+      });
     });
 
     return NextResponse.json({ task });
