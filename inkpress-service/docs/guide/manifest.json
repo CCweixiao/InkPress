@@ -5,12 +5,12 @@
       "items": [
         {
           "slug": "getting-started-mac-user",
-          "title": "下载安装-Mac用户",
+          "title": "InkPress 下载安装-Mac",
           "description": "了解 InkPress 软件的安装流程，仅适用于Mac用户。"
         },
         {
           "slug": "getting-started-windows-user",
-          "title": "下载安装-Windows用户",
+          "title": "InkPress 下载安装-Windows",
           "description": "了解 InkPress 软件的安装流程，仅适用于Windows用户。"
         },
         {
@@ -32,7 +32,13 @@
     },
     {
       "title": "用户中心",
+
       "items": [
+        {
+          "slug": "buy-plan",
+          "title": "InkPress License 购买与激活指南",
+          "description": "InkPress 的购买到激活全流程。"
+        },
         {
           "slug": "dashboard",
           "title": "用户中心与订单",
