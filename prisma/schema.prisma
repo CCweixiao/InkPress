@@ -611,6 +611,8 @@ model Task {
   status      String    @default("todo") // todo | in_progress | done | archived
   priority    Int       @default(0) // 0=none, 1=low(🔵), 2=medium(🟡), 3=high(🟠), 4=urgent(🔴)
   dueDate     DateTime?
+  dueTime     String?   // "HH:mm"（可选精确到分钟）；为空表示全天任务
+  isAllDay    Boolean   @default(true)
   completedAt DateTime?
   parentId    String? // 子任务关系
   spaceId     String? // 关联空间
@@ -624,12 +626,11 @@ model Task {
   children Task[] @relation("TaskSubtasks")
   space    Space? @relation(fields: [spaceId], references: [id])
 
+  // 复合索引：精准命中"按清单/状态分组 + 排序显示"主查询路径
+  @@index([spaceId, status, sortOrder])
+  @@index([status, dueDate])
   @@index([parentId])
-  @@index([spaceId])
-  @@index([status])
-  @@index([priority])
-  @@index([dueDate])
-  @@index([sortOrder])
+  @@index([priority, status])
 }
 
 // P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。
