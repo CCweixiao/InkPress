@@ -15,12 +15,13 @@ import {
 import { cn } from "@/lib/utils";
 import type { Task, TaskPriority, TaskStatus } from "./types";
 import { PRIORITY_CONFIG, STATUS_CONFIG } from "./types";
+import { TagPicker } from "./TagPicker";
 
 interface TaskItemProps {
   task: Task;
   depth?: number;
   onToggleStatus: (id: string, status: TaskStatus) => void;
-  onUpdate: (id: string, data: Partial<Task>) => void;
+  onUpdate: (id: string, data: Partial<Task> & { tagIds?: string[] }) => void;
   onDelete: (id: string) => void;
   onAddSubtask: (parentId: string) => void;
   dragHandleProps?: Record<string, unknown>;
@@ -182,16 +183,23 @@ export function TaskItem({
         )}
 
         {/* Tags */}
-        {task.tagsJson !== "[]" && (
+        {task.tags?.length > 0 && (
           <div className="flex gap-1">
-            {(JSON.parse(task.tagsJson) as string[]).slice(0, 2).map((tag) => (
+            {task.tags.slice(0, 2).map((t) => (
               <span
-                key={tag}
-                className="text-xs px-1.5 py-0.5 rounded bg-accent text-accent-foreground"
+                key={t.id}
+                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded shrink-0"
+                style={{ backgroundColor: t.color + "22", color: t.color }}
               >
-                {tag}
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: t.color }} />
+                {t.name}
               </span>
             ))}
+            {task.tags.length > 2 && (
+              <span className="text-xs text-muted-foreground shrink-0">
+                +{task.tags.length - 2}
+              </span>
+            )}
           </div>
         )}
 
@@ -222,6 +230,10 @@ export function TaskItem({
             showActions ? "opacity-100" : "opacity-0"
           )}
         >
+          <TagPicker
+            selectedIds={task.tags?.map((t) => t.id) ?? []}
+            onChange={(ids) => onUpdate(task.id, { tagIds: ids })}
+          />
           <button
             onClick={() => onAddSubtask(task.id)}
             className="p-1 text-muted-foreground hover:text-foreground rounded"
