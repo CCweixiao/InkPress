@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Loader2, FileText, FolderOpen, Image as ImageIcon, Sparkles } from "lucide-react";
+import { Search, Loader2, FileText, FolderOpen, Image as ImageIcon, Sparkles, CheckSquare } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,7 @@ type SearchResult = {
   assets: ResultItem[];
   skills: ResultItem[];
   snippets: ResultItem[];
+  tasks: ResultItem[];
 };
 
 const EMPTY: SearchResult = {
@@ -34,6 +35,7 @@ const EMPTY: SearchResult = {
   assets: [],
   skills: [],
   snippets: [],
+  tasks: [],
 };
 
 /**
@@ -100,7 +102,8 @@ export function GlobalSearch() {
     result.spaces.length +
     result.assets.length +
     result.skills.length +
-    result.snippets.length;
+    result.snippets.length +
+    result.tasks.length;
   const trimmed = q.trim();
   const showEmpty = !loading && trimmed.length >= 2 && total === 0;
 
@@ -130,7 +133,7 @@ export function GlobalSearch() {
         >
           <DialogHeader className="sr-only">
             <DialogTitle>全局搜索</DialogTitle>
-            <DialogDescription>搜索文章、空间、素材、技能、灵感</DialogDescription>
+            <DialogDescription>搜索文章、空间、素材、技能、灵感、任务</DialogDescription>
           </DialogHeader>
 
           {/* 搜索输入区（固定顶部） */}
@@ -141,7 +144,7 @@ export function GlobalSearch() {
                 ref={inputRef}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="搜索文章、空间、素材、技能、灵感…"
+                placeholder="搜索文章、空间、素材、技能、灵感、任务…"
                 className="pl-9"
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setOpen(false);
@@ -202,6 +205,14 @@ export function GlobalSearch() {
                     title="灵感"
                     icon={<Sparkles className="h-4 w-4" />}
                     items={result.snippets}
+                    onSelect={go}
+                  />
+                )}
+                {result.tasks.length > 0 && (
+                  <ResultSection
+                    title="任务"
+                    icon={<CheckSquare className="h-4 w-4" />}
+                    items={result.tasks}
                     onSelect={go}
                   />
                 )}

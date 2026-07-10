@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { listAllSkills } from "@/lib/skills-manager";
 import { snippetToSearchResultItem } from "@/lib/snippets/search-result";
+import { taskToSearchResultItem } from "@/lib/tasks/search-result";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export type SearchResult = {
   assets: SearchResultItem[];
   skills: SearchResultItem[];
   snippets: SearchResultItem[];
+  tasks: SearchResultItem[];
 };
 
 /**
@@ -34,6 +36,7 @@ export async function GET(req: Request) {
     assets: [],
     skills: [],
     snippets: [],
+    tasks: [],
   };
   if (q.length < 2) {
     return NextResponse.json(empty);
@@ -42,7 +45,7 @@ export async function GET(req: Request) {
   const match = (s: string | null | undefined) =>
     !!s && s.toLowerCase().includes(q.toLowerCase());
 
-  const [articles, spaces, assets, skills, snippets] = await Promise.all([
+  const [articles, spaces, assets, skills, snippets, tasks] = await Promise.all([
     prisma.article.findMany({
       where: { trashed: false },
       select: { id: true, title: true, digest: true },
@@ -65,6 +68,10 @@ export async function GET(req: Request) {
         kind: true,
         tagAssignments: { include: { tag: { select: { name: true } } } },
       },
+    }),
+    prisma.task.findMany({
+      where: { status: { not: "archived" } },
+      select: { id: true, title: true, status: true, priority: true, dueDate: true },
     }),
   ]);
 
@@ -114,6 +121,14 @@ export async function GET(req: Request) {
       )
       .slice(0, 20)
       .map((s) => snippetToSearchResultItem(s)),
+    tasks: tasks
+      .filter((t) => match(t.title))
+      .slice(0, 20)
+      .map((t) =>
+        taskToSearchResultItem(
+          t as unknown as Parameters<typeof taskToSearchResultItem>[0]
+        )
+      ),
   };
 
   return NextResponse.json(result);
