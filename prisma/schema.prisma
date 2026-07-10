@@ -249,7 +249,7 @@ model AgentArticleProposal {
   markdown        String
   digest          String?
   summary         String    @default("")
-  status          String    @default("pending") // pending | applying | applied | rejected | superseded
+  status          String    @default("pending") // pending | applying | applied | rejected | superseded | error
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   appliedAt       DateTime?
