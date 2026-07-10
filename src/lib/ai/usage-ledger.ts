@@ -19,6 +19,7 @@ export type UsageTurnInput = {
   modelId?: string | null;
   sdkSessionId?: string | null;
   startedAt?: Date;
+  metadata?: Record<string, unknown>;
 };
 
 type DbClient = Pick<typeof prisma, "agentChatSession" | "agentUsageTurn">;
@@ -80,6 +81,9 @@ async function upsertUsageTurnWithin(
       status: summary.status,
       source: summary.source,
       modelUsageJson: safeStringify(summary.modelUsage),
+      ...(input.metadata !== undefined
+        ? { metadataJson: safeStringify(input.metadata) }
+        : {}),
       ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
       ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
       ...(input.sdkSessionId !== undefined ? { sdkSessionId: input.sdkSessionId } : {}),
@@ -102,6 +106,7 @@ async function upsertUsageTurnWithin(
       status: summary.status,
       source: summary.source,
       modelUsageJson: safeStringify(summary.modelUsage),
+      metadataJson: safeStringify(input.metadata),
       startedAt: input.startedAt ?? new Date(),
       finishedAt: new Date(),
     },

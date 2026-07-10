@@ -34,8 +34,10 @@ export function evaluateToolPermission(bareName: string): PermissionDecision {
 }
 
 /** allow 工具的完整名（喂 SDK allowedTools，自动批准、不触发 canUseTool）。 */
-export function claudeAllowedTools(): string[] {
-  return INKPRESS_TOOLS.filter((t) => t.permission === "allow").map(
+export function claudeAllowedTools(enabledNames?: ReadonlySet<string>): string[] {
+  return INKPRESS_TOOLS.filter(
+    (t) => t.permission === "allow" && (!enabledNames || enabledNames.has(t.name))
+  ).map(
     (t) => MCP_PREFIX + t.name
   );
 }

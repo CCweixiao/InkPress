@@ -61,6 +61,26 @@ export const INKPRESS_SUBAGENTS: Record<string, AgentDefinition> = {
 };
 
 /** 供 buildClaudeAgentOptions 注入 Options.agents。 */
-export function buildSubagents(): Record<string, AgentDefinition> {
-  return INKPRESS_SUBAGENTS;
+export function buildSubagents(capabilities?: {
+  targetKind: "article" | "technical-document";
+  hasCodeSource: boolean;
+  webResearchEnabled: boolean;
+}): Record<string, AgentDefinition> {
+  if (!capabilities) return INKPRESS_SUBAGENTS;
+  const result: Record<string, AgentDefinition> = {};
+  if (capabilities.hasCodeSource || capabilities.webResearchEnabled) {
+    const researchTools = INKPRESS_SUBAGENTS.research.tools?.filter((name) => {
+      if (name.includes("web_")) return capabilities.webResearchEnabled;
+      if (name.includes("project_")) return capabilities.hasCodeSource;
+      return true;
+    });
+    result.research = { ...INKPRESS_SUBAGENTS.research, tools: researchTools };
+  }
+  if (capabilities.targetKind === "article") {
+    result.review = INKPRESS_SUBAGENTS.review;
+  }
+  if (capabilities.webResearchEnabled) {
+    result.fact_check = INKPRESS_SUBAGENTS.fact_check;
+  }
+  return result;
 }

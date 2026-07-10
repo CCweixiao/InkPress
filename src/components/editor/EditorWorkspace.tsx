@@ -404,6 +404,7 @@ export function EditorWorkspace({
           onApply={setMarkdown}
           onApplyDigest={setDigest}
           onApplyArticle={(updated) => {
+            serverRevision.current = updated.contentRevision;
             setTitle(updated.title);
             setMarkdown(updated.contentMd);
             setDigest(updated.digest ?? "");

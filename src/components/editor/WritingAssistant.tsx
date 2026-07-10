@@ -68,7 +68,8 @@ import {
   getRecoveredTurnNotice,
   shouldPollRecoveringTurn,
 } from "@/lib/ai/recovery-state";
-import { mergeFinishedMessages } from "@/lib/ai/chat-persistence";
+import { mergeFinishedMessages } from "@/lib/ai/chat-message-merge";
+import { findAssistantCheckpointBefore } from "@/lib/ai/agent-checkpoint";
 import {
   isArticleProposalPart,
   moveProposalPartsToEnd,
@@ -686,6 +687,7 @@ export type RenderCtx = {
     title: string;
     contentMd: string;
     digest: string | null;
+    contentRevision: number;
   }) => void;
   onApplyTechnicalDocument?: (document: {
     title: string;
@@ -747,16 +749,6 @@ function ContextUsageLine({ data }: { data: Record<string, unknown> }) {
       {pre > 0 && post > 0
         ? `：${pre.toLocaleString()} → ${post.toLocaleString()} tokens`
         : ""}
-    </div>
-  );
-}
-
-/** 首次直写提示（⑦ 产出阶段，direct 模式：正文已直接写入编辑器）。 */
-function DirectWriteNotice() {
-  return (
-    <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
-      <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-      已写入正文（首次生成）
     </div>
   );
 }
@@ -1001,13 +993,9 @@ function EvidenceChip({
   }
 }
 
-/** 工具类 part 渲染：direct 直写提示 / 提案卡片 / 通用工具块。 */
+/** 工具类 part 渲染：提案卡片 / 通用工具块。 */
 function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
   const toolName = getToolName(part);
-  const draftMode = (part.output as { mode?: unknown } | undefined)?.mode;
-  if (toolName === "propose_article_revision" && draftMode === "direct") {
-    return <DirectWriteNotice />;
-  }
   const proposalId =
     toolName === "propose_article_revision" ||
     toolName === "propose_technical_document_revision"
@@ -1025,6 +1013,7 @@ function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
                 title: string;
                 contentMd: string;
                 digest: string | null;
+                contentRevision: number;
               }
             );
           } else {
@@ -1590,6 +1579,7 @@ export function WritingAssistant({
     title: string;
     contentMd: string;
     digest: string | null;
+    contentRevision: number;
   }) => void;
   onApplyTechnicalDocument?: (document: {
     title: string;
@@ -1755,7 +1745,7 @@ export function WritingAssistant({
       );
     },
     // 流式更新节流：默认每个 chunk 都触发一次 setMessages → 整个会话重渲染。
-    // 长对话里每次渲染要全量重扫 messages（latestContextUsage / latestDirectArticle /
+    // 长对话里每次渲染要全量重扫 messages（latestContextUsage /
     // proposalIdsInMessages 等多个 O(消息×part) memo）并联动编辑器写入，高频 chunk 会把
     // 同步更新堆到 React 的嵌套上限，抛 "Maximum update depth exceeded"。
     // 按 50ms 合并更新，既消除该报错又显著降低长对话的渲染压力。
@@ -2096,6 +2086,7 @@ export function WritingAssistant({
     if (busy) return;
     const targetMsg = messages[index];
     if (!targetMsg || targetMsg.role !== "user" || !editedText.trim()) return;
+    const resumeSessionAt = findAssistantCheckpointBefore(messages, index);
     await (onFlushTarget ?? onFlushArticle)?.();
     setMessages((prev) => {
       const next = prev.slice(0, index + 1);
@@ -2105,7 +2096,14 @@ export function WritingAssistant({
       };
       return next;
     });
-    await regenerate({ body: requestBody });
+    await regenerate({
+      body: {
+        ...requestBody,
+        ...(resumeSessionAt
+          ? { resumeSessionAt }
+          : { restartSession: true }),
+      },
+    });
   }
 
   const requestBodyRef = useRef(requestBody);
@@ -2296,32 +2294,6 @@ export function WritingAssistant({
     }
   }, [lastAssistantParts]);
 
-  // 扫描已完成的 propose_article_revision 工具结果 —— 仅最新助手消息。
-  // 同 latestContextUsage：按 markdown 叶子 memoize，值不变时引用稳定，避免下游 effect 每 chunk 重跑。
-  const directArticleRaw = useMemo(() => {
-    if (!lastAssistantParts) return null;
-    for (let j = lastAssistantParts.length - 1; j >= 0; j--) {
-      const p = lastAssistantParts[j] as unknown as Record<string, unknown>;
-      const name = getToolName(p);
-      if (name !== "propose_article_revision") continue;
-      const out = p.output as
-        | { mode?: unknown; markdown?: unknown; title?: unknown; digest?: unknown }
-        | undefined;
-      if (out?.mode === "direct" && typeof out.markdown === "string") {
-        return {
-          markdown: out.markdown,
-          title: typeof out.title === "string" ? out.title : null,
-          digest: typeof out.digest === "string" ? out.digest : null,
-        };
-      }
-    }
-    return null;
-  }, [lastAssistantParts]);
-  const latestDirectArticle = useMemo(
-    () => directArticleRaw,
-    [directArticleRaw?.markdown]
-  );
-
   // 扫描 set_article_digest 推送的摘要事件 —— 仅最新助手消息。
   const latestDigest = useMemo(() => {
     if (!lastAssistantParts) return null;
@@ -2338,23 +2310,6 @@ export function WritingAssistant({
     }
     return null;
   }, [lastAssistantParts]);
-
-  // 记录已应用过的 direct 文章 markdown，避免重复写入（流式期间多次 messages 更新）。
-  const appliedDirectRef = useRef<string | null>(null);
-
-  // direct 模式：工具结果就绪后直接写入编辑器（首次生成，无需确认）。
-  // 仅在流式期间应用，避免历史会话加载时覆盖用户已编辑的内容。
-  useEffect(() => {
-    if (!busy || !latestDirectArticle || !onApplyArticle) return;
-    if (appliedDirectRef.current === latestDirectArticle.markdown) return;
-    appliedDirectRef.current = latestDirectArticle.markdown;
-    onApplyArticle({
-      title: latestDirectArticle.title ?? "",
-      contentMd: latestDirectArticle.markdown,
-      digest: latestDirectArticle.digest ?? null,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestDirectArticle, busy]);
 
   // 摘要：工具结果就绪后直接写入编辑器 digest（仅流式期间应用，避免历史会话覆盖）。
   const appliedDigestRef = useRef<string | null>(null);
@@ -2503,6 +2458,7 @@ export function WritingAssistant({
                           title: string;
                           contentMd: string;
                           digest: string | null;
+                          contentRevision: number;
                         }
                       );
                     } else {

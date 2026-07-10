@@ -260,17 +260,7 @@ export function computeMergedMessages(
 }
 
 /** Merge a refreshed newest page into already loaded history without dropping it. */
-export function mergeFinishedMessages(
-  existing: UIMessage[],
-  newest: UIMessage[]
-): UIMessage[] {
-  const byId = new Map(existing.map((m) => [m.id, m]));
-  for (const m of newest) byId.set(m.id, m);
-  const result = existing.map((m) => byId.get(m.id)!).filter(Boolean);
-  const existingIds = new Set(existing.map((m) => m.id));
-  for (const m of newest) if (!existingIds.has(m.id)) result.push(m);
-  return result;
-}
+export { mergeFinishedMessages } from "@/lib/ai/chat-message-merge";
 
 const sessionGenerations = new Map<string, number>();
 export async function captureSessionGeneration(sessionId: string): Promise<number> {

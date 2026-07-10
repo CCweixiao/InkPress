@@ -43,8 +43,11 @@ export function buildInkPressToolCallResult(
  *
  * 每次 query() 前用本次 ctx 重新构造，确保 target/sessionId/emit 是当前会话快照。
  */
-export function createInkPressMcpServer(ctx: InkPressToolContext) {
-  const tools = INKPRESS_TOOLS.map((def: InkPressToolDefinition) =>
+export function createInkPressMcpServer(
+  ctx: InkPressToolContext,
+  definitions: InkPressToolDefinition[] = INKPRESS_TOOLS
+) {
+  const tools = definitions.map((def: InkPressToolDefinition) =>
     tool(
       def.name,
       typeof def.description === "function" ? def.description(ctx) : def.description,

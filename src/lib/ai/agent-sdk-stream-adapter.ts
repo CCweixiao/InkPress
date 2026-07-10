@@ -47,12 +47,25 @@ export type AgentTurnUsageSummary = {
   source: "sdk-result" | "step-fallback";
 };
 
+export type AgentRuntimeMetadata = {
+  ttftMs?: number;
+  durationMs?: number;
+  durationApiMs?: number;
+  numTurns?: number;
+  terminalReason?: string;
+};
+
 export type ClaudeAgentTurnResult = {
   usage?: ClaudeAgentTurnUsage;
   /** 完整轮次汇总（含 cache/cost/modelUsage/status/source）；正常与错误 result 都会填充。 */
   summary?: AgentTurnUsageSummary;
   costUsd?: number;
   sessionId?: string;
+  /** 最后一条主 assistant 消息的 SDK UUID，可用于 checkpoint fork。 */
+  assistantMessageUuid?: string;
+  runtimeMetadata?: AgentRuntimeMetadata;
+  mirrorHealthy: boolean;
+  unknownEventCount: number;
   isError: boolean;
   errorMessage?: string;
 };
@@ -98,6 +111,12 @@ type ResultLike = {
   modelUsage?: unknown;
   result?: string;
   errors?: string[];
+  ttft_ms?: number;
+  duration_ms?: number;
+  duration_api_ms?: number;
+  num_turns?: number;
+  terminal_reason?: unknown;
+  stop_reason?: unknown;
 };
 
 type AssistantMessageLike = {
@@ -109,11 +128,13 @@ type AssistantMessageLike = {
 export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   let textId: string | null = null;
   let reasoningId: string | null = null;
-  let streamedAnyText = false;
-  let streamedText = "";
-  let lastText = "";
   let finalResultText = "";
   let receivedResult = false;
+  let lastAssistantUuid: string | null = null;
+  const assistantTextByUuid = new Map<
+    string,
+    { streamedText: string; fallbackText: string; fallbackEmitted: boolean }
+  >();
   const blockKind = new Map<number, "text" | "thinking" | "other">();
   const taskTypeById = new Map<string, string>();
   const openTaskIds = new Set<string>();
@@ -123,7 +144,11 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   // 仅作为中断/abort/无 result 时的 fallback 输入，绝不持久化 step 明细。
   const stepUsageByMessageId = new Map<string, RuntimeStepUsage>();
 
-  const result: ClaudeAgentTurnResult = { isError: false };
+  const result: ClaudeAgentTurnResult = {
+    isError: false,
+    mirrorHealthy: true,
+    unknownEventCount: 0,
+  };
 
   /** 读取 usage 对象中的 cache token（SDK 各端点字段差异，统一兜底为 0）。 */
   function readCacheTokens(u: Record<string, number> | undefined) {
@@ -268,7 +293,51 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     }
   }
 
-  function handleStreamEvent(ev: StreamEvent) {
+  function assistantTextState(uuid: string) {
+    const existing = assistantTextByUuid.get(uuid);
+    if (existing) return existing;
+    const created = {
+      streamedText: "",
+      fallbackText: "",
+      fallbackEmitted: false,
+    };
+    assistantTextByUuid.set(uuid, created);
+    return created;
+  }
+
+  function emitCompleteText(text: string) {
+    if (!text) return;
+    closeReasoning();
+    const id = crypto.randomUUID();
+    writer.write({ type: "text-start", id } as never);
+    writer.write({ type: "text-delta", id, delta: text } as never);
+    writer.write({ type: "text-end", id } as never);
+  }
+
+  function flushFallback(uuid: string | null) {
+    if (!uuid) return;
+    const state = assistantTextByUuid.get(uuid);
+    if (
+      !state ||
+      state.streamedText ||
+      !state.fallbackText ||
+      state.fallbackEmitted
+    ) {
+      return;
+    }
+    emitCompleteText(state.fallbackText);
+    state.fallbackEmitted = true;
+  }
+
+  function switchAssistant(uuid: string) {
+    if (lastAssistantUuid && lastAssistantUuid !== uuid) {
+      flushFallback(lastAssistantUuid);
+    }
+    lastAssistantUuid = uuid;
+  }
+
+  function handleStreamEvent(ev: StreamEvent, messageUuid: string) {
+    switchAssistant(messageUuid);
     const index = ev.index ?? -1;
     switch (ev.type) {
       case "content_block_start": {
@@ -294,8 +363,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         if (d?.type === "text_delta" && typeof d.text === "string") {
           openText();
           writer.write({ type: "text-delta", id: textId as string, delta: d.text } as never);
-          streamedAnyText = true;
-          streamedText += d.text;
+          assistantTextState(messageUuid).streamedText += d.text;
         } else if (d?.type === "thinking_delta" && typeof d.thinking === "string") {
           openReasoning();
           writer.write({
@@ -327,19 +395,40 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     const m = message as Record<string, unknown> & { type: string };
     switch (m.type) {
       case "stream_event": {
-        handleStreamEvent((m.event as StreamEvent | undefined) ?? { type: "unknown" });
+        if (typeof m.parent_tool_use_id === "string" && m.parent_tool_use_id) {
+          break;
+        }
+        const uuid =
+          typeof m.uuid === "string" && m.uuid ? m.uuid : "assistant-unknown";
+        handleStreamEvent(
+          (m.event as StreamEvent | undefined) ?? { type: "unknown" },
+          uuid
+        );
         break;
       }
       case "assistant": {
         // 兜底：若本次没有任何增量（GLM 等可能只给整段），先记下文本，留给 flush 落出。
         const msg = (m.message as AssistantMessageLike | undefined) ?? {};
+        const assistantUuid =
+          typeof m.uuid === "string" && m.uuid
+            ? m.uuid
+            : typeof msg.id === "string" && msg.id
+              ? msg.id
+              : "assistant-unknown";
+        const isMainAssistant = !(
+          typeof m.parent_tool_use_id === "string" && m.parent_tool_use_id
+        );
+        if (isMainAssistant) {
+          switchAssistant(assistantUuid);
+          result.assistantMessageUuid = assistantUuid;
+        }
         const content = msg.content;
-        if (Array.isArray(content)) {
+        if (isMainAssistant && Array.isArray(content)) {
           const text = content
             .filter((b) => b.type === "text" && typeof b.text === "string")
             .map((b) => b.text ?? "")
             .join("");
-          if (text) lastText = text;
+          if (text) assistantTextState(assistantUuid).fallbackText = text;
         }
         // P1.5：采集 step usage（按 messageId 去重），仅作中断 fallback。
         if (typeof msg.id === "string" && msg.id) {
@@ -354,6 +443,22 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         const r = m as unknown as ResultLike;
         if (r.session_id) result.sessionId = r.session_id;
         if (typeof r.total_cost_usd === "number") result.costUsd = r.total_cost_usd;
+        result.runtimeMetadata = {
+          ...(typeof r.ttft_ms === "number" ? { ttftMs: r.ttft_ms } : {}),
+          ...(typeof r.duration_ms === "number"
+            ? { durationMs: r.duration_ms }
+            : {}),
+          ...(typeof r.duration_api_ms === "number"
+            ? { durationApiMs: r.duration_api_ms }
+            : {}),
+          ...(typeof r.num_turns === "number" ? { numTurns: r.num_turns } : {}),
+          ...((typeof r.terminal_reason === "string" && r.terminal_reason) ||
+          (typeof r.stop_reason === "string" && r.stop_reason)
+            ? {
+                terminalReason: String(r.terminal_reason || r.stop_reason),
+              }
+            : {}),
+        };
         const u = r.usage ?? {};
         const inputTokens = u.input_tokens ?? 0;
         const outputTokens = u.output_tokens ?? 0;
@@ -389,16 +494,23 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             (typeof r.result === "string" && r.result) ||
             "Claude Agent 运行出错。";
         } else if (typeof r.result === "string" && r.result) {
-          if (!streamedAnyText && !lastText) {
-            lastText = r.result;
-          } else if (!streamedAnyText) {
-            const existingText = lastText.trim();
+          const state = lastAssistantUuid
+            ? assistantTextState(lastAssistantUuid)
+            : undefined;
+          const emittedText = state?.streamedText ?? "";
+          if (emittedText) {
+            finalResultText = unstreamedFinalText(emittedText, r.result);
+          } else {
+            const fallbackText = state?.fallbackText.trim() ?? "";
             const finalText = r.result.trim();
-            if (finalText && existingText !== finalText && !existingText.includes(finalText)) {
-              lastText = r.result;
-            }
-          } else if (streamedAnyText) {
-            finalResultText = unstreamedFinalText(streamedText, r.result);
+            finalResultText =
+              finalText &&
+              fallbackText &&
+              fallbackText !== finalText &&
+              !fallbackText.includes(finalText)
+                ? r.result
+                : fallbackText || r.result;
+            if (state) state.fallbackEmitted = true;
           }
         }
         break;
@@ -515,6 +627,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
             },
           } as never);
         } else if (m.subtype === "mirror_error") {
+          result.mirrorHealthy = false;
           writer.write({
             type: "data-agent-step",
             id: crypto.randomUUID(),
@@ -713,6 +826,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         break;
       }
       default:
+        result.unknownEventCount += 1;
         break;
     }
   }
@@ -726,18 +840,8 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
         ? "本轮对话结束时子 agent 仍未返回完成事件"
         : "本轮对话已收口，子 agent 结果已由主 agent 综合",
     });
-    // 全程没有增量输出时，用整段文本兜底，至少给用户一个完整回复。
-    if (!streamedAnyText && lastText) {
-      const id = crypto.randomUUID();
-      writer.write({ type: "text-start", id } as never);
-      writer.write({ type: "text-delta", id, delta: lastText } as never);
-      writer.write({ type: "text-end", id } as never);
-    } else if (finalResultText) {
-      const id = crypto.randomUUID();
-      writer.write({ type: "text-start", id } as never);
-      writer.write({ type: "text-delta", id, delta: finalResultText } as never);
-      writer.write({ type: "text-end", id } as never);
-    }
+    if (finalResultText) emitCompleteText(finalResultText);
+    else flushFallback(lastAssistantUuid);
   }
 
   /**

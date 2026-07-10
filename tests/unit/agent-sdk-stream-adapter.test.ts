@@ -187,6 +187,110 @@ describe("createSdkToUiAdapter task events", () => {
     expect(text).toBe("最终完整答复：较短答复之外还有关键收尾。");
   });
 
+  it("keeps identical text emitted by two distinct assistant messages", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "stream_event",
+      uuid: "assistant-1",
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "stream_event",
+      uuid: "assistant-1",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "继续处理" },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "assistant",
+      uuid: "assistant-1",
+      message: {
+        id: "msg-1",
+        content: [{ type: "text", text: "继续处理" }],
+        usage: {},
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "assistant",
+      uuid: "assistant-2",
+      message: {
+        id: "msg-2",
+        content: [{ type: "text", text: "继续处理" }],
+        usage: {},
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "继续处理",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    const deltas = parts
+      .filter((part) => part.type === "text-delta")
+      .map((part) => String(part.delta ?? ""));
+    expect(deltas).toEqual(["继续处理", "继续处理"]);
+  });
+
+  it("does not replace the main checkpoint with a subagent assistant frame", () => {
+    const parts: Array<Record<string, unknown>> = [];
+    const adapter = createSdkToUiAdapter({
+      write: (part) => parts.push(part as unknown as Record<string, unknown>),
+    });
+
+    adapter.consume({
+      type: "stream_event",
+      uuid: "main-assistant",
+      parent_tool_use_id: null,
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "最终答复" },
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "assistant",
+      uuid: "main-assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "msg-main",
+        content: [{ type: "text", text: "最终答复" }],
+        usage: {},
+      },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "assistant",
+      uuid: "subagent-assistant",
+      parent_tool_use_id: "tool-agent-1",
+      message: { id: "msg-sub", content: [], usage: {} },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "s1",
+      result: "最终答复",
+      usage: {},
+    } as unknown as SDKMessage);
+    adapter.flush();
+
+    expect(adapter.result.assistantMessageUuid).toBe("main-assistant");
+    expect(
+      parts
+        .filter((part) => part.type === "text-delta")
+        .map((part) => String(part.delta ?? ""))
+    ).toEqual(["最终答复"]);
+  });
+
   it("uses stable ids for compacting status and compact boundary events", () => {
     const parts: Array<Record<string, unknown>> = [];
     const adapter = createSdkToUiAdapter({

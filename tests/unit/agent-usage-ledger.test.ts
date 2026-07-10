@@ -33,6 +33,41 @@ const result = (overrides: Partial<Record<string, unknown>> = {}): SDKMessage =>
   }) as unknown as SDKMessage;
 
 describe("createSdkToUiAdapter usage collector", () => {
+  it("captures SDK latency metadata, checkpoint UUID, and mirror health", () => {
+    const { adapter } = makeAdapter();
+    adapter.consume({
+      type: "assistant",
+      uuid: "assistant-checkpoint",
+      message: { id: "msg-checkpoint", content: [], usage: {} },
+    } as unknown as SDKMessage);
+    adapter.consume({
+      type: "system",
+      subtype: "mirror_error",
+      error: "store unavailable",
+    } as unknown as SDKMessage);
+    adapter.consume(
+      result({
+        ttft_ms: 42,
+        duration_ms: 100,
+        duration_api_ms: 88,
+        num_turns: 3,
+        terminal_reason: "stop",
+      })
+    );
+
+    expect(adapter.result).toMatchObject({
+      assistantMessageUuid: "assistant-checkpoint",
+      mirrorHealthy: false,
+      runtimeMetadata: {
+        ttftMs: 42,
+        durationMs: 100,
+        durationApiMs: 88,
+        numTurns: 3,
+        terminalReason: "stop",
+      },
+    });
+  });
+
   it("正常 result → summary 为 sdk-result / completed，含 cache 与 cost", () => {
     const { adapter } = makeAdapter();
     adapter.consume(

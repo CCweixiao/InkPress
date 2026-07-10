@@ -72,6 +72,16 @@ describe("shouldPollRecoveringTurn", () => {
     expect(
       getRecoveredTurnNotice({
         clientStatus: "ready",
+        sessionStatus: "degraded",
+        sessionError: "会话镜像不完整",
+      })
+    ).toEqual({
+      tone: "warning",
+      message: "会话镜像不完整，下一轮将开启新的 Agent 会话。",
+    });
+    expect(
+      getRecoveredTurnNotice({
+        clientStatus: "ready",
         sessionStatus: "error",
         sessionError: "模型服务暂时不可用",
       })

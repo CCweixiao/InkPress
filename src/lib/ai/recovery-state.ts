@@ -51,5 +51,11 @@ export function getRecoveredTurnNotice({
       message: "上一轮生成已中断，已保留发送内容与生成进度，可重新发送。",
     };
   }
+  if (sessionStatus === "degraded") {
+    return {
+      tone: "warning",
+      message: "会话镜像不完整，下一轮将开启新的 Agent 会话。",
+    };
+  }
   return null;
 }

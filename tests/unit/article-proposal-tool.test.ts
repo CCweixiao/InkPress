@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { create } = vi.hoisted(() => ({ create: vi.fn() }));
+const { create, articleUpdateMany } = vi.hoisted(() => ({
+  create: vi.fn(),
+  articleUpdateMany: vi.fn(),
+}));
 vi.mock("@/lib/db", () => ({
   prisma: {
     agentArticleProposal: { create },
+    article: { updateMany: articleUpdateMany },
   },
 }));
 
@@ -29,6 +33,12 @@ function readCurrentArticleTool() {
   return tool;
 }
 
+function setArticleDigestTool() {
+  const tool = INKPRESS_TOOLS.find((item) => item.name === "set_article_digest");
+  if (!tool) throw new Error("set_article_digest tool not registered");
+  return tool;
+}
+
 describe("propose_article_revision", () => {
   beforeEach(() => {
     create.mockReset();
@@ -38,6 +48,8 @@ describe("propose_article_revision", () => {
       summary: "生成首稿",
       title: "标题",
     });
+    articleUpdateMany.mockReset();
+    articleUpdateMany.mockResolvedValue({ count: 1 });
   });
 
   it("creates a reviewable proposal even when the editor is empty", async () => {
@@ -147,5 +159,28 @@ describe("propose_article_revision", () => {
       mode: "proposal",
       proposalId: "proposal-1",
     });
+  });
+
+  it("advances article revision when the digest tool writes metadata", async () => {
+    const ctx = {
+      target: {
+        kind: "article",
+        id: "article-1",
+        title: "文章",
+        markdown: "正文",
+        digest: "旧摘要",
+        contentRevision: 4,
+      },
+      sessionId: "session-1",
+      emit: vi.fn(),
+    } as unknown as InkPressToolContext;
+
+    await setArticleDigestTool().execute(ctx, { digest: "新摘要" });
+
+    expect(articleUpdateMany).toHaveBeenCalledWith({
+      where: { id: "article-1", contentRevision: 4 },
+      data: { digest: "新摘要", contentRevision: { increment: 1 } },
+    });
+    expect(ctx.target.contentRevision).toBe(5);
   });
 });

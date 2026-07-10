@@ -27,6 +27,7 @@ export function AIPanel({
     title: string;
     contentMd: string;
     digest: string | null;
+    contentRevision: number;
   }) => void;
   currentMarkdown: string;
   articleId: string;

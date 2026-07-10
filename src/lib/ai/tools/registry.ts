@@ -51,6 +51,7 @@ export type InkPressToolContext = {
     digest?: string;
     documentType?: string;
     snapshotHash?: string;
+    contentRevision?: number;
   };
   sessionId: string;
   /** 仅 propose_technical_document_revision 的 sourceSnapshotJson 用。 */
@@ -676,12 +677,20 @@ const setArticleDigestTool: InkPressToolDefinition = {
     if (ctx.target.kind !== "article") throw new Error("当前目标不是公众号文章。");
     const digest = String(args.digest ?? "").trim().slice(0, 120);
     if (!digest) throw new Error("摘要不能为空。");
-    await prisma.article.update({
-      where: { id: ctx.target.id },
-      data: { digest },
+    if (typeof ctx.target.contentRevision !== "number") {
+      throw new Error("缺少文章内容版本，请刷新后重试。");
+    }
+    const expectedRevision = ctx.target.contentRevision;
+    const updated = await prisma.article.updateMany({
+      where: { id: ctx.target.id, contentRevision: expectedRevision },
+      data: { digest, contentRevision: { increment: 1 } },
     });
+    if (updated.count !== 1) {
+      throw new Error("文章已被其他修改更新，请刷新后重试。");
+    }
     // 同步上下文摘要：保证本轮若再调 propose，baseVersionHash 与 DB 一致（apply 不 409）。
     ctx.target.digest = digest;
+    ctx.target.contentRevision = expectedRevision + 1;
     // 通知前端更新编辑器摘要字段（原生 onArticleDigest 走的同一条 data part）。
     ctx.emit({
       type: "data-article-digest",
@@ -1085,6 +1094,31 @@ export const INKPRESS_TOOLS: InkPressToolDefinition[] = [
   webSearchTool,
   webFetchTool,
 ];
+
+export type InkPressToolCapabilities = {
+  targetKind: "article" | "technical-document";
+  hasCodeSource: boolean;
+  webResearchEnabled: boolean;
+};
+
+/** Keep the model tool schema limited to capabilities that can succeed this turn. */
+export function selectInkPressTools(
+  capabilities: InkPressToolCapabilities
+): InkPressToolDefinition[] {
+  return INKPRESS_TOOLS.filter((tool) => {
+    if (tool.category === "article") {
+      return capabilities.targetKind === "article";
+    }
+    if (tool.category === "technical-document") {
+      return capabilities.targetKind === "technical-document";
+    }
+    if (tool.category === "code" || tool.category === "git") {
+      return capabilities.hasCodeSource;
+    }
+    if (tool.category === "web") return capabilities.webResearchEnabled;
+    return true;
+  });
+}
 
 /** 所有工具裸名集合（诊断/校验用）。 */
 export const INKPRESS_TOOL_NAMES: string[] = INKPRESS_TOOLS.map((t) => t.name);

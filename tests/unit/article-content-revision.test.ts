@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 const { findUnique, update, updateMany, writeContentAt, contentExistsAt, withArticleContentWriteLock } = vi.hoisted(() => ({
   findUnique: vi.fn(),
@@ -88,5 +90,27 @@ describe("article content revisions", () => {
 
     expect(response.status).toBe(409);
     expect(writeContentAt).not.toHaveBeenCalled();
+  });
+
+  it("propagates an applied proposal revision back into the editor save cursor", () => {
+    const root = path.resolve(__dirname, "../..");
+    const aiPanel = fs.readFileSync(
+      path.join(root, "src/components/editor/AIPanel.tsx"),
+      "utf8"
+    );
+    const writingAssistant = fs.readFileSync(
+      path.join(root, "src/components/editor/WritingAssistant.tsx"),
+      "utf8"
+    );
+    const editorWorkspace = fs.readFileSync(
+      path.join(root, "src/components/editor/EditorWorkspace.tsx"),
+      "utf8"
+    );
+
+    expect(aiPanel).toMatch(/onApplyArticle:[\s\S]*contentRevision:\s*number/);
+    expect(writingAssistant).toMatch(/onApplyArticle\?:[\s\S]*contentRevision:\s*number/);
+    expect(editorWorkspace).toMatch(
+      /serverRevision\.current\s*=\s*updated\.contentRevision/
+    );
   });
 });

@@ -28,6 +28,7 @@ import {
 import { createPrismaSessionStore } from "@/lib/ai/claude-session-store";
 import { claudeAgentRuntimeDir } from "@/lib/paths";
 import path from "node:path";
+import { selectInkPressTools } from "@/lib/ai/tools/registry";
 
 export type ClaudeAgentTarget = {
   kind: "article" | "technical-document";
@@ -37,6 +38,7 @@ export type ClaudeAgentTarget = {
   digest?: string;
   documentType?: string;
   snapshotHash?: string;
+  contentRevision?: number;
   /** P3 文章类型 profile id（article 时影响 prompt 引导 + 默认 skill）。 */
   profileId?: string;
 };
@@ -48,6 +50,8 @@ export type BuildClaudeAgentOptionsInput = {
   codeSource?: CodeSourceReference;
   /** P5：SDK 会话 id，非空时 resume 该会话（跨轮/跨刷新记忆）；空则新会话。 */
   claudeAgentSessionId?: string;
+  /** 编辑历史消息重试时，从该 assistant UUID fork transcript。 */
+  claudeAgentResumeSessionAt?: string;
   /** 斜杠命令建议 Claude 优先加载的 Skill；外层不再做 LLM 意图路由。 */
   preferredSkillIds?: string[];
   /** 聊天框选择的供应商 id（动态注入到 SDK env）。 */
@@ -266,17 +270,19 @@ function buildCompactHooks(ctx: { sessionId: string }): Options["hooks"] {
 export async function buildClaudeAgentOptions(
   input: BuildClaudeAgentOptionsInput
 ): Promise<InkPressClaudeAgentOptions> {
-  const selected = await chooseLlmConfig(input.providerId, input.modelId);
+  const [selected, skillCatalog, agentConfig, webResearch] = await Promise.all([
+    chooseLlmConfig(input.providerId, input.modelId),
+    listSkills(),
+    getAgentConfig(),
+    getWebResearchConfig(),
+  ]);
   if (!selected || !selected.apiKey) {
     throw new Error(
       "未配置 AI 模型：请在「设置 → 系统配置 → AI 模型」中添加至少一个 Anthropic 兼容供应商并填入 API Key。"
     );
   }
 
-  const skillCatalog = await listSkills();
-  const agentConfig = await getAgentConfig();
-  const webResearch = await getWebResearchConfig();
-  const mcpServer = createInkPressMcpServer({
+  const mcpContext = {
     target: input.target,
     sessionId: input.sessionId,
     codeSource: input.codeSource,
@@ -284,13 +290,24 @@ export async function buildClaudeAgentOptions(
     webResearch,
     skillCatalog,
     emit: input.emit,
-  });
+  };
+  const capabilities = {
+    targetKind: input.target.kind,
+    hasCodeSource: Boolean(input.codeSource),
+    webResearchEnabled: Boolean(webResearch.tavilyApiKey),
+  };
+  const enabledTools = selectInkPressTools(capabilities);
+  const enabledToolNames = new Set(enabledTools.map((tool) => tool.name));
+  const mcpServer = createInkPressMcpServer(mcpContext, enabledTools);
+  const agents = buildSubagents(capabilities);
 
   const runtimeDir = claudeAgentRuntimeDir();
   const claudeConfigDir = path.join(runtimeDir, "config");
   const claudeWorkspaceDir = path.join(runtimeDir, "workspace");
-  await fs.mkdir(claudeConfigDir, { recursive: true });
-  await fs.mkdir(claudeWorkspaceDir, { recursive: true });
+  await Promise.all([
+    fs.mkdir(claudeConfigDir, { recursive: true }),
+    fs.mkdir(claudeWorkspaceDir, { recursive: true }),
+  ]);
 
   const env: Record<string, string | undefined> = {
     ...process.env,
@@ -323,12 +340,15 @@ export async function buildClaudeAgentOptions(
     mcpServers: { inkpress: mcpServer },
     // P4：声明的子 agent（research/review/fact_check），模型经内置 Agent 工具调起；
     // forwardSubagentText:false → 子任务内部历史不进主会话，只回 finalText。
-    agents: buildSubagents(),
+    agents,
     forwardSubagentText: false,
     agentProgressSummaries: true,
     // allow 工具自动批准；web_fetch 即便全局 autoApprove 也不进 allowedTools，
     // 统一走 canUseTool 以保留自动放行提示、白名单判断和未来审计入口。
-    allowedTools: [...claudeAllowedTools(), "Agent"],
+    allowedTools: [
+      ...claudeAllowedTools(enabledToolNames),
+      ...(Object.keys(agents).length > 0 ? ["Agent"] : []),
+    ],
     canUseTool: buildCanUseTool({
       sessionId: input.sessionId,
       emit: input.emit,
@@ -336,13 +356,21 @@ export async function buildClaudeAgentOptions(
     }),
     hooks: buildCompactHooks({ sessionId: input.sessionId }),
     // 只启用 SDK 内置 Agent 工具来调起子 agent；Read/Edit/Bash/WebFetch 等内置工具仍不暴露。
-    tools: ["Agent"],
+    tools: Object.keys(agents).length > 0 ? ["Agent"] : [],
     settingSources: [],
     // P5：持久化 + 镜像到 Prisma SessionStore；resume 让 Claude 跨轮/跨刷新记忆。
     persistSession: true,
     sessionStore: createPrismaSessionStore(),
     ...(input.claudeAgentSessionId
-      ? { resume: input.claudeAgentSessionId }
+      ? {
+          resume: input.claudeAgentSessionId,
+          ...(input.claudeAgentResumeSessionAt
+            ? {
+                resumeSessionAt: input.claudeAgentResumeSessionAt,
+                forkSession: true,
+              }
+            : {}),
+        }
       : {}),
   };
 }

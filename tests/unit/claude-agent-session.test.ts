@@ -311,6 +311,14 @@ describe("resume 契约（PDC §7.6 / 重点目标 #5/#6）", () => {
     path.resolve(__dirname, "../../src/lib/ai/claude-agent-options.ts"),
     "utf8"
   );
+  const runtimeFile = fs.readFileSync(
+    path.resolve(__dirname, "../../src/lib/ai/claude-agent-runtime.ts"),
+    "utf8"
+  );
+  const chatRoute = fs.readFileSync(
+    path.resolve(__dirname, "../../src/app/api/ai/chat/route.ts"),
+    "utf8"
+  );
 
   it("有 claudeAgentSessionId 时传 resume（条件展开）", () => {
     expect(optionsFile).toMatch(/resume:\s*input\.claudeAgentSessionId/);
@@ -318,6 +326,15 @@ describe("resume 契约（PDC §7.6 / 重点目标 #5/#6）", () => {
 
   it("绝不使用 continue:true（避免跨文章/文档串会话）", () => {
     expect(optionsFile).not.toMatch(/continue\s*:\s*true/);
+  });
+
+  it("编辑重试使用 resumeSessionAt 并 fork，而不是改写原 transcript", () => {
+    expect(optionsFile).toMatch(
+      /resumeSessionAt:\s*input\.claudeAgentResumeSessionAt/
+    );
+    expect(optionsFile).toMatch(/forkSession:\s*true/);
+    expect(runtimeFile).toMatch(/claudeAgentResumeSessionAt/);
+    expect(chatRoute).toMatch(/resumeSessionAt:\s*z\.string/);
   });
 });
 

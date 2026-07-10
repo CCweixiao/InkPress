@@ -11,6 +11,7 @@ import {
 import type { CodeSourceReference } from "@/lib/ai/code-source";
 import {
   createSdkToUiAdapter,
+  type AgentRuntimeMetadata,
   type AgentTurnUsageSummary,
   type ClaudeAgentTurnUsage,
   type UIStreamWriterLike,
@@ -26,6 +27,8 @@ export type RunClaudeAgentInput = {
   codeSource?: CodeSourceReference;
   /** P5：SDK 会话 id；非空时 resume（跨轮记忆），空则新会话。 */
   claudeAgentSessionId?: string;
+  /** 编辑历史消息时要 fork 的 assistant checkpoint UUID。 */
+  claudeAgentResumeSessionAt?: string;
   /** 本轮路由/斜杠命令建议 Claude 优先加载的 Skill。 */
   preferredSkillIds?: string[];
   /** 聊天框选择的供应商 id（穿透到 buildClaudeAgentOptions 动态注入模型配置）。 */
@@ -41,6 +44,9 @@ export type RunClaudeAgentOutcome = {
   /** P1.5：完整轮次 usage 汇总（含 cache/cost/modelUsage/status/source）。 */
   usageSummary?: AgentTurnUsageSummary;
   sessionId?: string;
+  assistantMessageUuid?: string;
+  runtimeMetadata?: AgentRuntimeMetadata;
+  mirrorHealthy?: boolean;
 };
 
 type RunOnceErrorKind = "result-error" | "abort" | "throw";
@@ -87,16 +93,32 @@ function finalizeOutcome(
 export type ClaudeAgentRuntimeError = Error & {
   usageSummary?: AgentTurnUsageSummary;
   sessionId?: string;
+  assistantMessageUuid?: string;
+  runtimeMetadata?: AgentRuntimeMetadata;
+  mirrorHealthy?: boolean;
 };
 
 /** 把 usage summary + sessionId 挂到错误对象上（不改变错误身份）。 */
 function attachErrorPayload(
   err: Error,
-  payload: { summary?: AgentTurnUsageSummary; sessionId?: string }
+  payload: {
+    summary?: AgentTurnUsageSummary;
+    sessionId?: string;
+    assistantMessageUuid?: string;
+    runtimeMetadata?: AgentRuntimeMetadata;
+    mirrorHealthy?: boolean;
+  }
 ): ClaudeAgentRuntimeError {
   const e = err as ClaudeAgentRuntimeError;
   if (payload.summary) e.usageSummary = payload.summary;
   if (payload.sessionId) e.sessionId = payload.sessionId;
+  if (payload.assistantMessageUuid) {
+    e.assistantMessageUuid = payload.assistantMessageUuid;
+  }
+  if (payload.runtimeMetadata) e.runtimeMetadata = payload.runtimeMetadata;
+  if (payload.mirrorHealthy !== undefined) {
+    e.mirrorHealthy = payload.mirrorHealthy;
+  }
   return e;
 }
 
@@ -121,6 +143,26 @@ export function readSessionFromError(err: unknown): string | undefined {
   if (err && typeof err === "object" && "sessionId" in err) {
     const sessionId = (err as { sessionId?: unknown }).sessionId;
     if (typeof sessionId === "string" && sessionId) return sessionId;
+  }
+  return undefined;
+}
+
+export function readRuntimeMetadataFromError(
+  err: unknown
+): AgentRuntimeMetadata | undefined {
+  if (err && typeof err === "object" && "runtimeMetadata" in err) {
+    const metadata = (err as { runtimeMetadata?: unknown }).runtimeMetadata;
+    if (metadata && typeof metadata === "object") {
+      return metadata as AgentRuntimeMetadata;
+    }
+  }
+  return undefined;
+}
+
+export function readMirrorHealthyFromError(err: unknown): boolean | undefined {
+  if (err && typeof err === "object" && "mirrorHealthy" in err) {
+    const value = (err as { mirrorHealthy?: unknown }).mirrorHealthy;
+    return typeof value === "boolean" ? value : undefined;
   }
   return undefined;
 }
@@ -176,6 +218,7 @@ async function runOnce(
     sessionId: input.sessionId,
     codeSource: input.codeSource,
     claudeAgentSessionId: input.claudeAgentSessionId,
+    claudeAgentResumeSessionAt: input.claudeAgentResumeSessionAt,
     preferredSkillIds: input.preferredSkillIds,
     providerId: input.providerId,
     modelId: input.modelId,
@@ -215,6 +258,9 @@ async function runOnce(
         outcome: {
           usageSummary: adapter.getSummary(),
           sessionId: adapter.result.sessionId,
+          assistantMessageUuid: adapter.result.assistantMessageUuid,
+          runtimeMetadata: adapter.result.runtimeMetadata,
+          mirrorHealthy: adapter.result.mirrorHealthy,
         },
         error: terminalStreamError(
           aborted
@@ -237,6 +283,9 @@ async function runOnce(
       outcome: {
         usageSummary: adapter.getSummary(),
         sessionId: adapter.result.sessionId,
+        assistantMessageUuid: adapter.result.assistantMessageUuid,
+        runtimeMetadata: adapter.result.runtimeMetadata,
+        mirrorHealthy: adapter.result.mirrorHealthy,
       },
       error,
       errorKind: isAbortError(error) ? "abort" : "throw",
@@ -251,6 +300,9 @@ async function runOnce(
         usage: result.usage,
         usageSummary,
         sessionId: result.sessionId,
+        assistantMessageUuid: result.assistantMessageUuid,
+        runtimeMetadata: result.runtimeMetadata,
+        mirrorHealthy: result.mirrorHealthy,
       },
       error: new Error(result.errorMessage || "Claude Agent 运行出错。"),
       errorKind: "result-error",
@@ -261,6 +313,9 @@ async function runOnce(
       usage: result.usage,
       usageSummary,
       sessionId: result.sessionId,
+      assistantMessageUuid: result.assistantMessageUuid,
+      runtimeMetadata: result.runtimeMetadata,
+      mirrorHealthy: result.mirrorHealthy,
     },
   };
 }
@@ -297,6 +352,9 @@ export async function runClaudeAgentRuntime(
       summary: finalizeOutcome(outcome, outcome.usageSummary, "partial", hadSdkResult)
         .usageSummary,
       sessionId: outcome.sessionId,
+      assistantMessageUuid: outcome.assistantMessageUuid,
+      runtimeMetadata: outcome.runtimeMetadata,
+      mirrorHealthy: outcome.mirrorHealthy,
     });
   }
 
@@ -304,5 +362,8 @@ export async function runClaudeAgentRuntime(
     summary: finalizeOutcome(outcome, outcome.usageSummary, "error", hadSdkResult)
       .usageSummary,
     sessionId: outcome.sessionId,
+    assistantMessageUuid: outcome.assistantMessageUuid,
+    runtimeMetadata: outcome.runtimeMetadata,
+    mirrorHealthy: outcome.mirrorHealthy,
   });
 }

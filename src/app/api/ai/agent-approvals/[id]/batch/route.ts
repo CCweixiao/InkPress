@@ -175,16 +175,10 @@ export async function POST(
     });
 
     const trustedDomains = new Set<string>();
-    if (decision === "allow") {
-      for (const grant of grants) {
-        const domain = await trustGrantDomain(grant.decisionJson);
-        if (domain) trustedDomains.add(domain);
-      }
-    }
-
     const nextStatus = decision === "allow" ? "approved" : "rejected";
     let woken = 0;
     let claimed = 0;
+    let failed = 0;
     for (const grant of grants) {
       const updated = await prisma.toolActionGrant.updateMany({
         where: {
@@ -200,6 +194,22 @@ export async function POST(
       });
       if (updated.count !== 1) continue;
       claimed += 1;
+      if (decision === "allow") {
+        try {
+          const domain = await trustGrantDomain(grant.decisionJson);
+          if (domain) trustedDomains.add(domain);
+        } catch {
+          failed += 1;
+          await prisma.toolActionGrant
+            .updateMany({
+              where: { id: grant.id, status: nextStatus },
+              data: { status: "rejected" },
+            })
+            .catch(() => undefined);
+          resolveApproval(grant.id, "deny");
+          continue;
+        }
+      }
       // DB 已完成 claim 后再唤醒 canUseTool，避免 agent 继续执行时审批事实源仍是 pending。
       if (resolveApproval(grant.id, decision)) woken += 1;
     }
@@ -228,6 +238,7 @@ export async function POST(
       count: claimed,
       remaining,
       woken,
+      failed,
       trustedDomains: Array.from(trustedDomains),
     });
   } catch (error) {

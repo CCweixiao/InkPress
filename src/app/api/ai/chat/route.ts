@@ -15,6 +15,8 @@ import {
   runClaudeAgentRuntime,
   readUsageFromError,
   readSessionFromError,
+  readRuntimeMetadataFromError,
+  readMirrorHealthyFromError,
 } from "@/lib/ai/claude-agent-runtime";
 import { createRunAbortSignal } from "@/lib/ai/run-timeout";
 import { chooseLlmConfig } from "@/lib/ai/llm-config";
@@ -81,6 +83,9 @@ const postSchema = z
     currentMarkdown: z.string().nullable().optional(),
     // UI 保持用户可读文本；Agent runtime 可使用带内部 marker 的覆盖文本。
     messageOverride: z.string().optional(),
+    // 编辑历史消息：从选中的 assistant checkpoint fork；首条消息重试则强制新会话。
+    resumeSessionAt: z.string().min(1).optional(),
+    restartSession: z.boolean().optional(),
   })
   .refine((value) => value.target || value.articleId, {
     message: "缺少对话目标",
@@ -94,6 +99,7 @@ type LoadedTarget = {
   documentType?: string;
   snapshotHash?: string;
   profileId?: string | null;
+  contentRevision?: number;
 };
 
 function normalizeTarget(input: {
@@ -115,6 +121,7 @@ async function loadTarget(target: AgentTarget): Promise<LoadedTarget | null> {
         : article.contentMd,
       digest: article.digest ?? "",
       profileId: article.profileId,
+      contentRevision: article.contentRevision,
     };
   }
   const document = await prisma.technicalDocument.findUnique({
@@ -564,6 +571,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         source?: "sdk-result" | "step-fallback";
       }
     | undefined;
+  let assistantCheckpointUuid: string | undefined;
   try {
     // 先开流再做重活：路由（LLM）与代码源解析（含可能的 git clone/拉取历史）都放进 execute 内，
     // 避免在打开流之前同步阻塞导致长 TTFB 与「假死」；客户端断连时已发送的步骤也得以保留。
@@ -573,9 +581,9 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         try {
           const persisted = messages.map((message, index) => {
             if (
-              !turnUsage ||
               message.role !== "assistant" ||
-              messages.slice(index + 1).some((item) => item.role === "assistant")
+              messages.slice(index + 1).some((item) => item.role === "assistant") ||
+              (!turnUsage && !assistantCheckpointUuid)
             ) {
               return message;
             }
@@ -584,7 +592,10 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               metadata: {
                 ...((message as { metadata?: Record<string, unknown> }).metadata ??
                   {}),
-                usage: turnUsage,
+                ...(turnUsage ? { usage: turnUsage } : {}),
+                ...(assistantCheckpointUuid
+                  ? { claudeAgentMessageUuid: assistantCheckpointUuid }
+                  : {}),
               },
             };
           });
@@ -788,8 +799,11 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         const modelChanged =
           !!session.claudeAgentSessionId &&
           (previousProviderId !== newProviderId || previousModelId !== newModelId);
-        let effectiveClaudeAgentSessionId =
-          session.claudeAgentSessionId ?? undefined;
+        const mirrorDegraded = session.claudeAgentSessionStatus === "degraded";
+        const forceNewSession = parsed.data.restartSession || mirrorDegraded;
+        let effectiveClaudeAgentSessionId = forceNewSession
+          ? undefined
+          : session.claudeAgentSessionId ?? undefined;
         if (modelChanged) {
           effectiveClaudeAgentSessionId = undefined;
           writeStep(ew, {
@@ -799,6 +813,14 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             detail: "切换模型后无法回放上一模型的上下文，已自动开启新会话",
           });
         }
+        if (mirrorDegraded) {
+          writeStep(ew, {
+            id: "session-mirror-degraded",
+            kind: "intent",
+            title: "会话镜像不完整，开启新的 Agent 会话",
+            detail: "上一轮 SessionStore 镜像失败，为避免不完整恢复，本轮从当前消息重新开始",
+          });
+        }
 
         const runningUpdate = await prisma.agentChatSession.updateMany({
           where: { id: session.id, generation: turnGeneration, activeTurnId: turnId },
@@ -806,7 +828,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
             selectedProjectId: session.selectedProjectId,
             providerId: newProviderId,
             modelId: newModelId,
-            ...(modelChanged
+            ...(modelChanged || forceNewSession
               ? { claudeAgentSessionId: null, claudeAgentStoreKey: null }
               : {}),
             // P2 状态机：本轮开跑 → running。若上一轮已落 claudeAgentSessionId，本轮即 resume（PDC §5）。
@@ -831,10 +853,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 documentType: loaded.documentType,
                 snapshotHash: loaded.snapshotHash,
                 profileId: loaded.profileId ?? undefined,
+                contentRevision: loaded.contentRevision,
               },
               sessionId: session.id,
               codeSource,
               claudeAgentSessionId: effectiveClaudeAgentSessionId,
+              claudeAgentResumeSessionAt: parsed.data.resumeSessionAt,
               preferredSkillIds,
               providerId: newProviderId,
               modelId: newModelId,
@@ -846,6 +870,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           );
           const completedSessionId =
             outcome.sessionId ?? effectiveClaudeAgentSessionId ?? null;
+          assistantCheckpointUuid = outcome.assistantMessageUuid;
           if (outcome.usage) {
             turnUsage = {
               ...outcome.usage,
@@ -879,10 +904,12 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               ...(completedSessionId
                 ? { claudeAgentSessionId: completedSessionId }
                 : {}),
-              // P2 状态机：成功 → ready，可继续；清掉中断/错误痕迹。
-              claudeAgentSessionStatus: "ready",
+              // SessionStore mirror 失败时不能声称可无损 resume；下一轮会显式开新会话。
+              claudeAgentSessionStatus:
+                outcome.mirrorHealthy === false ? "degraded" : "ready",
               claudeAgentLastEventAt: new Date(),
-              claudeAgentLastError: null,
+              claudeAgentLastError:
+                outcome.mirrorHealthy === false ? "会话镜像不完整" : null,
               claudeAgentInterruptedAt: null,
             },
           });
@@ -899,6 +926,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 modelId: newModelId,
                 sdkSessionId: completedSessionId,
                 startedAt: turnStartedAt,
+                metadata: outcome.runtimeMetadata,
               },
               outcome.usageSummary,
               turnGeneration
@@ -914,6 +942,8 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           // 失败/中断轮次：runtime 已把 usage summary + sessionId 挂到 error 上（PDC §7.2/§7.3）。
           // 即便 result 前 abort（仅收到 system/init），只要有 SDK session id 就落库，保证下一轮可 resume。
           const summary = readUsageFromError(error);
+          const runtimeMetadata = readRuntimeMetadataFromError(error);
+          const mirrorHealthy = readMirrorHealthyFromError(error);
           const sdkSessionId =
             readSessionFromError(error) ?? effectiveClaudeAgentSessionId ?? null;
           // 状态必须在错误/中断三路都落库；即便 sessionId 与旧值相同，也要从 running 收口到
@@ -970,6 +1000,10 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 modelId: newModelId,
                 sdkSessionId,
                 startedAt: turnStartedAt,
+                metadata: {
+                  ...(runtimeMetadata ?? {}),
+                  ...(mirrorHealthy === false ? { mirrorHealthy: false } : {}),
+                },
               },
               summary,
               turnGeneration

@@ -75,4 +75,10 @@ describe("聊天 token chip metadata 口径", () => {
     expect(chatRoute).toMatch(/cacheCreationInputTokens: outcome\.usageSummary\?\.cacheCreationInputTokens/);
     expect(chatRoute).toMatch(/totalTokens: summary\.totalTokens/);
   });
+
+  it("persists runtime metadata and marks mirror failures degraded", () => {
+    expect(chatRoute).toMatch(/metadata:\s*outcome\.runtimeMetadata/);
+    expect(chatRoute).toMatch(/outcome\.mirrorHealthy\s*===\s*false/);
+    expect(chatRoute).toMatch(/claudeAgentMessageUuid/);
+  });
 });

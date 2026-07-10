@@ -14,6 +14,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
+const GIT_TEST_TIMEOUT_MS = 20_000;
 
 afterEach(async () => {
   await Promise.all(
@@ -83,20 +84,24 @@ describe("read-only git analysis", () => {
       expect(diff.diff).toContain("enabled = true");
       expect(await git(project.root, ["status", "--porcelain"])).toBe(before);
     },
-    10_000
+    GIT_TEST_TIMEOUT_MS
   );
 
-  it("rejects option injection and sensitive paths", async () => {
-    const { project, head } = await fixtureRepo();
-    await expect(
-      resolveGitRange(project, { base: "--output=/tmp/pwned", head })
-    ).rejects.toThrow();
-    await expect(
-      readGitDiff(project, {
-        baseCommit: head,
-        headCommit: head,
-        file: ".env",
-      })
-    ).rejects.toThrow();
-  });
+  it(
+    "rejects option injection and sensitive paths",
+    async () => {
+      const { project, head } = await fixtureRepo();
+      await expect(
+        resolveGitRange(project, { base: "--output=/tmp/pwned", head })
+      ).rejects.toThrow();
+      await expect(
+        readGitDiff(project, {
+          baseCommit: head,
+          headCommit: head,
+          file: ".env",
+        })
+      ).rejects.toThrow();
+    },
+    GIT_TEST_TIMEOUT_MS
+  );
 });

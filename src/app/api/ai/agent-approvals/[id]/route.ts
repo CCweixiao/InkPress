@@ -100,10 +100,6 @@ export async function POST(
       return NextResponse.json({ error: "令牌无效。" }, { status: 409 });
     }
     const nextStatus = decision === "allow" ? "approved" : "rejected";
-    let trustedDomain: string | null = null;
-    if (decision === "allow") {
-      trustedDomain = await trustGrantDomain(grant);
-    }
     const claimed = await prisma.toolActionGrant.updateMany({
       where: {
         id: grant.id,
@@ -127,6 +123,21 @@ export async function POST(
         },
         { status: 409 }
       );
+    }
+    let trustedDomain: string | null = null;
+    if (decision === "allow") {
+      try {
+        trustedDomain = await trustGrantDomain(grant);
+      } catch (error) {
+        await prisma.toolActionGrant
+          .updateMany({
+            where: { id: grant.id, status: nextStatus },
+            data: { status: "rejected" },
+          })
+          .catch(() => undefined);
+        resolveApproval(grant.id, "deny");
+        throw error;
+      }
     }
     // DB 已完成 claim 后再唤醒 canUseTool，避免 agent 继续执行时审批事实源仍是 pending。
     const woken = resolveApproval(grant.id, decision);
