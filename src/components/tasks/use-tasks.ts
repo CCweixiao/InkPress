@@ -3,7 +3,11 @@
 import { useState, useCallback, useEffect } from "react";
 import type { Task, TaskStatus, TaskPriority } from "./types";
 
-export function useTasks(initialFilters?: { status?: string; spaceId?: string }) {
+export function useTasks(initialFilters?: {
+  status?: string;
+  spaceId?: string;
+  smartView?: "today" | "next7days" | "inbox";
+}) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -11,6 +15,7 @@ export function useTasks(initialFilters?: { status?: string; spaceId?: string })
     const params = new URLSearchParams();
     if (initialFilters?.status) params.set("status", initialFilters.status);
     if (initialFilters?.spaceId) params.set("spaceId", initialFilters.spaceId);
+    if (initialFilters?.smartView) params.set("smartView", initialFilters.smartView);
     params.set("parentId", "null"); // top-level only
 
     const res = await fetch(`/api/tasks?${params.toString()}`);
@@ -19,7 +24,7 @@ export function useTasks(initialFilters?: { status?: string; spaceId?: string })
       setTasks(data.tasks);
     }
     setLoading(false);
-  }, [initialFilters?.status, initialFilters?.spaceId]);
+  }, [initialFilters?.status, initialFilters?.spaceId, initialFilters?.smartView]);
 
   useEffect(() => {
     fetchTasks();

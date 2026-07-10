@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { filterBySmartView, type SmartView } from "@/lib/tasks/smart-views";
+import type { Task } from "@/components/tasks/types";
 
 const createSchema = z.object({
   title: z.string().min(1).max(500),
@@ -21,10 +23,16 @@ export async function GET(req: NextRequest) {
   const spaceId = searchParams.get("spaceId");
   const parentId = searchParams.get("parentId");
   const priority = searchParams.get("priority");
+  const smartViewRaw = searchParams.get("smartView");
+  const smartView: SmartView | null =
+    smartViewRaw === "today" || smartViewRaw === "next7days" || smartViewRaw === "inbox"
+      ? smartViewRaw
+      : null;
 
   const where: Record<string, unknown> = {};
   if (status) where.status = status;
   if (spaceId) where.spaceId = spaceId;
+  else if (smartView === "inbox") where.spaceId = null;
   if (parentId !== null && parentId !== undefined) {
     where.parentId = parentId === "null" ? null : parentId;
   } else {
@@ -33,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
   if (priority) where.priority = parseInt(priority, 10);
 
-  const tasks = await prisma.task.findMany({
+  let tasks = await prisma.task.findMany({
     where,
     orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     include: {
@@ -47,6 +55,10 @@ export async function GET(req: NextRequest) {
       },
     },
   });
+
+  if (smartView) {
+    tasks = filterBySmartView(tasks as unknown as Task[], smartView) as unknown as typeof tasks;
+  }
 
   return NextResponse.json({ tasks });
 }
