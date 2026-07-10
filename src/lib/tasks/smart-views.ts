@@ -47,7 +47,7 @@ export function isInbox(task: Task): boolean {
 
 /** 按智能视图批量过滤。now 默认 new Date()。trashed 任务一律排除。 */
 export function filterBySmartView(tasks: Task[], view: SmartView, now: Date = new Date()): Task[] {
-  const active = tasks.filter((t) => !(t as any).trashed);
+  const active = tasks.filter((t) => !t.trashed);
   switch (view) {
     case "today":
       return active.filter((t) => isToday(t, now));

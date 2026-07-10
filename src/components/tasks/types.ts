@@ -1,3 +1,9 @@
+export interface TaskTagInfo {
+  id: string;
+  name: string;
+  color: string;
+}
+
 export type TaskStatus = "todo" | "in_progress" | "done" | "cancelled" | "archived";
 export type TaskPriority = 0 | 1 | 2 | 3 | 4;
 
@@ -13,9 +19,14 @@ export interface Task {
   completedAt: string | null;
   parentId: string | null;
   spaceId: string | null;
+  space?: { id: string; name: string } | null;
   sortOrder: number;
-  tagsJson: string;
+  tagsJson: string; // 保留只读兼容
+  tags: TaskTagInfo[]; // 新增：结构化标签
   isCollapsed: boolean;
+  trashed: boolean; // 新增
+  trashedAt: string | null; // 新增
+  expiresAt: string | null; // 新增
   createdAt: string;
   updatedAt: string;
   children?: Task[];
