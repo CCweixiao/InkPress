@@ -26,9 +26,36 @@ const updateSchema = z.object({
   profileId: z.string().nullable().optional(),
   status: z.enum(["draft", "ready", "pushed"]).optional(),
   wxMediaId: z.string().nullable().optional(),
+  expectedContentRevision: z.number().int().nonnegative().optional(),
 });
 
 type Params = { params: Promise<{ id: string }> };
+
+// 文件是正文真相源，故在同一进程内让同一文章的 CAS claim 和原子文件写串行。
+// 数据库 revision 仍是跨请求/跨进程的最终仲裁；写失败只在 claim 未被后续写入
+// 推进时回滚，绝不写回旧正文覆盖成功的并发更新。
+const contentWriteTails = new Map<string, Promise<void>>();
+async function withContentWriteLock<T>(id: string, operation: () => Promise<T>) {
+  const previous = contentWriteTails.get(id) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.then(() => current);
+  contentWriteTails.set(id, tail);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (contentWriteTails.get(id) === tail) contentWriteTails.delete(id);
+  }
+}
+
+function revisionConflict() {
+  return NextResponse.json(
+    { error: "文章已被其他修改更新，请刷新后重试。", code: "revision-conflict" },
+    { status: 409 }
+  );
+}
 
 // 获取单篇（正文从文件读取，注入 contentMd 字段以保持契约）
 export async function GET(_req: NextRequest, { params }: Params) {
@@ -63,20 +90,49 @@ async function updateArticle(id: string, req: NextRequest) {
     return NextResponse.json({ error: "文章类型无效。" }, { status: 400 });
   }
   // 正文写文件，不落库（contentMd 列仅作兼容）
-  const { contentMd, ...rest } = parsed.data;
+  const { contentMd, expectedContentRevision, ...rest } = parsed.data;
   if (typeof contentMd === "string") {
-    // contentPath 为正文位置的唯一真相源；缺失时按 spaceId 算出并回写
-    const existing = await prisma.article.findUnique({
-      where: { id },
-      select: { contentPath: true, spaceId: true },
+    return withContentWriteLock(id, async () => {
+      // contentPath 为正文位置的唯一真相源；缺失时按 spaceId 算出并随 claim 回写。
+      const existing = await prisma.article.findUnique({ where: { id } });
+      if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
+      const revision = existing.contentRevision;
+      if (expectedContentRevision !== undefined && expectedContentRevision !== revision) {
+        return revisionConflict();
+      }
+      const rel = existing.contentPath ?? articleFilePath({ articleId: id, spaceId: existing.spaceId });
+      const claimed = await prisma.article.updateMany({
+        where: { id, contentRevision: revision },
+        data: {
+          contentRevision: { increment: 1 },
+          ...(existing.contentPath ? {} : { contentPath: rel }),
+        },
+      });
+      if (claimed.count !== 1) return revisionConflict();
+      let contentWritten = false;
+      try {
+        await writeContentAt(rel, contentMd);
+        contentWritten = true;
+        const article = await prisma.article.update({ where: { id }, data: rest });
+        return NextResponse.json({ article: { ...article, contentMd } });
+      } catch (error) {
+        // Once the atomic file write succeeds, retain the revision claim: rolling
+        // it back would let a stale writer overwrite that newly persisted body.
+        if (!contentWritten) {
+          await prisma.article.updateMany({
+            where: { id, contentRevision: revision + 1 },
+            data: {
+              contentRevision: revision,
+              ...(existing.contentPath ? {} : { contentPath: null }),
+            },
+          }).catch(() => {});
+        }
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : "保存文章正文失败。" },
+          { status: 500 }
+        );
+      }
     });
-    const rel =
-      existing?.contentPath ??
-      articleFilePath({ articleId: id, spaceId: existing?.spaceId ?? null });
-    await writeContentAt(rel, contentMd);
-    if (!existing?.contentPath) {
-      await prisma.article.update({ where: { id }, data: { contentPath: rel } });
-    }
   }
   const article = await prisma.article.update({
     where: { id },

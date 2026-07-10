@@ -50,25 +50,48 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
     );
   }
 
-  const claimed = await prisma.agentArticleProposal.updateMany({
-    where: { id, status: "pending" },
-    data: { status: "applying" },
+  // 先在 DB 中以 article revision 和 pending proposal 一并 claim，再写文件。
+  // 这样两个基于同一正文生成的 proposal 即使同时通过 hash 校验，也只能有一个
+  // 推进正文版本。文件写失败时仅回滚仍属于本次 claim 的 revision，避免覆盖后来者。
+  const revision = proposal.article.contentRevision;
+  const claimed = await prisma.$transaction(async (tx) => {
+    const articleClaim = await tx.article.updateMany({
+      where: { id: proposal.articleId, contentRevision: revision },
+      data: {
+        contentRevision: { increment: 1 },
+        ...(proposal.title !== null ? { title: proposal.title } : {}),
+        ...(proposal.digest !== null ? { digest: proposal.digest } : {}),
+        ...(proposal.article.contentPath ? {} : { contentPath: articleRel }),
+      },
+    });
+    if (articleClaim.count !== 1) return false;
+    const proposalClaim = await tx.agentArticleProposal.updateMany({
+      where: { id, status: "pending" },
+      data: { status: "applying" },
+    });
+    if (proposalClaim.count !== 1) throw new Error("proposal-claim-failed");
+    return true;
+  }).catch(async (error) => {
+    if (error instanceof Error && error.message === "proposal-claim-failed") return false;
+    throw error;
   });
-  if (claimed.count !== 1) {
+  if (!claimed) {
+    await prisma.agentArticleProposal.updateMany({
+      where: { id, status: "pending" },
+      data: { status: "superseded", decidedAt: new Date() },
+    });
     return NextResponse.json(
-      { error: "该提案已被其他操作处理。", status: "applying" },
+      { error: "文章已被其他修改更新，该提案已失效。", status: "superseded" },
       { status: 409 }
     );
   }
+  let contentWritten = false;
   try {
     await writeContentAt(articleRel, targetMarkdown);
+    contentWritten = true;
     const article = await prisma.$transaction(async (tx) => {
-      const updated = await tx.article.update({
+      const updated = await tx.article.findUniqueOrThrow({
         where: { id: proposal.articleId },
-        data: {
-          ...(proposal.title !== null ? { title: proposal.title } : {}),
-          ...(proposal.digest !== null ? { digest: proposal.digest } : {}),
-        },
       });
       await tx.agentArticleProposal.update({
         where: { id },
@@ -97,11 +120,24 @@ async function applyArticle(id: string, overrideMarkdown?: string) {
       article: { ...article, contentMd: targetMarkdown },
     });
   } catch (error) {
-    await writeContentAt(articleRel, currentMarkdown).catch(() => {});
-    await prisma.agentArticleProposal.updateMany({
-      where: { id, status: "applying" },
-      data: { status: "pending" },
-    });
+    // 不写回 currentMarkdown：其他成功 claim 可能已经写入了更新的正文。
+    // 一旦原子文件写成功，保留 revision claim（即使后续状态更新失败）以免下一次
+    // 写入把已成功落盘的正文当作旧版本覆盖。
+    if (!contentWritten) {
+      await prisma.article.updateMany({
+        where: { id: proposal.articleId, contentRevision: revision + 1 },
+        data: {
+          contentRevision: revision,
+          title: proposal.article.title,
+          digest: proposal.article.digest,
+          ...(proposal.article.contentPath ? {} : { contentPath: null }),
+        },
+      }).catch(() => {});
+      await prisma.agentArticleProposal.updateMany({
+        where: { id, status: "applying" },
+        data: { status: "pending" },
+      });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "应用文章提案失败。" },
       { status: 500 }

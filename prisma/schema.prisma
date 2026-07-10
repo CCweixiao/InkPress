@@ -15,6 +15,7 @@ model Article {
   title        String    @default("") // 标题
   contentMd    String    @default("") // 已迁移到文件存储，此列保留作兼容（实际正文读 contentPath）
   contentPath  String? // 正文文件相对路径（相对 storage 根，如 articles/<id>.md）
+  contentRevision Int @default(0) // 正文 CAS 版本，随每次正文写入递增
   digest       String? // 摘要（≤120 字）
   coverMediaId String? // 微信封面 media_id（add_material 返回）
   coverAssetId String? // OSS 封面 Asset id（素材库封面，区别于微信）

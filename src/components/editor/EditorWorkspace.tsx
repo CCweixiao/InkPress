@@ -57,6 +57,7 @@ export type ArticleData = {
   themeId: string | null;
   spaceId: string | null;
   status: string;
+  contentRevision: number;
   /** P3 文章类型 profile id（前端 badge 展示用）。 */
   profileId?: string | null;
 };
@@ -158,20 +159,53 @@ export function EditorWorkspace({
   // 自动保存：固定 5s 防抖，降低流式生成频繁回显时的保存卡顿
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSave = useRef<Partial<ArticleData>>({});
+  const serverRevision = useRef(article.contentRevision);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const dirty = useRef(false);
+  const dirtyGeneration = useRef(0);
+  const enqueueSave = (payload: Partial<ArticleData>, generation: number) => {
+    const task = saveQueue.current.then(async () => {
+      const response = await fetch(`/api/articles/${article.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          expectedContentRevision: serverRevision.current,
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(`保存当前文章失败。${detail ? `（${detail}）` : ""}`);
+      }
+      const result = await response.json() as { article?: { contentRevision?: number } };
+      if (typeof result.article?.contentRevision === "number") {
+        serverRevision.current = result.article.contentRevision;
+      }
+      // A later edit may already be queued while this request was in flight.
+      // Only that latest generation is allowed to claim the saved UI state.
+      if (generation === dirtyGeneration.current) {
+        dirty.current = false;
+        setSaveState("saved");
+        setTimeout(() => setSaveState("idle"), 1500);
+      }
+    });
+    // A failed save must not prevent a later explicit retry from running.
+    saveQueue.current = task.catch(() => {});
+    return task;
+  };
   const save = (patch: Partial<ArticleData>) => {
+    dirty.current = true;
+    dirtyGeneration.current += 1;
     setSaveState("saving");
     pendingSave.current = { ...pendingSave.current, ...patch };
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       const payload = pendingSave.current;
       pendingSave.current = {};
-      await fetch(`/api/articles/${article.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+      const generation = dirtyGeneration.current;
+      enqueueSave(payload, generation).catch(() => {
+        if (generation === dirtyGeneration.current) setSaveState("idle");
       });
-      setSaveState("saved");
-      setTimeout(() => setSaveState("idle"), 1500);
     }, 5000);
   };
 
@@ -190,18 +224,10 @@ export function EditorWorkspace({
       ...patch,
     };
     pendingSave.current = {};
+    dirty.current = true;
+    dirtyGeneration.current += 1;
     setSaveState("saving");
-    const response = await fetch(`/api/articles/${article.id}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(`保存当前文章失败。${detail ? `（${detail}）` : ""}`);
-    }
-    setSaveState("saved");
-    setTimeout(() => setSaveState("idle"), 1500);
+    await enqueueSave(payload, dirtyGeneration.current);
   };
 
   const copyMarkdown = async () => {
@@ -297,6 +323,7 @@ export function EditorWorkspace({
         digest,
         themeId,
         profileId,
+        expectedContentRevision: serverRevision.current,
       };
       // 优先用 sendBeacon（页面卸载时仍可送达），fetch 会被浏览器取消
       if (navigator.sendBeacon) {
