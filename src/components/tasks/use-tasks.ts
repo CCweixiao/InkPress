@@ -7,6 +7,7 @@ export function useTasks(initialFilters?: {
   status?: string;
   spaceId?: string;
   smartView?: "today" | "next7days" | "inbox";
+  trashed?: boolean;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,7 +17,8 @@ export function useTasks(initialFilters?: {
     if (initialFilters?.status) params.set("status", initialFilters.status);
     if (initialFilters?.spaceId) params.set("spaceId", initialFilters.spaceId);
     if (initialFilters?.smartView) params.set("smartView", initialFilters.smartView);
-    params.set("parentId", "null"); // top-level only
+    if (initialFilters?.trashed) params.set("trashed", "true");
+    if (!initialFilters?.trashed) params.set("parentId", "null"); // 顶层任务（主视图）
 
     const res = await fetch(`/api/tasks?${params.toString()}`);
     if (res.ok) {
@@ -24,14 +26,21 @@ export function useTasks(initialFilters?: {
       setTasks(data.tasks);
     }
     setLoading(false);
-  }, [initialFilters?.status, initialFilters?.spaceId, initialFilters?.smartView]);
+  }, [initialFilters?.status, initialFilters?.spaceId, initialFilters?.smartView, initialFilters?.trashed]);
 
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
 
   const createTask = useCallback(
-    async (data: { title: string; priority?: TaskPriority; dueDate?: string | null; parentId?: string | null; spaceId?: string | null }) => {
+    async (data: {
+      title: string;
+      priority?: TaskPriority;
+      dueDate?: string | null;
+      parentId?: string | null;
+      spaceId?: string | null;
+      tagIds?: string[];
+    }) => {
       const res = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -47,7 +56,12 @@ export function useTasks(initialFilters?: {
   );
 
   const updateTask = useCallback(
-    async (id: string, data: Partial<Pick<Task, "title" | "content" | "status" | "priority" | "dueDate" | "sortOrder" | "tagsJson" | "isCollapsed" | "parentId">>) => {
+    async (
+      id: string,
+      data: Partial<
+        Pick<Task, "title" | "content" | "status" | "priority" | "dueDate" | "sortOrder" | "tagsJson" | "isCollapsed" | "parentId"> & { tagIds?: string[] }
+      >
+    ) => {
       const res = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -65,6 +79,30 @@ export function useTasks(initialFilters?: {
   const deleteTask = useCallback(
     async (id: string) => {
       const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        await fetchTasks();
+        return true;
+      }
+      return false;
+    },
+    [fetchTasks]
+  );
+
+  const restoreTask = useCallback(
+    async (id: string) => {
+      const res = await fetch(`/api/tasks/${id}/restore`, { method: "POST" });
+      if (res.ok) {
+        await fetchTasks();
+        return true;
+      }
+      return false;
+    },
+    [fetchTasks]
+  );
+
+  const purgeTask = useCallback(
+    async (id: string) => {
+      const res = await fetch(`/api/tasks/${id}/purge`, { method: "DELETE" });
       if (res.ok) {
         await fetchTasks();
         return true;
@@ -98,5 +136,16 @@ export function useTasks(initialFilters?: {
     [updateTask]
   );
 
-  return { tasks, loading, createTask, updateTask, deleteTask, reorderTasks, toggleStatus, refetch: fetchTasks };
+  return {
+    tasks,
+    loading,
+    createTask,
+    updateTask,
+    deleteTask,
+    restoreTask,
+    purgeTask,
+    reorderTasks,
+    toggleStatus,
+    refetch: fetchTasks,
+  };
 }
