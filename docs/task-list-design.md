@@ -33,23 +33,20 @@ InkPress 定位为"AI 驱动的写作创作平台"。创作者的日常工作流
 
 ## 1. 功能入口
 
-### 1.1 侧边栏一级入口
+### 1.1 顶部导航栏入口
 
-在现有左侧导航栏中，于「我的文章」和「素材库」之间新增一级入口：
+InkPress 使用顶部 header 导航（无左侧 sidebar）。在顶部导航条中，于「首页」和「素材」之间新增一级入口：
 
 ```
-┌─────────────────┐
-│ 🏠 我的文章      │
-│ ✅ 待办任务      │  ← 新增
-│ 📦 素材库        │
-│ 🗑️ 回收站        │
-│ ⚙️ 设置          │
-└─────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ [Logo]  首页  任务  素材  灵感  ...    🔍 搜索  🌙 ⚙️   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-- 图标：Lucide `CheckSquare` 或 `ListTodo`
-- 右侧显示未完成任务计数徽章（如 `3`）
-- 点击进入任务列表主页面
+- 图标：Lucide `CheckSquare`
+- 文案：「任务」
+- 跳转 `/tasks` 路由
+- 当前实现：`src/app/page.tsx:97-99` 顶部 header 已有该入口
 
 ### 1.2 快速创建入口
 
@@ -94,8 +91,8 @@ model Task {
   id            String       @id @default(cuid())
   title         String       // 任务标题
   content       String?      // 任务描述/笔记（Markdown）
-  status        String       @default("TODO") // TODO | IN_PROGRESS | DONE | CANCELLED
-  priority      String       @default("NONE") // NONE | LOW | MEDIUM | HIGH | URGENT
+  status        String   @default("todo") // todo | in_progress | done | cancelled | archived
+  priority      Int      @default(0) // 0=none, 1=low, 2=medium, 3=high, 4=urgent
   dueDate       DateTime?    // 截止日期
   dueTime       String?      // 截止时间 "HH:mm"（可选精确到分钟）
   startDate     DateTime?    // 开始日期
@@ -166,6 +163,11 @@ model TaskReminder {
   @@index([taskId])
 }
 ```
+
+> **实现说明（2026-07-09 修订）**：与早期设计稿相比，做了两处类型决策：
+> 1. **status 用小写**：与 SQLite 字符串习惯一致，避免大小写转换。补充 `cancelled` 表达"主动放弃"语义，与 `archived`（"事后归档"）区分。
+> 2. **priority 用 Int**：天然支持 `ORDER BY priority DESC` 排序，无需应用层枚举顺序映射。可读性通过 `PRIORITY_CONFIG` 表（`src/components/tasks/types.ts`）补回。
+> 详见 `docs/superpowers/specs/2026-07-09-tasks-reconciliation-design.md` ADR-7 / ADR-8。
 
 ### 2.2 模型说明
 
@@ -467,7 +469,7 @@ setInterval(async () => {
 
 | 集成点 | 方式 | 说明 |
 |--------|------|------|
-| 侧边栏导航 | 修改 `components/common/Sidebar.tsx` | 新增"待办任务"入口 |
+| 顶部导航栏 | 修改 `src/app/page.tsx` header | 新增"任务"入口 |
 | 编辑器右键菜单 | 扩展编辑器 context menu | "从选中文本创建任务"（可选关联当前内容） |
 | AI Agent 工具 | 新增 `create_task` / `list_tasks` 工具定义 | Agent 可操作任务 |
 | 内容详情侧栏 | 新增 `TaskContentSection` 通用组件 | 任意内容类型页面可选展示关联任务 |
@@ -484,7 +486,7 @@ setInterval(async () => {
 - [ ] 任务清单 CRUD（创建/重命名/删除/排序）
 - [ ] 任务 CRUD（创建/编辑/完成/删除）
 - [ ] 列表视图（含子任务缩进展示）
-- [ ] 侧边栏入口 + 路由
+- [ ] 顶部导航入口 + 路由
 - [ ] 快速创建输入框（内联）
 - [ ] 优先级 + 截止日设置
 - [ ] 拖拽排序
