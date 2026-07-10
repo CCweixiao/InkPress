@@ -40,8 +40,10 @@ function buildCsp(nonce: string): string {
     "font-src 'self'",
     `connect-src 'self'${devConnect}`,
     "object-src 'none'",
-    // 首页案例区 iframe 嵌入 B 站官方播放器
-    "frame-src https://player.bilibili.com",
+    // 首页案例区 iframe 嵌入 B 站播放器：player.bilibili.com 为桌面端入口，
+    // 移动端 UA 会由 player.html 内部脚本重定向到 www.bilibili.com/blackboard/webplayer/mbplayer.html，
+    // 故两个域名都需放行，否则手机端 iframe 重定向后被 CSP 拦截导致空白
+    "frame-src https://player.bilibili.com https://www.bilibili.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
