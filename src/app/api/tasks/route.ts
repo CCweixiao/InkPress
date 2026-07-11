@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get("status");
   const listId = searchParams.get("listId");
   const folderId = searchParams.get("folderId");
+  const tagId = searchParams.get("tagId");
   const parentId = searchParams.get("parentId");
   const priority = searchParams.get("priority");
   const smartViewRaw = searchParams.get("smartView");
@@ -48,6 +49,16 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     if (listId) where.listId = listId;
     if (folderId) where.list = { folderId };
+    if (tagId) {
+      // 查该 tag + 其所有二级子 tag 的 id（并集语义）
+      const childTags = await prisma.tag.findMany({
+        where: { parentId: tagId },
+        select: { id: true },
+      });
+      const allTagIds = [tagId, ...childTags.map((t) => t.id)];
+      const prevAnd = Array.isArray(where.AND) ? where.AND : [];
+      where.AND = [...prevAnd, { tags: { some: { tagId: { in: allTagIds } } } }];
+    }
     if (parentId !== null && parentId !== undefined) {
       where.parentId = parentId === "null" ? null : parentId;
     } else {
