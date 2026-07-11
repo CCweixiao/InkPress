@@ -26,8 +26,6 @@ import {
   FolderClosed,
   ChevronRight,
   ChevronDown,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Trash2,
   Tag as TagIcon,
   Plus,
@@ -440,19 +438,6 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
     setTagDialogOpen(true);
   };
 
-  const allFoldersExpanded =
-    folders.length > 0 && folders.every((f) => !f.collapsed);
-
-  const toggleAllFoldersCollapsed = async () => {
-    const nextCollapsed = allFoldersExpanded;
-    setFolders((fs) => fs.map((f) => ({ ...f, collapsed: nextCollapsed })));
-    await fetch("/api/tasks/folders/collapse-all", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collapsed: nextCollapsed }),
-    });
-  };
-
   const openListDialog = (folderId: string | null) => {
     setListDialogFolderId(folderId);
     setListDialogOpen(true);
@@ -691,19 +676,6 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
           <span>清单</span>
         </button>
         <div className="flex items-center gap-1">
-          {folders.length > 0 && (
-            <button
-              onClick={toggleAllFoldersCollapsed}
-              className="p-0.5 rounded hover:bg-accent text-muted-foreground"
-              title={allFoldersExpanded ? "折叠全部文件夹" : "展开全部文件夹"}
-            >
-              {allFoldersExpanded ? (
-                <ChevronsDownUp className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronsUpDown className="h-3.5 w-3.5" />
-              )}
-            </button>
-          )}
           <button
             onClick={() => setFolderDialogOpen(true)}
             className="p-0.5 rounded hover:bg-accent text-muted-foreground"
