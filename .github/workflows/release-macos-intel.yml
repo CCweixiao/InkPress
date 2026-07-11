@@ -180,7 +180,6 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: publish-${{ github.event.inputs.tag || github.ref_name }}
-      queue: max
       cancel-in-progress: false
     permissions:
       contents: write # append 资产到已存在的 Release

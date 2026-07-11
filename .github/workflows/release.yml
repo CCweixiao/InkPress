@@ -177,7 +177,6 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: publish-${{ github.event.inputs.tag || github.ref_name }}
-      queue: max
       cancel-in-progress: false
     permissions:
       contents: write # 创建 Release 所需
