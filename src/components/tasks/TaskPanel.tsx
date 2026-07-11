@@ -7,14 +7,16 @@ import { useTasks } from "./use-tasks";
 import { TaskListView } from "./TaskListView";
 import { KanbanView } from "./KanbanView";
 import { CalendarView } from "./CalendarView";
+import { TrashView } from "./TrashView";
 import type { ViewMode, TaskStatus } from "./types";
 import type { SmartView } from "@/lib/tasks/smart-views";
 
 interface TaskPanelProps {
   spaceId?: string;
+  view?: "main" | "trash";
 }
 
-export function TaskPanel({ spaceId }: TaskPanelProps) {
+export function TaskPanel({ spaceId, view = "main" }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [smartView, setSmartView] = useState<SmartView | null>(null);
@@ -24,6 +26,10 @@ export function TaskPanel({ spaceId }: TaskPanelProps) {
       status: statusFilter || undefined,
       smartView: smartView ?? undefined,
     });
+
+  if (view === "trash") {
+    return <TrashView />;
+  }
 
   const views: { mode: ViewMode; icon: React.ElementType; label: string }[] = [
     { mode: "list", icon: List, label: "列表" },
