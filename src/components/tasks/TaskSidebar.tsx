@@ -1,7 +1,35 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ListChecks, FolderOpen, FolderClosed, ChevronRight, ChevronDown, Trash2, Tag as TagIcon, Plus, MoreHorizontal } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  ListChecks,
+  FolderOpen,
+  FolderClosed,
+  ChevronRight,
+  ChevronDown,
+  Trash2,
+  Tag as TagIcon,
+  Plus,
+  MoreHorizontal,
+  GripVertical,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TagManageDialog } from "./TagManageDialog";
 import { TaskFolderDialog } from "./TaskFolderDialog";
@@ -39,14 +67,204 @@ interface TaskSidebarProps {
   refreshKey?: number;
 }
 
+// ---------------------------------------------------------------------------
+// arrayMove (lightweight inline copy, same semantics as @dnd-kit/sortable)
+// ---------------------------------------------------------------------------
+function arrayMove<T>(arr: T[], from: number, to: number): T[] {
+  const result = arr.slice();
+  const [item] = result.splice(from, 1);
+  result.splice(to, 0, item);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Sortable wrapper: folder header row
+// ---------------------------------------------------------------------------
+function SortableFolderRow({
+  folder,
+  selected,
+  folderTaskCount,
+  onToggleCollapsed,
+  onSelect,
+  onAddList,
+  onEditFolder,
+}: {
+  folder: TaskFolderInfo;
+  selected: SelectedKey;
+  folderTaskCount: number;
+  onToggleCollapsed: () => void;
+  onSelect: () => void;
+  onAddList: () => void;
+  onEditFolder: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: folder.id, data: { type: "folder" } });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "group flex items-center gap-1 w-full px-1 py-1 rounded-md text-sm transition-colors",
+        selected.type === "folder" && selected.id === folder.id
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        isDragging && "opacity-50 z-10"
+      )}
+    >
+      <button
+        onClick={onToggleCollapsed}
+        className="p-0.5 rounded hover:bg-accent"
+        title={folder.collapsed ? "展开" : "收起"}
+      >
+        {folder.collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5" />
+        )}
+      </button>
+      {folder.collapsed ? (
+        <FolderClosed className="h-4 w-4 shrink-0" />
+      ) : (
+        <FolderOpen className="h-4 w-4 shrink-0" />
+      )}
+      <button onClick={onSelect} className="flex-1 text-left truncate">
+        {folder.name}
+      </button>
+      {folderTaskCount > 0 && (
+        <span className="text-xs shrink-0">{folderTaskCount}</span>
+      )}
+      <button
+        onClick={onAddList}
+        className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100"
+        title="往此文件夹加清单"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+      <button
+        onClick={onEditFolder}
+        className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100"
+        title="编辑文件夹"
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {/* Drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing shrink-0 touch-none"
+        title="拖拽排序"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sortable wrapper: standalone (top-level) list row
+// ---------------------------------------------------------------------------
+function SortableListRow({
+  list,
+  count,
+  isSelected,
+  onSelect,
+  onEdit,
+  indent,
+}: {
+  list: TaskListInfo;
+  count: number;
+  isSelected: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+  indent?: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: list.id, data: { type: "list", folderId: list.folderId } });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "group flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors cursor-pointer",
+        indent && "pl-8",
+        isSelected
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        isDragging && "opacity-50 z-10"
+      )}
+      onClick={onSelect}
+    >
+      <span
+        className="w-2 h-2 rounded-full shrink-0"
+        style={{ backgroundColor: list.color }}
+      />
+      <span className="flex-1 text-left truncate">{list.name}</span>
+      {count > 0 && <span className="text-xs shrink-0">{count}</span>}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+        className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
+        title="编辑清单"
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {/* Drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        onClick={(e) => e.stopPropagation()}
+        className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing shrink-0 touch-none"
+        title="拖拽排序"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Main sidebar
+// ===========================================================================
 export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps) {
   const [folders, setFolders] = useState<TaskFolderInfo[]>([]);
   const [standaloneLists, setStandaloneLists] = useState<TaskListInfo[]>([]);
-  const [counts, setCounts] = useState<Counts>({ total: 0, byList: {}, trashed: 0 });
+  const [counts, setCounts] = useState<Counts>({
+    total: 0,
+    byList: {},
+    trashed: 0,
+  });
   const [tagOpen, setTagOpen] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [listDialogOpen, setListDialogOpen] = useState(false);
-  const [listDialogFolderId, setListDialogFolderId] = useState<string | null>(null);
+  const [listDialogFolderId, setListDialogFolderId] = useState<string | null>(
+    null
+  );
   const [editFolder, setEditFolder] = useState<TaskFolderInfo | null>(null);
   const [editList, setEditList] = useState<TaskListInfo | null>(null);
 
@@ -62,7 +280,11 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
     }
     if (countRes.ok) {
       const c = await countRes.json();
-      setCounts({ total: c.total, byList: c.byList ?? {}, trashed: c.trashed });
+      setCounts({
+        total: c.total,
+        byList: c.byList ?? {},
+        trashed: c.trashed,
+      });
     }
   }, []);
 
@@ -70,10 +292,19 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
     load();
   }, [load, refreshKey]);
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const modifiers = useMemo(() => [restrictToVerticalAxis], []);
+
   const toggleCollapsed = async (folder: TaskFolderInfo) => {
     // 乐观更新
     setFolders((fs) =>
-      fs.map((f) => (f.id === folder.id ? { ...f, collapsed: !f.collapsed } : f))
+      fs.map((f) =>
+        f.id === folder.id ? { ...f, collapsed: !f.collapsed } : f
+      )
     );
     await fetch(`/api/tasks/folders/${folder.id}`, {
       method: "PATCH",
@@ -90,18 +321,113 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
     setListDialogOpen(true);
   };
 
+  // -------------------------------------------------------------------------
+  // Folder DnD: reorder top-level folders only (no nesting allowed)
+  // -------------------------------------------------------------------------
+  const handleFolderDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      setFolders((prev) => {
+        const oldIndex = prev.findIndex((f) => f.id === active.id);
+        const newIndex = prev.findIndex((f) => f.id === over.id);
+        if (oldIndex < 0 || newIndex < 0) return prev;
+        const reordered = arrayMove(prev, oldIndex, newIndex);
+        // Persist new sortOrder
+        const payload = reordered.map((f, i) => ({ id: f.id, sortOrder: i }));
+        fetch("/api/tasks/folders/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: payload }),
+        }).catch((err) => console.error("folder reorder failed:", err));
+        return reordered;
+      });
+    },
+    []
+  );
+
+  // -------------------------------------------------------------------------
+  // List DnD: reorder within same parent group only.
+  // standaloneLists share one SortableContext; each folder.lists gets its own.
+  // Because cross-parent is YAGNI for this task, onDragEnd checks if active
+  // and over belong to the same group; if not, the drag is ignored.
+  // -------------------------------------------------------------------------
+  const handleListDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const activeId = active.id as string;
+      const overId = over.id as string;
+
+      // --- Try standalone lists group ---
+      setStandaloneLists((prevStandalone) => {
+        const oldIdx = prevStandalone.findIndex((l) => l.id === activeId);
+        const newIdx = prevStandalone.findIndex((l) => l.id === overId);
+        if (oldIdx >= 0 && newIdx >= 0) {
+          const reordered = arrayMove(prevStandalone, oldIdx, newIdx);
+          const payload = reordered.map((l, i) => ({
+            id: l.id,
+            sortOrder: i,
+          }));
+          fetch("/api/tasks/lists/reorder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items: payload }),
+          }).catch((err) => console.error("list reorder failed:", err));
+          return reordered;
+        }
+        return prevStandalone; // not in this group — fall through
+      });
+
+      // --- Try folder child lists groups ---
+      setFolders((prevFolders) => {
+        let changed = false;
+        const next = prevFolders.map((folder) => {
+          const oldIdx = folder.lists.findIndex((l) => l.id === activeId);
+          const newIdx = folder.lists.findIndex((l) => l.id === overId);
+          if (oldIdx >= 0 && newIdx >= 0) {
+            changed = true;
+            const reordered = arrayMove(folder.lists, oldIdx, newIdx);
+            const payload = reordered.map((l, i) => ({
+              id: l.id,
+              sortOrder: i,
+            }));
+            fetch("/api/tasks/lists/reorder", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ items: payload }),
+            }).catch((err) => console.error("list reorder failed:", err));
+            return { ...folder, lists: reordered };
+          }
+          return folder;
+        });
+        return changed ? next : prevFolders;
+      });
+    },
+    []
+  );
+
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
   return (
     <aside className="w-60 shrink-0 border-r border-border flex flex-col gap-1 p-3 h-full">
       <button
         onClick={() => onSelect({ type: "all" })}
         className={cn(
           "flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors",
-          selected.type === "all" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+          selected.type === "all"
+            ? "bg-primary text-primary-foreground"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground"
         )}
       >
         <ListChecks className="h-4 w-4 shrink-0" />
         <span className="flex-1 text-left">全部任务</span>
-        {counts.total > 0 && <span className="text-xs shrink-0">{counts.total}</span>}
+        {counts.total > 0 && (
+          <span className="text-xs shrink-0">{counts.total}</span>
+        )}
       </button>
 
       <div className="h-px bg-border my-1" />
@@ -126,104 +452,98 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         </div>
       </div>
 
-      {/* 顶层独立清单 */}
-      {standaloneLists.map((list) => (
-        <div
-          key={list.id}
-          className={cn(
-            "group flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors cursor-pointer",
-            selected.type === "list" && selected.id === list.id
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground"
-          )}
-          onClick={() => onSelect({ type: "list", id: list.id })}
+      {/* ============================================= List DnD context =====
+          One DndContext for ALL lists. Inside we have:
+            - SortableContext for standalone (top-level) lists
+            - SortableContext for each folder's child lists (when expanded)
+          Cross-group moves are ignored in onDragEnd (YAGNI per plan).
+      ====================================================================== */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragEnd={handleListDragEnd}
+        modifiers={modifiers}
+      >
+        {/* 顶层独立清单 */}
+        <SortableContext
+          id="standalone-lists"
+          items={standaloneLists.map((l) => l.id)}
+          strategy={verticalListSortingStrategy}
         >
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: list.color }} />
-          <span className="flex-1 text-left truncate">{list.name}</span>
-          {(counts.byList[list.id] ?? 0) > 0 && (
-            <span className="text-xs shrink-0">{counts.byList[list.id]}</span>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); setEditFolder(null); setEditList(list); }}
-            className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
-            title="编辑清单"
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
+          {standaloneLists.map((list) => (
+            <SortableListRow
+              key={list.id}
+              list={list}
+              count={counts.byList[list.id] ?? 0}
+              isSelected={
+                selected.type === "list" && selected.id === list.id
+              }
+              onSelect={() => onSelect({ type: "list", id: list.id })}
+              onEdit={() => {
+                setEditFolder(null);
+                setEditList(list);
+              }}
+            />
+          ))}
+        </SortableContext>
 
-      {/* 文件夹 */}
-      {folders.map((folder) => (
-        <div key={folder.id} className="space-y-0.5">
-          <div
-            className={cn(
-              "group flex items-center gap-1 w-full px-1 py-1 rounded-md text-sm transition-colors",
-              selected.type === "folder" && selected.id === folder.id
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
+        {/* 文件夹（含内部清单）— 整个 folder 区域用一个独立的 folders DnD context */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragEnd={handleFolderDragEnd}
+          modifiers={modifiers}
+        >
+          <SortableContext
+            id="folders"
+            items={folders.map((f) => f.id)}
+            strategy={verticalListSortingStrategy}
           >
-            <button
-              onClick={() => toggleCollapsed(folder)}
-              className="p-0.5 rounded hover:bg-accent"
-              title={folder.collapsed ? "展开" : "收起"}
-            >
-              {folder.collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </button>
-            {folder.collapsed ? <FolderClosed className="h-4 w-4 shrink-0" /> : <FolderOpen className="h-4 w-4 shrink-0" />}
-            <button
-              onClick={() => onSelect({ type: "folder", id: folder.id })}
-              className="flex-1 text-left truncate"
-            >
-              {folder.name}
-            </button>
-            {folderTaskCount(folder) > 0 && (
-              <span className="text-xs shrink-0">{folderTaskCount(folder)}</span>
-            )}
-            <button
-              onClick={() => openListDialog(folder.id)}
-              className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100"
-              title="往此文件夹加清单"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => setEditFolder(folder)}
-              className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100"
-              title="编辑文件夹"
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          {!folder.collapsed &&
-            folder.lists.map((list) => (
-              <div
-                key={list.id}
-                className={cn(
-                  "group flex items-center gap-2 w-full pl-8 pr-2 py-1.5 rounded-md text-sm transition-colors cursor-pointer",
-                  selected.type === "list" && selected.id === list.id
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            {folders.map((folder) => (
+              <div key={folder.id} className="space-y-0.5">
+                <SortableFolderRow
+                  folder={folder}
+                  selected={selected}
+                  folderTaskCount={folderTaskCount(folder)}
+                  onToggleCollapsed={() => toggleCollapsed(folder)}
+                  onSelect={() =>
+                    onSelect({ type: "folder", id: folder.id })
+                  }
+                  onAddList={() => openListDialog(folder.id)}
+                  onEditFolder={() => setEditFolder(folder)}
+                />
+                {!folder.collapsed && (
+                  <SortableContext
+                    id={`folder-${folder.id}-lists`}
+                    items={folder.lists.map((l) => l.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {folder.lists.map((list) => (
+                      <SortableListRow
+                        key={list.id}
+                        list={list}
+                        count={counts.byList[list.id] ?? 0}
+                        isSelected={
+                          selected.type === "list" &&
+                          selected.id === list.id
+                        }
+                        onSelect={() =>
+                          onSelect({ type: "list", id: list.id })
+                        }
+                        onEdit={() => {
+                          setEditFolder(null);
+                          setEditList(list);
+                        }}
+                        indent
+                      />
+                    ))}
+                  </SortableContext>
                 )}
-                onClick={() => onSelect({ type: "list", id: list.id })}
-              >
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: list.color }} />
-                <span className="flex-1 text-left truncate">{list.name}</span>
-                {(counts.byList[list.id] ?? 0) > 0 && (
-                  <span className="text-xs shrink-0">{counts.byList[list.id]}</span>
-                )}
-                <button
-                  onClick={(e) => { e.stopPropagation(); setEditFolder(null); setEditList(list); }}
-                  className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
-                  title="编辑清单"
-                >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </button>
               </div>
             ))}
-        </div>
-      ))}
+          </SortableContext>
+        </DndContext>
+      </DndContext>
 
       <div className="h-px bg-border my-1" />
 
@@ -231,12 +551,16 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         onClick={() => onSelect({ type: "trash" })}
         className={cn(
           "flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors",
-          selected.type === "trash" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+          selected.type === "trash"
+            ? "bg-primary text-primary-foreground"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground"
         )}
       >
         <Trash2 className="h-4 w-4 shrink-0" />
         <span className="flex-1 text-left">垃圾箱</span>
-        {counts.trashed > 0 && <span className="text-xs shrink-0">{counts.trashed}</span>}
+        {counts.trashed > 0 && (
+          <span className="text-xs shrink-0">{counts.trashed}</span>
+        )}
       </button>
 
       <div className="flex-1" />
@@ -252,15 +576,25 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
       <TagManageDialog open={tagOpen} onOpenChange={setTagOpen} />
       <TaskFolderDialog
         open={folderDialogOpen || editFolder !== null}
-        onOpenChange={(o) => { if (!o) { setFolderDialogOpen(false); setEditFolder(null); } }}
+        onOpenChange={(o) => {
+          if (!o) {
+            setFolderDialogOpen(false);
+            setEditFolder(null);
+          }
+        }}
         onSaved={load}
         folder={editFolder}
       />
       <TaskListDialog
         open={listDialogOpen || editList !== null}
-        onOpenChange={(o) => { if (!o) { setListDialogOpen(false); setEditList(null); } }}
+        onOpenChange={(o) => {
+          if (!o) {
+            setListDialogOpen(false);
+            setEditList(null);
+          }
+        }}
         folderId={listDialogFolderId}
-        folders={folders.map(f => ({ id: f.id, name: f.name }))}
+        folders={folders.map((f) => ({ id: f.id, name: f.name }))}
         onSaved={load}
         list={editList}
       />
