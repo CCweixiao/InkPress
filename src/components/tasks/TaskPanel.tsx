@@ -11,18 +11,23 @@ import { TrashView } from "./TrashView";
 import type { ViewMode, TaskStatus } from "./types";
 import type { SmartView } from "@/lib/tasks/smart-views";
 
+/** TaskPanel 仅使用 today/next7days，不含 inbox（inbox 在 Task 9 移除前仍存在于 SmartView 联合类型中）。 */
+type PanelSmartView = Exclude<SmartView, "inbox">;
+
 interface TaskPanelProps {
-  spaceId?: string;
+  listId?: string;
+  folderId?: string;
   view?: "main" | "trash";
 }
 
-export function TaskPanel({ spaceId, view = "main" }: TaskPanelProps) {
+export function TaskPanel({ listId, folderId, view = "main" }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
-  const [smartView, setSmartView] = useState<SmartView | null>(null);
+  const [smartView, setSmartView] = useState<PanelSmartView | null>(null);
   const { tasks, loading, createTask, updateTask, deleteTask, reorderTasks, toggleStatus } =
     useTasks({
-      spaceId,
+      listId,
+      folderId,
       status: statusFilter || undefined,
       smartView: smartView ?? undefined,
     });
@@ -94,8 +99,7 @@ export function TaskPanel({ spaceId, view = "main" }: TaskPanelProps) {
           { key: null, label: "全部" },
           { key: "today", label: "今天" },
           { key: "next7days", label: "最近 7 天" },
-          { key: "inbox", label: "收集箱" },
-        ] as { key: SmartView | null; label: string }[]).map((opt) => (
+        ] as { key: PanelSmartView | null; label: string }[]).map((opt) => (
           <button
             key={opt.label}
             onClick={() => setSmartView(opt.key)}

@@ -16,7 +16,7 @@ function makeTask(overrides: Partial<Task>): Task {
     isAllDay: true,
     completedAt: null,
     parentId: null,
-    spaceId: null,
+    listId: "cl_default_list_seed_fixed",
     sortOrder: 0,
     tagsJson: "[]",
     tags: [],
@@ -84,29 +84,27 @@ describe("isNext7Days", () => {
 });
 
 describe("isInbox", () => {
-  it("spaceId=null 且未完成 → true", () => {
-    expect(isInbox(makeTask({ spaceId: null, status: "todo" }))).toBe(true);
+  // inbox 语义已废弃（Task.listId 必填，总有默认清单）。Task 9 移除 inbox。
+  it("listId 有值且未完成 → false（inbox 已废弃）", () => {
+    expect(isInbox(makeTask({ listId: "cl_default_list_seed_fixed", status: "todo" }))).toBe(false);
   });
-  it("spaceId 有值 → false", () => {
-    expect(isInbox(makeTask({ spaceId: "s1", status: "todo" }))).toBe(false);
-  });
-  it("status=done → false（已完成不进收集箱）", () => {
-    expect(isInbox(makeTask({ spaceId: null, status: "done" }))).toBe(false);
+  it("status=done → false", () => {
+    expect(isInbox(makeTask({ status: "done" }))).toBe(false);
   });
   it("status=archived → false", () => {
-    expect(isInbox(makeTask({ spaceId: null, status: "archived" }))).toBe(false);
+    expect(isInbox(makeTask({ status: "archived" }))).toBe(false);
   });
   it("status=cancelled → false", () => {
-    expect(isInbox(makeTask({ spaceId: null, status: "cancelled" }))).toBe(false);
+    expect(isInbox(makeTask({ status: "cancelled" }))).toBe(false);
   });
 });
 
 describe("filterBySmartView", () => {
   const tasks: Task[] = [
-    makeTask({ id: "a", spaceId: "s1", dueDate: "2026-07-14T08:00:00.000Z" }), // today (has space, not inbox)
-    makeTask({ id: "b", spaceId: "s1", dueDate: "2026-07-17T08:00:00.000Z" }), // next7 (has space, not inbox)
-    makeTask({ id: "c", spaceId: "s1" }), // neither inbox (has space)
-    makeTask({ id: "d", spaceId: null, status: "todo" }), // inbox
+    makeTask({ id: "a", listId: "list-a", dueDate: "2026-07-14T08:00:00.000Z" }), // today
+    makeTask({ id: "b", listId: "list-a", dueDate: "2026-07-17T08:00:00.000Z" }), // next7
+    makeTask({ id: "c", listId: "list-a" }), // neither today nor next7
+    makeTask({ id: "d", status: "todo" }), // no dueDate
     makeTask({ id: "e", status: "cancelled", dueDate: "2026-07-14T08:00:00.000Z" }), // cancelled
   ];
 
@@ -118,9 +116,9 @@ describe("filterBySmartView", () => {
     const r = filterBySmartView(tasks, "next7days", NOW);
     expect(r.map((t) => t.id).sort()).toEqual(["a", "b"]);
   });
-  it("inbox → 只留 d", () => {
+  it("inbox → 空（inbox 已废弃）", () => {
     const r = filterBySmartView(tasks, "inbox", NOW);
-    expect(r.map((t) => t.id)).toEqual(["d"]);
+    expect(r).toEqual([]);
   });
 });
 
@@ -131,7 +129,7 @@ describe("filterBySmartView trashed 过滤", () => {
     status: "todo",
     dueDate: "2026-07-10T12:00:00.000Z",
     completedAt: null,
-    spaceId: null,
+    listId: "cl_default_list_seed_fixed",
     trashed: true,
   } as any;
 

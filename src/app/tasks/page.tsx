@@ -36,11 +36,12 @@ export default function TasksPage() {
     priority: TaskPriority;
     dueDate: string | null;
     tagIds: string[];
+    listId?: string;
   }) => {
     const res = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, listId: data.listId ?? null }),
     });
     if (res.ok) {
       setRefreshKey((k) => k + 1);
@@ -49,8 +50,9 @@ export default function TasksPage() {
     return false;
   };
 
-  // 选中态映射：space → 传 spaceId；trash → view=trash；all/inbox → 不带 spaceId（inbox 计数仅展示，过滤复用智能视图分段控件）
-  const spaceId = selected.type === "space" ? selected.id : undefined;
+  // 选中态映射：list → 传 listId；folder → 传 folderId；trash → view=trash
+  const listId = selected.type === "list" ? selected.id : undefined;
+  const folderId = selected.type === "folder" ? selected.id : undefined;
   const view: "main" | "trash" = selected.type === "trash" ? "trash" : "main";
 
   return (
@@ -111,7 +113,7 @@ export default function TasksPage() {
 
         {/* Main */}
         <main className="flex-1 py-6 min-w-0">
-          <TaskPanel key={refreshKey} spaceId={spaceId} view={view} />
+          <TaskPanel key={refreshKey} listId={listId} folderId={folderId} view={view} />
         </main>
       </div>
 

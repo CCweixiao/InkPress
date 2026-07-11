@@ -5,8 +5,9 @@ import type { Task, TaskStatus, TaskPriority } from "./types";
 
 export function useTasks(initialFilters?: {
   status?: string;
-  spaceId?: string;
-  smartView?: "today" | "next7days" | "inbox";
+  listId?: string;
+  folderId?: string;
+  smartView?: "today" | "next7days";
   trashed?: boolean;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -15,7 +16,8 @@ export function useTasks(initialFilters?: {
   const fetchTasks = useCallback(async () => {
     const params = new URLSearchParams();
     if (initialFilters?.status) params.set("status", initialFilters.status);
-    if (initialFilters?.spaceId) params.set("spaceId", initialFilters.spaceId);
+    if (initialFilters?.listId) params.set("listId", initialFilters.listId);
+    if (initialFilters?.folderId) params.set("folderId", initialFilters.folderId);
     if (initialFilters?.smartView) params.set("smartView", initialFilters.smartView);
     if (initialFilters?.trashed) params.set("trashed", "true");
     if (!initialFilters?.trashed) params.set("parentId", "null"); // 顶层任务（主视图）
@@ -26,7 +28,7 @@ export function useTasks(initialFilters?: {
       setTasks(data.tasks);
     }
     setLoading(false);
-  }, [initialFilters?.status, initialFilters?.spaceId, initialFilters?.smartView, initialFilters?.trashed]);
+  }, [initialFilters?.status, initialFilters?.listId, initialFilters?.folderId, initialFilters?.smartView, initialFilters?.trashed]);
 
   useEffect(() => {
     fetchTasks();
@@ -38,7 +40,7 @@ export function useTasks(initialFilters?: {
       priority?: TaskPriority;
       dueDate?: string | null;
       parentId?: string | null;
-      spaceId?: string | null;
+      listId?: string | null;
       tagIds?: string[];
     }) => {
       const res = await fetch("/api/tasks", {

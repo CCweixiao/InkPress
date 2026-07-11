@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ListChecks, Inbox, FolderOpen, Trash2, Tag as TagIcon } from "lucide-react";
+import { ListChecks, FolderOpen, Trash2, Tag as TagIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TagManageDialog } from "./TagManageDialog";
 
 export type SelectedKey =
   | { type: "all" }
-  | { type: "inbox" }
-  | { type: "space"; id: string }
+  | { type: "folder"; id: string }
+  | { type: "list"; id: string }
   | { type: "trash" };
 
 interface SpaceItem {
@@ -18,8 +18,7 @@ interface SpaceItem {
 
 type Counts = {
   total: number;
-  inbox: number;
-  bySpace: Record<string, number>;
+  byList: Record<string, number>;
   trashed: number;
 };
 
@@ -31,7 +30,7 @@ interface TaskSidebarProps {
 
 export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps) {
   const [spaces, setSpaces] = useState<SpaceItem[]>([]);
-  const [counts, setCounts] = useState<Counts>({ total: 0, inbox: 0, bySpace: {}, trashed: 0 });
+  const [counts, setCounts] = useState<Counts>({ total: 0, byList: {}, trashed: 0 });
   const [tagOpen, setTagOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -91,30 +90,23 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         active={selected.type === "all"}
         onClick={() => onSelect({ type: "all" })}
       />
-      <Row
-        icon={Inbox}
-        label="收集箱"
-        count={counts.inbox}
-        active={selected.type === "inbox"}
-        onClick={() => onSelect({ type: "inbox" })}
-      />
 
       <div className="h-px bg-border my-1" />
 
       <div className="flex items-center justify-between px-2">
-        <span className="text-xs text-muted-foreground">空间</span>
+        <span className="text-xs text-muted-foreground">清单</span>
       </div>
       {spaces.length === 0 ? (
-        <p className="text-xs text-muted-foreground px-2 py-1">暂无空间</p>
+        <p className="text-xs text-muted-foreground px-2 py-1">暂无清单</p>
       ) : (
         spaces.map((space) => (
           <Row
             key={space.id}
             icon={FolderOpen}
             label={space.name}
-            count={counts.bySpace[space.id]}
-            active={selected.type === "space" && selected.id === space.id}
-            onClick={() => onSelect({ type: "space", id: space.id })}
+            count={counts.byList[space.id]}
+            active={selected.type === "list" && selected.id === space.id}
+            onClick={() => onSelect({ type: "list", id: space.id })}
           />
         ))
       )}

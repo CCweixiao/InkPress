@@ -39,10 +39,11 @@ export function isNext7Days(task: Task, now: Date): boolean {
   return d >= start && d < end;
 }
 
-/** 任务是否属于"收集箱"：无 spaceId 且未结束。 */
-export function isInbox(task: Task): boolean {
-  if (isTerminalStatus(task)) return false;
-  return task.spaceId === null;
+/** 任务是否属于"收集箱"：无 list 且未结束。
+ *  注意：Task.listId 现在是必填字符串（总有默认清单），inbox 语义已废弃。
+ *  Task 9 将移除此函数与 SmartView "inbox"。 */
+export function isInbox(_task: Task): boolean {
+  return false;
 }
 
 /** 按智能视图批量过滤。now 默认 new Date()。trashed 任务一律排除。 */

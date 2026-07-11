@@ -12,7 +12,7 @@ const base = {
   isAllDay: true,
   completedAt: null,
   parentId: null,
-  spaceId: null,
+  listId: "cl_default_list_seed_fixed",
   sortOrder: 0,
   tagsJson: "[]",
   isCollapsed: false,

@@ -45,8 +45,11 @@ export function TrashView() {
             className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent/50"
           >
             <span className="flex-1 text-sm truncate opacity-70 line-through">{task.title}</span>
-            {task.space && (
-              <span className="text-xs text-muted-foreground shrink-0">📁 {task.space.name}</span>
+            {task.list && (
+              <span className="text-xs text-muted-foreground shrink-0 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: task.list.color }} />
+                {task.list.name}
+              </span>
             )}
             <div className="flex gap-1 shrink-0">
               {task.tags?.map((t) => (

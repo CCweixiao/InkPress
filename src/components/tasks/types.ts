@@ -18,8 +18,8 @@ export interface Task {
   isAllDay: boolean;
   completedAt: string | null;
   parentId: string | null;
-  spaceId: string | null;
-  space?: { id: string; name: string } | null;
+  listId: string;
+  list?: { id: string; name: string; color: string; folderId: string | null; folder?: { id: string; name: string } | null };
   sortOrder: number;
   tagsJson: string; // 保留只读兼容
   tags: TaskTagInfo[]; // 新增：结构化标签
