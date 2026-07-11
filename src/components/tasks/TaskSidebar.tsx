@@ -19,7 +19,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
-  ListChecks,
   Menu,
   Search,
   X,
@@ -552,24 +551,8 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
   // -------------------------------------------------------------------------
   return (
     <aside className="w-60 shrink-0 border-r border-border flex flex-col p-3 h-full">
-      <button
-        onClick={() => onSelect({ type: "all" })}
-        className={cn(
-          "flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors",
-          selected.type === "all"
-            ? "bg-accent text-accent-foreground font-medium"
-            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-        )}
-      >
-        <ListChecks className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-left">全部任务</span>
-        {counts.total > 0 && (
-          <span className="text-xs shrink-0">{counts.total}</span>
-        )}
-      </button>
-
       {/* 搜索框 */}
-      <div className="relative mt-1">
+      <div className="relative">
         <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50">
           <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <input
