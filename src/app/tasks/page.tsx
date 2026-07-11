@@ -122,6 +122,7 @@ export default function TasksPage() {
         open={quickAddOpen}
         onClose={() => setQuickAddOpen(false)}
         onAdd={handleQuickAdd}
+        defaultListId={selected.type === "list" ? selected.id : undefined}
       />
     </div>
   );

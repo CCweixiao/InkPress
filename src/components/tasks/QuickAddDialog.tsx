@@ -7,6 +7,13 @@ import type { TaskPriority } from "./types";
 import { PRIORITY_CONFIG } from "./types";
 import { TagPicker } from "./TagPicker";
 
+interface ListItem {
+  id: string;
+  name: string;
+  color: string;
+  folderName?: string;
+}
+
 interface QuickAddDialogProps {
   open: boolean;
   onClose: () => void;
@@ -15,27 +22,62 @@ interface QuickAddDialogProps {
     priority: TaskPriority;
     dueDate: string | null;
     tagIds: string[];
+    listId: string;
   }) => Promise<boolean>;
+  defaultListId?: string;
 }
 
-export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
+export function QuickAddDialog({ open, onClose, onAdd, defaultListId }: QuickAddDialogProps) {
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<TaskPriority>(0);
   const [dueDate, setDueDate] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [listId, setListId] = useState("");
+  const [lists, setLists] = useState<ListItem[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch folders tree and flatten into list of lists
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/tasks/folders");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const flattened: ListItem[] = [];
+        // standalone lists (folderId=null)
+        for (const l of data.standaloneLists ?? []) {
+          flattened.push({ id: l.id, name: l.name, color: l.color });
+        }
+        // lists inside folders
+        for (const f of data.folders ?? []) {
+          for (const l of f.lists ?? []) {
+            flattened.push({ id: l.id, name: l.name, color: l.color, folderName: f.name });
+          }
+        }
+        setLists(flattened);
+      } catch {
+        // ignore fetch errors
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (open) {
       setTimeout(() => inputRef.current?.focus(), 50);
+      // Set listId to defaultListId or first available list
+      setListId(defaultListId ?? lists[0]?.id ?? "");
     } else {
       setTitle("");
       setPriority(0);
       setDueDate("");
       setTagIds([]);
+      setListId("");
     }
-  }, [open]);
+  }, [open, defaultListId, lists]);
 
   // Global keyboard shortcut
   useEffect(() => {
@@ -55,13 +97,14 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
   }, [open, onClose]);
 
   const handleSubmit = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !listId) return;
     setSubmitting(true);
     const success = await onAdd({
       title: title.trim(),
       priority,
       dueDate: dueDate ? new Date(dueDate).toISOString() : null,
       tagIds,
+      listId,
     });
     setSubmitting(false);
     if (success) {
@@ -69,6 +112,7 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
       setPriority(0);
       setDueDate("");
       setTagIds([]);
+      setListId(defaultListId ?? lists[0]?.id ?? "");
       onClose();
     }
   };
@@ -111,6 +155,20 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
 
           {/* Toolbar */}
           <div className="flex items-center gap-2 px-4 pb-3 border-t border-border pt-3">
+            {/* List selector (required) */}
+            <select
+              value={listId}
+              onChange={(e) => setListId(e.target.value)}
+              className="text-xs bg-muted rounded-md px-2 py-1 border-none outline-none max-w-[140px]"
+            >
+              <option value="" disabled>选清单</option>
+              {lists.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.folderName ? `${l.folderName} / ${l.name}` : l.name}
+                </option>
+              ))}
+            </select>
+
             {/* Priority selector */}
             <div className="flex items-center gap-1">
               {([0, 1, 2, 3, 4] as TaskPriority[]).map((p) => (
@@ -158,10 +216,10 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
             {/* Submit */}
             <button
               onClick={handleSubmit}
-              disabled={!title.trim() || submitting}
+              disabled={!title.trim() || !listId || submitting}
               className={cn(
                 "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
-                title.trim()
+                title.trim() && listId
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
                   : "bg-muted text-muted-foreground"
               )}
