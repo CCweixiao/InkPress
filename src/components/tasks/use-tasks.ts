@@ -7,6 +7,7 @@ export function useTasks(initialFilters?: {
   status?: string;
   listId?: string;
   folderId?: string;
+  tagId?: string;
   smartView?: "today" | "next7days";
   trashed?: boolean;
 }) {
@@ -18,6 +19,7 @@ export function useTasks(initialFilters?: {
     if (initialFilters?.status) params.set("status", initialFilters.status);
     if (initialFilters?.listId) params.set("listId", initialFilters.listId);
     if (initialFilters?.folderId) params.set("folderId", initialFilters.folderId);
+    if (initialFilters?.tagId) params.set("tagId", initialFilters.tagId);
     if (initialFilters?.smartView) params.set("smartView", initialFilters.smartView);
     if (initialFilters?.trashed) params.set("trashed", "true");
     if (!initialFilters?.trashed) params.set("parentId", "null"); // 顶层任务（主视图）
@@ -28,7 +30,7 @@ export function useTasks(initialFilters?: {
       setTasks(data.tasks);
     }
     setLoading(false);
-  }, [initialFilters?.status, initialFilters?.listId, initialFilters?.folderId, initialFilters?.smartView, initialFilters?.trashed]);
+  }, [initialFilters?.status, initialFilters?.listId, initialFilters?.folderId, initialFilters?.tagId, initialFilters?.smartView, initialFilters?.trashed]);
 
   useEffect(() => {
     fetchTasks();

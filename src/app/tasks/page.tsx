@@ -50,9 +50,10 @@ export default function TasksPage() {
     return false;
   };
 
-  // 选中态映射：list → 传 listId；folder → 传 folderId；trash → view=trash
+  // 选中态映射：list → listId；folder → folderId；tag → tagId；trash → view=trash
   const listId = selected.type === "list" ? selected.id : undefined;
   const folderId = selected.type === "folder" ? selected.id : undefined;
+  const tagId = selected.type === "tag" ? selected.id : undefined;
   const view: "main" | "trash" = selected.type === "trash" ? "trash" : "main";
 
   return (
@@ -113,7 +114,7 @@ export default function TasksPage() {
 
         {/* Main */}
         <main className="flex-1 py-6 min-w-0">
-          <TaskPanel key={refreshKey} listId={listId} folderId={folderId} view={view} />
+          <TaskPanel key={refreshKey} listId={listId} folderId={folderId} tagId={tagId} view={view} />
         </main>
       </div>
 

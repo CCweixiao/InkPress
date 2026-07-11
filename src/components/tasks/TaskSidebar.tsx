@@ -39,6 +39,7 @@ export type SelectedKey =
   | { type: "all" }
   | { type: "folder"; id: string }
   | { type: "list"; id: string }
+  | { type: "tag"; id: string }
   | { type: "trash" };
 
 interface TaskListInfo {

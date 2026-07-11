@@ -14,10 +14,11 @@ import type { SmartView } from "@/lib/tasks/smart-views";
 interface TaskPanelProps {
   listId?: string;
   folderId?: string;
+  tagId?: string;
   view?: "main" | "trash";
 }
 
-export function TaskPanel({ listId, folderId, view = "main" }: TaskPanelProps) {
+export function TaskPanel({ listId, folderId, tagId, view = "main" }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [smartView, setSmartView] = useState<SmartView | null>(null);
@@ -25,6 +26,7 @@ export function TaskPanel({ listId, folderId, view = "main" }: TaskPanelProps) {
     useTasks({
       listId,
       folderId,
+      tagId,
       status: statusFilter || undefined,
       smartView: smartView ?? undefined,
     });
