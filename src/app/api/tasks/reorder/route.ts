@@ -8,6 +8,7 @@ const reorderSchema = z.object({
       id: z.string(),
       sortOrder: z.number().int(),
       parentId: z.string().nullable().optional(),
+      sectionId: z.string().nullable().optional(),
       status: z.string().optional(),
     })
   ),
@@ -25,6 +26,7 @@ export async function POST(req: NextRequest) {
     const updates = parsed.data.items.map((item) => {
       const data: Record<string, unknown> = { sortOrder: item.sortOrder };
       if (item.parentId !== undefined) data.parentId = item.parentId;
+      if (item.sectionId !== undefined) data.sectionId = item.sectionId;
       if (item.status !== undefined) {
         data.status = item.status;
         if (item.status === "done") data.completedAt = new Date();

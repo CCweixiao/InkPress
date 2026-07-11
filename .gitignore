@@ -3,6 +3,7 @@
 # IDE
 .idea/
 .vscode/
+.zcode/
 
 # dependencies
 /node_modules

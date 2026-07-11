@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { TiptapEditor } from "@/components/editor/TiptapEditor";
+import { MarkdownEditor } from "@/components/editor/MarkdownEditor";
 import { TagInput } from "./TagInput";
 import { useSnippetCreateForm } from "./use-snippet-create-form";
 import type { SnippetItem } from "./types";
@@ -103,7 +103,7 @@ export function SnippetQuickDialog() {
 
         <div className="space-y-3" onKeyDown={handleKeyDown}>
           <div className="snippet-editor-dialog rounded-xl border border-border bg-background p-3">
-            <TiptapEditor
+            <MarkdownEditor
               value={form.content}
               onChange={form.setContent}
               mode="snippet"

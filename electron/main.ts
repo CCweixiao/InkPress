@@ -273,14 +273,28 @@ function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
   });
 }
 
-function smokeRequest(port: number, pathname: string): Promise<{ status: number; body: string }> {
+function smokeRequest(
+  port: number,
+  pathname: string,
+  options: { method?: "GET" | "POST"; body?: string } = {}
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = http.get(
+    const body = options.body ?? "";
+    const req = http.request(
       // Windows runner 上首次请求会同步完成数据库迁移、内置主题初始化和
       // Next 首次路由加载；端口已经监听并不代表首页能在 10 秒内返回。
       // 给单次健康检查完整的冷启动窗口，外层 smoke runner 仍有 120 秒
       // 总超时，因此真正的死锁/启动失败仍会让发布失败。
-      { hostname: "127.0.0.1", port, path: pathname, timeout: 60_000 },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: pathname,
+        timeout: 60_000,
+        method: options.method ?? "GET",
+        headers: body
+          ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) }
+          : undefined,
+      },
       (res) => {
         const chunks: Buffer[] = [];
         let bytes = 0;
@@ -299,6 +313,8 @@ function smokeRequest(port: number, pathname: string): Promise<{ status: number;
     );
     req.once("timeout", () => req.destroy(new Error(`${pathname} 请求超时`)));
     req.once("error", reject);
+    if (body) req.write(body);
+    req.end();
   });
 }
 
@@ -329,7 +345,21 @@ async function runPackageSmokeChecks(port: number): Promise<void> {
     skillsJson.skills.some((skill) => skill.source === "system" && skill.editable === false);
   if (!hasSystemSkill) throw new Error(`系统 Skill API smoke 失败：HTTP ${skills.status}`);
 
-  console.log("[electron-smoke] HTTP /, /api/themes, /api/settings/status, /api/skills 均通过");
+  // 灵感路由会加载 jsdom（OG 抓取），曾因 NFT 仅复制部分包内文件而在安装包中 500。
+  const snippets = await smokeRequest(port, "/api/snippets?limit=1");
+  if (snippets.status !== 200) throw new Error(`灵感 API smoke 失败：HTTP ${snippets.status}`);
+  JSON.parse(snippets.body);
+
+  // 空请求只验证完整 AI 路由及其依赖可加载，不调用模型、不消耗 Token。
+  const ai = await smokeRequest(port, "/api/ai/chat", { method: "POST", body: "{}" });
+  if (ai.status !== 400 && ai.status !== 403) {
+    throw new Error(`AI 路由 smoke 失败：HTTP ${ai.status}`);
+  }
+  JSON.parse(ai.body);
+
+  console.log(
+    "[electron-smoke] HTTP /, themes, settings, skills, snippets, AI 路由均通过"
+  );
 }
 
 /* ============ 启动 splash ============ */

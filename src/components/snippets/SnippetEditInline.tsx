@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { TiptapEditor } from "@/components/editor/TiptapEditor";
+import { MarkdownEditor } from "@/components/editor/MarkdownEditor";
 import { TagInput } from "./TagInput";
 import type { SnippetItem } from "./types";
 
@@ -95,7 +95,7 @@ export function SnippetEditInline({
         </div>
       )}
       <div className="snippet-editor-inline rounded-lg border border-border bg-background p-2">
-        <TiptapEditor
+        <MarkdownEditor
           value={content}
           onChange={setContent}
           mode="snippet"

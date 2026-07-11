@@ -19,6 +19,7 @@ export interface Task {
   completedAt: string | null;
   parentId: string | null;
   listId: string;
+  sectionId?: string | null;
   list?: { id: string; name: string; color: string; folderId: string | null; folder?: { id: string; name: string } | null };
   sortOrder: number;
   tagsJson: string; // 保留只读兼容
@@ -32,12 +33,12 @@ export interface Task {
   children?: Task[];
 }
 
-export const PRIORITY_CONFIG: Record<TaskPriority, { label: string; color: string; emoji: string }> = {
-  0: { label: "无", color: "text-muted-foreground", emoji: "" },
-  1: { label: "低", color: "text-blue-500", emoji: "🔵" },
-  2: { label: "中", color: "text-yellow-500", emoji: "🟡" },
-  3: { label: "高", color: "text-orange-500", emoji: "🟠" },
-  4: { label: "紧急", color: "text-red-500", emoji: "🔴" },
+export const PRIORITY_CONFIG: Record<TaskPriority, { label: string; color: string }> = {
+  0: { label: "无", color: "text-muted-foreground" },
+  1: { label: "低", color: "text-blue-500" },
+  2: { label: "中", color: "text-yellow-500" },
+  3: { label: "高", color: "text-orange-500" },
+  4: { label: "紧急", color: "text-red-500" },
 };
 
 export const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
@@ -49,3 +50,12 @@ export const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }>
 };
 
 export type ViewMode = "list" | "kanban" | "calendar";
+export type TaskGroupMode = "status" | "week" | "custom";
+
+export interface TaskSectionInfo {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  listId: string;
+}

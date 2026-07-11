@@ -32,7 +32,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { TiptapEditor } from "./TiptapEditor";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { AIPanel, type AIPanelMode } from "./AIPanel";
 import { WeChatPreview } from "@/components/preview/WeChatPreview";
 import { PublishDialog } from "@/components/publish/PublishDialog";
@@ -553,7 +553,7 @@ export function EditorWorkspace({
         </div>
         <div ref={editorScrollRef} className="editor-canvas flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-10 py-6">
-            <TiptapEditor
+            <MarkdownEditor
               value={markdown}
               onChange={setMarkdown}
               articleId={article.id}

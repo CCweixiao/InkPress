@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Plus, Flag, Calendar } from "lucide-react";
+import { Plus, Flag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TaskPriority } from "./types";
 import { PRIORITY_CONFIG } from "./types";
@@ -46,10 +46,11 @@ function parseNaturalDate(text: string): { cleanText: string; date: string | nul
 /** 解析优先级标签 */
 function parsePriority(text: string): { cleanText: string; priority: TaskPriority } {
   const priorityPatterns: [RegExp, TaskPriority][] = [
-    [/#(紧急|p4|urgent)/gi, 4],
+    [/#(紧急优先级|紧急|p4|urgent)/gi, 4],
     [/#(高优先级|高|p3|high)/gi, 3],
-    [/#(中|p2|medium)/gi, 2],
-    [/#(低|p1|low)/gi, 1],
+    [/#(中优先级|中|p2|medium)/gi, 2],
+    [/#(低优先级|低|p1|low)/gi, 1],
+    [/#(无优先级|无|p0|none)/gi, 0],
   ];
 
   let cleanText = text;
@@ -69,7 +70,20 @@ function parsePriority(text: string): { cleanText: string; priority: TaskPriorit
 export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus }: QuickAddInputProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
+  const [activePriorityIndex, setActivePriorityIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const hashIndex = value.lastIndexOf("#");
+  const hashQuery = hashIndex >= 0 && !/\s/.test(value.slice(hashIndex + 1))
+    ? value.slice(hashIndex + 1).toLowerCase()
+    : null;
+  const priorityOptions = ([4, 3, 2, 1, 0] as TaskPriority[]).filter((priority) => {
+    if (hashQuery === null) return false;
+    const config = PRIORITY_CONFIG[priority];
+    const aliases = priority === 4 ? "紧急 p4 urgent" : priority === 3 ? "高 高优先级 p3 high" : priority === 2 ? "中 p2 medium" : priority === 1 ? "低 p1 low" : "无 无优先级 p0 none";
+    return `${config.label} ${aliases}`.toLowerCase().includes(hashQuery);
+  });
+  const priorityMenuOpen = focused && hashQuery !== null && priorityOptions.length > 0;
 
   useEffect(() => {
     if (autoFocus && inputRef.current) {
@@ -89,7 +103,27 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
     }
   };
 
+  const selectPriority = (priority: TaskPriority) => {
+    if (hashIndex < 0) return;
+    const label = priority === 0 ? "无" : PRIORITY_CONFIG[priority].label;
+    setValue(`${value.slice(0, hashIndex)}#${label} `);
+    setActivePriorityIndex(0);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (priorityMenuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      setActivePriorityIndex((index) => e.key === "ArrowDown"
+        ? (index + 1) % priorityOptions.length
+        : (index - 1 + priorityOptions.length) % priorityOptions.length);
+      return;
+    }
+    if (priorityMenuOpen && (e.key === "Enter" || e.key === "Tab")) {
+      e.preventDefault();
+      selectPriority(priorityOptions[Math.min(activePriorityIndex, priorityOptions.length - 1)]);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -103,9 +137,9 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-lg border transition-all duration-200",
+        "relative flex items-center gap-2 rounded-lg border transition-all duration-200",
         focused
-          ? "border-primary shadow-sm ring-1 ring-primary/20"
+          ? "z-40 border-primary shadow-sm ring-1 ring-primary/20"
           : "border-border",
         compact ? "px-2 py-1.5" : "px-3 py-2.5"
       )}
@@ -127,6 +161,28 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
       {value && (
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Enter</kbd>
+        </div>
+      )}
+      {priorityMenuOpen && (
+        <div className="absolute left-0 top-[calc(100%+8px)] z-[80] w-64 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-2xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:ring-white/10">
+          <div className="px-2 pb-1.5 pt-0.5 text-[11px] font-semibold tracking-wide text-slate-500 dark:text-slate-400">设置优先级</div>
+          {priorityOptions.map((priority, index) => {
+            const config = PRIORITY_CONFIG[priority];
+            return (
+              <button
+                key={priority}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectPriority(priority)}
+                onMouseEnter={() => setActivePriorityIndex(index)}
+                className={cn("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-sm transition-colors", index === activePriorityIndex ? "bg-blue-50 text-slate-950 dark:bg-blue-950/70 dark:text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800")}
+              >
+                <Flag className={cn("h-4 w-4", config.color)} />
+                <span>{config.label}优先级</span>
+                <span className="ml-auto text-[11px] text-slate-500 dark:text-slate-400">#{priority === 0 ? "无" : config.label}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

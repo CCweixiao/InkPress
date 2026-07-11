@@ -550,6 +550,7 @@ model Task {
   completedAt DateTime?
   parentId    String? // 子任务关系
   listId      String // 关联任务清单（必填）
+  sectionId   String? // 看板自定义分组
   sortOrder   Int       @default(0) // 拖拽排序
   tagsJson    String    @default("[]") // 标签 JSON 数组
   isCollapsed Boolean   @default(false) // 子任务折叠状态
@@ -563,12 +564,14 @@ model Task {
   parent   Task?  @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
   children Task[] @relation("TaskSubtasks")
   list     TaskList @relation(fields: [listId], references: [id], onDelete: Restrict)
+  section  TaskSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   tags     TaskTag[]
 
   // 复合索引：精准命中"按清单/状态分组 + 排序显示"主查询路径
   @@index([listId, status, sortOrder])
   @@index([status, dueDate])
   @@index([parentId])
+  @@index([sectionId, sortOrder])
   @@index([priority, status])
   @@index([trashed])
 }
@@ -591,13 +594,32 @@ model TaskList {
   color     String   @default("#6b7280")
   folderId  String?
   sortOrder Int      @default(0)
+  viewMode  String   @default("list") // list | kanban | calendar
+  groupMode String   @default("status") // status | week | custom
+  ungroupedName String @default("未分组")
+  ungroupedVisible Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   folder    TaskFolder? @relation(fields: [folderId], references: [id], onDelete: Restrict)
   tasks     Task[]
+  sections  TaskSection[]
 
   @@index([folderId])
   @@index([sortOrder])
+}
+
+model TaskSection {
+  id        String   @id @default(cuid())
+  name      String
+  color     String   @default("#64748b")
+  sortOrder Int      @default(0)
+  listId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  list      TaskList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@index([listId, sortOrder])
 }
 
 // P2.5 web_fetch 域名白名单：用户长期信任的域名，命中则 canUseTool 自动放行（不弹审批卡）。

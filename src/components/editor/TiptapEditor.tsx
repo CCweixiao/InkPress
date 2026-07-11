@@ -259,7 +259,9 @@ export function TiptapEditor({
   }, [slashCommands, slashMenu?.query]);
 
   const editor = useEditor({
-    enableInputRules: mode === "snippet" ? false : undefined,
+    // 三类编辑器均支持 Markdown 快捷输入（如 `# `、`- `、`> `）。
+    // 完整源码编辑由上层 MarkdownEditor 提供，不能在灵感模式禁用这里的基础规则。
+    enableInputRules: true,
     extensions: [
       StarterKit.configure({
         // StarterKit 自带 codeBlock，但无高亮；保持简洁，高亮在预览/转换层统一处理

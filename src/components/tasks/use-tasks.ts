@@ -43,6 +43,7 @@ export function useTasks(initialFilters?: {
       dueDate?: string | null;
       parentId?: string | null;
       listId?: string | null;
+      sectionId?: string | null;
       tagIds?: string[];
     }) => {
       const res = await fetch("/api/tasks", {
@@ -63,7 +64,7 @@ export function useTasks(initialFilters?: {
     async (
       id: string,
       data: Partial<
-        Pick<Task, "title" | "content" | "status" | "priority" | "dueDate" | "sortOrder" | "tagsJson" | "isCollapsed" | "parentId"> & { tagIds?: string[] }
+        Pick<Task, "title" | "content" | "status" | "priority" | "dueDate" | "sortOrder" | "tagsJson" | "isCollapsed" | "parentId" | "sectionId"> & { tagIds?: string[] }
       >
     ) => {
       const res = await fetch(`/api/tasks/${id}`, {
@@ -117,7 +118,7 @@ export function useTasks(initialFilters?: {
   );
 
   const reorderTasks = useCallback(
-    async (items: { id: string; sortOrder: number; parentId?: string | null; status?: string }[]) => {
+    async (items: { id: string; sortOrder: number; parentId?: string | null; sectionId?: string | null; status?: string }[]) => {
       const res = await fetch("/api/tasks/reorder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

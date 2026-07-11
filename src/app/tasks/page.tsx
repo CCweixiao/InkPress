@@ -1,17 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, CheckSquare, Menu } from "lucide-react";
+import { ArrowLeft, CheckSquare, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
-import { QuickAddDialog } from "@/components/tasks/QuickAddDialog";
 import { TaskSidebar, type SelectedKey } from "@/components/tasks/TaskSidebar";
-import type { TaskPriority } from "@/components/tasks/types";
 
 export default function TasksPage() {
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const refreshKey = 0;
   const [selected, setSelected] = useState<SelectedKey>({ type: "all" });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
@@ -19,41 +16,6 @@ export default function TasksPage() {
   const handleSelectTask = (taskId: string, listId: string) => {
     setSelected({ type: "list", id: listId });
     setHighlightTaskId(taskId);
-  };
-
-  // Global keyboard shortcut for quick add
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-        return;
-
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "t" || e.key === "T")) {
-        e.preventDefault();
-        setQuickAddOpen(true);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  const handleQuickAdd = async (data: {
-    title: string;
-    priority: TaskPriority;
-    dueDate: string | null;
-    tagIds: string[];
-    listId?: string;
-  }) => {
-    const res = await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...data, listId: data.listId ?? null }),
-    });
-    if (res.ok) {
-      setRefreshKey((k) => k + 1);
-      return true;
-    }
-    return false;
   };
 
   // 选中态映射：list → listId；folder → folderId；tag → tagId；trash → view=trash
@@ -66,7 +28,7 @@ export default function TasksPage() {
     <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
       <header className="border-b border-border bg-background/80 backdrop-blur shrink-0 z-40">
-        <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between gap-4">
+        <div className="px-5 h-14 flex items-center gap-4">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen((v) => !v)}
@@ -86,16 +48,11 @@ export default function TasksPage() {
             </div>
           </div>
 
-          <Button onClick={() => setQuickAddOpen(true)} size="sm" className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            新建任务
-            <kbd className="ml-1 text-[10px] opacity-60 hidden sm:inline">⌘⇧T</kbd>
-          </Button>
         </div>
       </header>
 
       {/* Body: sidebar + main */}
-      <div className="flex flex-1 min-h-0 mx-auto max-w-6xl w-full px-6">
+      <div className="flex flex-1 min-h-0 w-full bg-muted/15">
         {/* Desktop sidebar */}
         <div className="hidden md:block h-full">
           <TaskSidebar selected={selected} onSelect={setSelected} onSelectTask={handleSelectTask} refreshKey={refreshKey} />
@@ -123,7 +80,7 @@ export default function TasksPage() {
         )}
 
         {/* Main */}
-        <main className="flex-1 py-6 min-w-0 overflow-y-auto">
+        <main className="flex-1 min-w-0 overflow-hidden bg-background">
           <TaskPanel
             key={refreshKey}
             listId={listId}
@@ -136,13 +93,6 @@ export default function TasksPage() {
         </main>
       </div>
 
-      {/* Quick Add Dialog */}
-      <QuickAddDialog
-        open={quickAddOpen}
-        onClose={() => setQuickAddOpen(false)}
-        onAdd={handleQuickAdd}
-        defaultListId={selected.type === "list" ? selected.id : undefined}
-      />
     </div>
   );
 }

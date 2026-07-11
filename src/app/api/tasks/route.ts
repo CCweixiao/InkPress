@@ -12,6 +12,7 @@ const createSchema = z.object({
   dueDate: z.string().nullable().optional(),
   parentId: z.string().nullable().optional(),
   listId: z.string().nullable().optional(),
+  sectionId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
   tagIds: z.array(z.string()).optional(),
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { title, content, status, priority, dueDate, parentId, listId, sortOrder, tagsJson, tagIds } =
+    const { title, content, status, priority, dueDate, parentId, listId, sectionId, sortOrder, tagsJson, tagIds } =
       parsed.data;
 
     // 未指定清单时，取第一个可用清单；无清单则报错
@@ -174,6 +175,7 @@ export async function POST(req: NextRequest) {
         dueDate: dueDate ? new Date(dueDate) : null,
         parentId: parentId ?? null,
         listId: resolvedListId,
+        sectionId: sectionId ?? null,
         sortOrder: sortOrder ?? (maxSort._max.sortOrder ?? 0) + 1,
         tagsJson: tagsJson ?? "[]",
         tags: tagIds?.length

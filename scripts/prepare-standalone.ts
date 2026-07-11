@@ -1002,6 +1002,11 @@ function materializeTracedNextPackageDependencies(): void {
     const srcPkgDir = resolvePackageDir(projectRequire, name);
     if (!srcPkgDir) continue;
     tracedPackages++;
+    // NFT 对外部包有时只追踪到当前路由静态可见的文件。包内生成代码若通过
+    // 相对路径延迟 require（jsdom 的 generated/idl → living/webstorage 即为此类），
+    // 目标文件不会出现在 trace 中，最终安装包会在路由加载时直接 500。
+    // 先把对应真实包的运行时文件完整补进 traced 目录，再补它的依赖闭包。
+    mergeDir(srcPkgDir, tracedDir);
     copyRuntimeDeps(srcPkgDir, tracedDir);
   }
 

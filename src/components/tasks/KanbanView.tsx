@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -28,8 +28,16 @@ import {
   Calendar,
   AlertTriangle,
   CalendarOff,
+  Plus,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  GripVertical,
+  Flag,
 } from "lucide-react";
-import type { Task, TaskStatus } from "./types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { Task, TaskStatus, TaskGroupMode, TaskSectionInfo } from "./types";
 import { PRIORITY_CONFIG } from "./types";
 import type { TaskPriority } from "./types";
 
@@ -38,11 +46,17 @@ interface KanbanViewProps {
   onToggleStatus: (id: string, status: TaskStatus) => void;
   onUpdate: (id: string, data: Partial<Task>) => void;
   onDelete: (id: string) => void;
-  onReorder: (items: { id: string; sortOrder: number; status?: string }[]) => Promise<boolean>;
+  onReorder: (items: { id: string; sortOrder: number; sectionId?: string | null; status?: string }[]) => Promise<boolean>;
+  onOpenTask: (task: Task) => void;
+  listId?: string;
+  initialGroupMode?: TaskGroupMode;
+  onGroupModeChange?: (mode: TaskGroupMode) => void;
+  onTasksChanged?: () => Promise<void>;
+  onSectionsChanged?: () => Promise<void> | void;
 }
 
 // ===== 分组模式 =====
-type GroupMode = "status" | "week";
+type GroupMode = TaskGroupMode;
 
 // ===== 按状态分组的列配置 =====
 const STATUS_COLUMNS: { status: TaskStatus; icon: React.ElementType; label: string; accent: string }[] = [
@@ -79,9 +93,6 @@ function fmtShortDate(date: Date): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-/** 优先级 emoji 映射 */
-const PRIORITY_EMOJI: Record<number, string> = { 1: "🔵", 2: "🟡", 3: "🟠", 4: "🔴" };
-
 // ===== 卡片组件 =====
 function KanbanCard({ task }: { task: Task }) {
   const isDone = task.status === "done";
@@ -110,10 +121,10 @@ function KanbanCard({ task }: { task: Task }) {
       <div className="flex items-start gap-1.5 mb-1.5">
         {task.priority > 0 && (
           <span
-            className={cn("shrink-0 mt-0.5 text-xs", priorityConfig.color)}
+            className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted", priorityConfig.color)}
             title={`优先级：${priorityConfig.label}`}
           >
-            {PRIORITY_EMOJI[task.priority]}
+            <Flag className="h-3.5 w-3.5 fill-current" />
           </span>
         )}
         <span
@@ -171,7 +182,7 @@ function KanbanCard({ task }: { task: Task }) {
 }
 
 // ===== 可拖拽卡片 =====
-function SortableKanbanCard({ task }: { task: Task }) {
+function SortableKanbanCard({ task, onOpen }: { task: Task; onOpen: (task: Task) => void }) {
   const {
     attributes,
     listeners,
@@ -191,9 +202,17 @@ function SortableKanbanCard({ task }: { task: Task }) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
-      className={cn("cursor-grab active:cursor-grabbing", isDragging && "opacity-40")}
+      className={cn("group/drag relative rounded-xl transition-shadow", isDragging && "opacity-35 shadow-2xl ring-2 ring-primary/30")}
+      onDoubleClick={() => onOpen(task)}
     >
+      <button
+        {...listeners}
+        className="absolute right-2 top-2 z-10 cursor-grab rounded-md bg-background/90 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/drag:opacity-100 active:cursor-grabbing touch-none"
+        title="拖动任务排序"
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
       <KanbanCard task={task} />
     </div>
   );
@@ -217,9 +236,91 @@ function DroppableColumn({ id, children }: { id: string; children: React.ReactNo
 }
 
 // ===== 主组件 =====
-export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
+export function KanbanView({ tasks, onUpdate, onReorder, onOpenTask, listId, initialGroupMode = "status", onGroupModeChange, onTasksChanged, onSectionsChanged }: KanbanViewProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [groupMode, setGroupMode] = useState<GroupMode>("status");
+  const [groupMode, setGroupMode] = useState<GroupMode>(initialGroupMode);
+  const [sections, setSections] = useState<TaskSectionInfo[]>([]);
+  const [addingSection, setAddingSection] = useState(false);
+  const [sectionName, setSectionName] = useState("");
+  const [menuSectionId, setMenuSectionId] = useState<string | null>(null);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [editingSectionName, setEditingSectionName] = useState("");
+  const [deletingSection, setDeletingSection] = useState<TaskSectionInfo | null>(null);
+  const [deleteMode, setDeleteMode] = useState<"tasks" | "move">("tasks");
+  const [sectionActionBusy, setSectionActionBusy] = useState(false);
+  const [ungroupedName, setUngroupedName] = useState("未分组");
+  const [ungroupedVisible, setUngroupedVisible] = useState(true);
+  const [deleteTargetSectionId, setDeleteTargetSectionId] = useState("");
+  const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
+
+  const loadSections = useCallback(async () => {
+    if (!listId) return setSections([]);
+    const res = await fetch(`/api/tasks/lists/${listId}`);
+    if (res.ok) {
+      const list = (await res.json()).list;
+      setSections(list?.sections ?? []);
+      setUngroupedName(list?.ungroupedName ?? "未分组");
+      setUngroupedVisible(list?.ungroupedVisible ?? true);
+    }
+  }, [listId]);
+
+  useEffect(() => { setGroupMode(initialGroupMode); }, [initialGroupMode]);
+  useEffect(() => { void loadSections(); }, [loadSections]);
+
+  const selectGroupMode = (mode: GroupMode) => {
+    setGroupMode(mode);
+    onGroupModeChange?.(mode);
+  };
+
+  const createSection = async () => {
+    if (!listId || !sectionName.trim()) return;
+    await fetch("/api/tasks/sections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listId, name: sectionName.trim() }) });
+    setSectionName(""); setAddingSection(false); await loadSections();
+  };
+
+  const saveSectionName = async () => {
+    if (!editingSectionId || !editingSectionName.trim() || sectionActionBusy) return;
+    setSectionActionBusy(true);
+    const query = editingSectionId === "unsectioned" && listId ? `?listId=${listId}` : "";
+    const res = await fetch(`/api/tasks/sections/${editingSectionId}${query}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: editingSectionName.trim() }) });
+    if (res.ok) { setEditingSectionId(null); await loadSections(); await onSectionsChanged?.(); }
+    setSectionActionBusy(false);
+  };
+
+  const deleteSection = async () => {
+    if (!deletingSection || sectionActionBusy) return;
+    setSectionActionBusy(true);
+    const params = new URLSearchParams({ mode: deleteMode });
+    if (listId) params.set("listId", listId);
+    if (deletingSection.id === "unsectioned" && deleteMode === "move" && deleteTargetSectionId) params.set("targetSectionId", deleteTargetSectionId);
+    const res = await fetch(`/api/tasks/sections/${deletingSection.id}?${params}`, { method: "DELETE" });
+    if (res.ok) {
+      setDeletingSection(null);
+      await loadSections();
+      await onTasksChanged?.();
+      await onSectionsChanged?.();
+    }
+    setSectionActionBusy(false);
+  };
+
+  const reorderSections = async (targetSectionId: string) => {
+    if (!draggedSectionId || draggedSectionId === targetSectionId) return setDraggedSectionId(null);
+    const fromIndex = sections.findIndex((section) => section.id === draggedSectionId);
+    const targetIndex = targetSectionId === "unsectioned" ? sections.length - 1 : sections.findIndex((section) => section.id === targetSectionId);
+    if (fromIndex < 0 || targetIndex < 0) return setDraggedSectionId(null);
+    const reordered = [...sections];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    setSections(reordered);
+    setDraggedSectionId(null);
+    const results = await Promise.all(reordered.map((section, sortOrder) => fetch(`/api/tasks/sections/${section.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sortOrder }),
+    })));
+    if (results.some((result) => !result.ok)) await loadSections();
+    await onSectionsChanged?.();
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -324,10 +425,24 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
           const overTask = tasks.find((t) => t.id === overId);
           if (overTask) targetStatus = overTask.status;
         }
-        if (targetStatus && targetStatus !== activeTask.status) {
-          const columnTasks = tasksByStatus(targetStatus);
-          onReorder([{ id: activeTask.id, sortOrder: columnTasks.length, status: targetStatus }]);
-        }
+        if (!targetStatus) return;
+        const overTask = tasks.find((task) => task.id === overId);
+        const columnTasks = tasksByStatus(targetStatus).filter((task) => task.id !== activeTask.id);
+        const targetIndex = overTask ? Math.max(0, columnTasks.findIndex((task) => task.id === overTask.id)) : columnTasks.length;
+        columnTasks.splice(targetIndex < 0 ? columnTasks.length : targetIndex, 0, activeTask);
+        void onReorder(columnTasks.map((task, sortOrder) => ({ id: task.id, sortOrder, status: targetStatus! })));
+        return;
+      }
+
+      if (groupMode === "custom") {
+        const targetSection = sections.find((section) => section.id === overId);
+        const overTask = tasks.find((task) => task.id === overId);
+        const sectionId = overId === "unsectioned" ? null : targetSection?.id ?? overTask?.sectionId;
+        if (sectionId === undefined) return;
+        const columnTasks = tasks.filter((task) => (task.sectionId ?? null) === (sectionId ?? null) && task.id !== activeTask.id);
+        const targetIndex = overTask ? Math.max(0, columnTasks.findIndex((task) => task.id === overTask.id)) : columnTasks.length;
+        columnTasks.splice(targetIndex < 0 ? columnTasks.length : targetIndex, 0, activeTask);
+        void onReorder(columnTasks.map((task, sortOrder) => ({ id: task.id, sortOrder, sectionId: sectionId ?? null })));
         return;
       }
 
@@ -361,7 +476,7 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
         onUpdate(activeTask.id, { dueDate: newDate.toISOString() });
       }
     },
-    [tasks, onReorder, onUpdate, groupMode, weekColumns, tasksByStatus]
+    [tasks, onReorder, onUpdate, groupMode, weekColumns, tasksByStatus, sections]
   );
 
   const activeTask = activeId ? tasks.find((t) => t.id === activeId) : null;
@@ -379,11 +494,11 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
           <div className="flex items-center bg-muted rounded-lg p-0.5">
             {([
               { mode: "status" as const, label: "按状态" },
-              { mode: "week" as const, label: "按周" },
+              ...(listId ? [{ mode: "custom" as const, label: "自定义" }] : []),
             ]).map((opt) => (
               <button
                 key={opt.mode}
-                onClick={() => setGroupMode(opt.mode)}
+                onClick={() => selectGroupMode(opt.mode)}
                 className={cn(
                   "px-3 py-1 rounded-md text-xs font-medium transition-all",
                   groupMode === opt.mode
@@ -395,11 +510,6 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
               </button>
             ))}
           </div>
-          {groupMode === "week" && (
-            <span className="text-xs text-muted-foreground">
-              拖拽卡片可修改截止日期到目标周
-            </span>
-          )}
         </div>
 
         {/* 列容器 */}
@@ -421,7 +531,7 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
                     <SortableContext id={status} items={columnTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
                       <DroppableColumn id={status}>
                         {columnTasks.map((task) => (
-                          <SortableKanbanCard key={task.id} task={task} />
+                          <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} />
                         ))}
                         {columnTasks.length === 0 && (
                           <div className="text-center py-6 text-muted-foreground/50 text-xs">
@@ -433,6 +543,58 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
                   </div>
                 );
               })
+            : groupMode === "custom"
+            ? <>
+                {[...sections, ...(ungroupedVisible ? [{ id: "unsectioned", name: ungroupedName, color: "#94a3b8", sortOrder: 999, listId: listId ?? "" }] : [])].map((section) => {
+                  const columnTasks = tasks.filter((task) => section.id === "unsectioned" ? !task.sectionId : task.sectionId === section.id);
+                  return (
+                    <div
+                      key={section.id}
+                      className={cn("w-[300px] shrink-0 transition-opacity", draggedSectionId === section.id && "opacity-45")}
+                      onDragOver={(event) => { if (draggedSectionId) event.preventDefault(); }}
+                      onDrop={() => void reorderSections(section.id)}
+                    >
+                      <div className="mb-2.5 flex items-center gap-2 px-1">
+                        {section.id !== "unsectioned" && <button
+                          draggable
+                          onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", section.id); setDraggedSectionId(section.id); }}
+                          onDragEnd={() => setDraggedSectionId(null)}
+                          className="cursor-grab rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground active:cursor-grabbing"
+                          title="拖动分组排序"
+                        ><GripVertical className="h-3.5 w-3.5" /></button>}
+                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: section.color }} />
+                        {editingSectionId === section.id ? (
+                          <input
+                            autoFocus
+                            value={editingSectionName}
+                            onChange={(event) => setEditingSectionName(event.target.value)}
+                            onKeyDown={(event) => { if (event.key === "Enter") void saveSectionName(); if (event.key === "Escape") setEditingSectionId(null); }}
+                            className="min-w-0 flex-1 rounded-md border border-primary bg-background px-2 py-1 text-sm font-semibold outline-none"
+                          />
+                        ) : <h3 className="text-sm font-semibold">{section.name}</h3>}
+                        <span className="text-xs text-muted-foreground">{columnTasks.length}</span>
+                        <div className="relative ml-auto">
+                            <button onClick={() => setMenuSectionId((current) => current === section.id ? null : section.id)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="分组菜单"><MoreHorizontal className="h-4 w-4" /></button>
+                            {menuSectionId === section.id && (
+                              <div className="absolute right-0 top-7 z-40 w-36 rounded-lg border border-border bg-background p-1 shadow-xl">
+                                <button onClick={() => { setEditingSectionId(section.id); setEditingSectionName(section.name); setMenuSectionId(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-xs hover:bg-accent"><Pencil className="h-3.5 w-3.5" />编辑分组</button>
+                                <button onClick={() => { setDeletingSection(section); setDeleteMode("tasks"); setDeleteTargetSectionId(sections[0]?.id ?? ""); setMenuSectionId(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"><Trash2 className="h-3.5 w-3.5" />删除分组</button>
+                              </div>
+                            )}
+                          </div>
+                      </div>
+                      <SortableContext id={section.id} items={columnTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+                        <DroppableColumn id={section.id}>
+                          {columnTasks.map((task) => <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} />)}
+                        </DroppableColumn>
+                      </SortableContext>
+                    </div>
+                  );
+                })}
+                <div className="w-56 shrink-0 pt-0.5">
+                  {addingSection ? <div className="rounded-xl border border-border bg-muted/30 p-2"><input autoFocus value={sectionName} onChange={(e) => setSectionName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void createSection(); if (e.key === "Escape") setAddingSection(false); }} placeholder="分组名称" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" /><div className="mt-2 flex gap-2"><button onClick={createSection} className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground">添加</button><button onClick={() => setAddingSection(false)} className="px-2 text-xs text-muted-foreground">取消</button></div></div> : <button onClick={() => setAddingSection(true)} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-primary hover:bg-primary/5"><Plus className="h-4 w-4" />添加分组</button>}
+                </div>
+              </>
             : // ===== 按周分组 =====
               <>
                 {/* 逾期列（只读展示，不 droppable） */}
@@ -479,7 +641,7 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
                       <SortableContext id={col.key} items={columnTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
                         <DroppableColumn id={col.key}>
                           {columnTasks.map((task) => (
-                            <SortableKanbanCard key={task.id} task={task} />
+                            <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} />
                           ))}
                           {columnTasks.length === 0 && (
                             <div className="text-center py-6 text-muted-foreground/50 text-xs">
@@ -512,6 +674,29 @@ export function KanbanView({ tasks, onUpdate, onReorder }: KanbanViewProps) {
               </>}
         </div>
       </div>
+
+      <Dialog open={Boolean(deletingSection)} onOpenChange={(open) => { if (!open && !sectionActionBusy) setDeletingSection(null); }}>
+        <DialogContent hideClose className="max-w-md gap-6">
+          <DialogHeader>
+            <DialogTitle>删除分组</DialogTitle>
+            <DialogDescription>请选择如何处理“{deletingSection?.name}”中的任务。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label className={cn("flex cursor-pointer gap-3 rounded-xl border p-4 transition-colors", deleteMode === "tasks" ? "border-red-500 bg-red-50/70 dark:bg-red-950/30" : "border-border hover:bg-accent/50")}>
+              <input type="radio" name="delete-section-mode" value="tasks" checked={deleteMode === "tasks"} onChange={() => setDeleteMode("tasks")} className="mt-0.5 h-4 w-4 accent-red-600" />
+              <span><span className="block text-sm font-medium">删除分组和所有任务</span><span className="mt-1 block text-xs text-muted-foreground">分组内任务将移入垃圾箱，可在 30 天内恢复。</span></span>
+            </label>
+            <label className={cn("flex gap-3 rounded-xl border p-4 transition-colors", deletingSection?.id === "unsectioned" && sections.length === 0 ? "cursor-not-allowed opacity-50" : "cursor-pointer", deleteMode === "move" ? "border-primary bg-primary/5" : "border-border hover:bg-accent/50")}>
+              <input type="radio" name="delete-section-mode" value="move" checked={deleteMode === "move"} disabled={deletingSection?.id === "unsectioned" && sections.length === 0} onChange={() => setDeleteMode("move")} className="mt-0.5 h-4 w-4 accent-primary" />
+              <span className="flex-1"><span className="block text-sm font-medium">仅删除分组</span><span className="mt-1 block text-xs text-muted-foreground">{deletingSection?.id === "unsectioned" ? "保留所有任务，并将它们移动到其他分组。" : "保留所有任务，并将它们移动到“未分组”。"}</span>{deletingSection?.id === "unsectioned" && sections.length > 0 && deleteMode === "move" && <select value={deleteTargetSectionId} onChange={(event) => setDeleteTargetSectionId(event.target.value)} className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-xs">{sections.map((section) => <option key={section.id} value={section.id}>{section.name}</option>)}</select>}</span>
+            </label>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" disabled={sectionActionBusy} onClick={() => setDeletingSection(null)}>取消</Button>
+            <Button variant={deleteMode === "tasks" ? "destructive" : "default"} disabled={sectionActionBusy} onClick={() => void deleteSection()}>{sectionActionBusy ? "处理中…" : "确认删除"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 拖拽浮层（必须与 DndContext 同级渲染） */}
       <DragOverlay>

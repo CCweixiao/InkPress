@@ -9,6 +9,8 @@ const schema = z.object({
   name: z.string().min(1).max(100),
   color: z.string().optional(),
   folderId: z.string().nullable().optional(),
+  viewMode: z.enum(["list", "kanban", "calendar"]).optional(),
+  groupMode: z.enum(["status", "week", "custom"]).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -21,6 +23,8 @@ export async function POST(req: NextRequest) {
     name: parsed.data.name,
     color: parsed.data.color,
     folderId: parsed.data.folderId,
+    viewMode: parsed.data.viewMode,
+    groupMode: parsed.data.groupMode,
   });
   return NextResponse.json({ list }, { status: 201 });
 }

@@ -35,7 +35,7 @@ import { cn } from "@/lib/utils";
 import { TaskFolderDialog } from "./TaskFolderDialog";
 import { TaskListDialog } from "./TaskListDialog";
 import { TagEditDialog, type TagInfo } from "./TagEditDialog";
-import { getAllListEmojis, subscribeListIcons, DEFAULT_LIST_EMOJI } from "@/lib/tasks/list-icons";
+import { getAllListEmojis, subscribeListIcons } from "@/lib/tasks/list-icons";
 
 export type SelectedKey =
   | { type: "all" }
@@ -49,6 +49,8 @@ interface TaskListInfo {
   name: string;
   color: string;
   folderId: string | null;
+  viewMode?: "list" | "kanban" | "calendar";
+  groupMode?: "status" | "week" | "custom";
 }
 interface TaskFolderInfo {
   id: string;
@@ -236,7 +238,7 @@ function SortableListRow({
         style={{ backgroundColor: list.color + "1f" }}
         title={list.name}
       >
-        {emoji && emoji !== DEFAULT_LIST_EMOJI ? (
+        {emoji ? (
           <span>{emoji}</span>
         ) : (
           <span
@@ -564,10 +566,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
   // Render
   // -------------------------------------------------------------------------
   return (
-    <aside className="w-60 shrink-0 border-r border-border flex flex-col p-3 h-full">
+    <aside className="w-72 shrink-0 border-r border-border/70 bg-muted/25 flex flex-col p-3 h-full">
       {/* 搜索框 */}
       <div className="relative">
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50">
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border/60 bg-background/80 shadow-sm focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10">
           <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <input
             type="text"
@@ -735,9 +737,13 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
-        onDragEnd={handleListDragEnd}
+        onDragEnd={(event) => {
+          if (event.active.data.current?.type === "folder") handleFolderDragEnd(event);
+          else handleListDragEnd(event);
+        }}
         modifiers={modifiers}
       >
+        <div className="max-h-80 overflow-y-auto overscroll-contain pr-1 scrollbar-thin">
         {/* 顶层独立清单 */}
         <SortableContext
           id="standalone-lists"
@@ -762,13 +768,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
           ))}
         </SortableContext>
 
-        {/* 文件夹（含内部清单）— 整个 folder 区域用一个独立的 folders DnD context */}
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragEnd={handleFolderDragEnd}
-          modifiers={modifiers}
-        >
+        {/* 文件夹及内部清单共享同一个 DnD context，避免嵌套上下文截获清单拖拽。 */}
           <SortableContext
             id="folders"
             items={folders.map((f) => f.id)}
@@ -818,7 +818,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
               </div>
             ))}
           </SortableContext>
-        </DndContext>
+        </div>
       </DndContext>
       )}
 
@@ -851,7 +851,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
         </div>
       </div>
 
-      {!sectionsCollapsed.tags && tagTree.map((tag) => {
+      {!sectionsCollapsed.tags && <div className="max-h-64 overflow-y-auto overscroll-contain pr-1 scrollbar-thin">{tagTree.map((tag) => {
         const isSelected = selected.type === "tag" && selected.id === tag.id;
         const isCollapsed = collapsedTagIds.has(tag.id);
         const hasChildren = (tag.children?.length ?? 0) > 0;
@@ -961,11 +961,8 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
             )}
           </div>
         );
-      })}
+      })}</div>}
 
-      </div>
-
-      {/* 固定底部 */}
       <div className="h-px bg-border my-1" />
 
       <button
@@ -985,6 +982,8 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
           </span>
         )}
       </button>
+
+      </div>
 
       <TaskFolderDialog
         open={folderDialogOpen || editFolder !== null}

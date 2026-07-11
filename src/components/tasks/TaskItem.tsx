@@ -16,15 +16,34 @@ import { cn } from "@/lib/utils";
 import type { Task, TaskPriority, TaskStatus } from "./types";
 import { PRIORITY_CONFIG } from "./types";
 import { TagPicker } from "./TagPicker";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
-interface TaskItemProps {
+export interface TaskItemProps {
   task: Task;
   depth?: number;
   onToggleStatus: (id: string, status: TaskStatus) => void;
   onUpdate: (id: string, data: Partial<Task> & { tagIds?: string[] }) => void;
   onDelete: (id: string) => void;
   onAddSubtask: (parentId: string) => void;
+  onOpen?: (task: Task) => void;
   dragHandleProps?: Record<string, unknown>;
+}
+
+export function SortableTaskItem(props: Omit<TaskItemProps, "dragHandleProps">) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.task.id,
+    data: { type: "task", task: props.task, parentId: props.task.parentId, sectionId: props.task.sectionId ?? null },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("relative rounded-lg", isDragging && "z-20 bg-background opacity-45 shadow-xl ring-1 ring-primary/30")}
+    >
+      <TaskItem {...props} dragHandleProps={{ ...attributes, ...listeners }} />
+    </div>
+  );
 }
 
 export function TaskItem({
@@ -34,6 +53,7 @@ export function TaskItem({
   onUpdate,
   onDelete,
   onAddSubtask,
+  onOpen,
   dragHandleProps,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false);
@@ -115,6 +135,10 @@ export function TaskItem({
         style={{ paddingLeft: `${depth * 24 + 12}px` }}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
+        onClick={(event) => {
+          const target = event.target as HTMLElement;
+          if (!target.closest("button,input,select") && !editing) onOpen?.(task);
+        }}
       >
         {/* 左侧清单颜色色条（仅顶层任务 + hover 显示） */}
         {depth === 0 && listColor && (
@@ -183,7 +207,7 @@ export function TaskItem({
               "flex-1 text-sm cursor-text select-none min-w-0 truncate",
               isDone && "line-through text-muted-foreground"
             )}
-            onDoubleClick={() => setEditing(true)}
+            onDoubleClick={(event) => { event.stopPropagation(); setEditing(true); }}
           >
             {task.title}
           </span>
@@ -296,9 +320,10 @@ export function TaskItem({
 
       {/* Subtasks */}
       {hasChildren && !task.isCollapsed && (
-        <div className="mt-0.5">
+        <SortableContext items={task.children!.map((child) => child.id)} strategy={verticalListSortingStrategy}>
+        <div className="mt-0.5 rounded-lg transition-colors">
           {task.children!.map((child) => (
-            <TaskItem
+            <SortableTaskItem
               key={child.id}
               task={child}
               depth={depth + 1}
@@ -306,9 +331,11 @@ export function TaskItem({
               onUpdate={onUpdate}
               onDelete={onDelete}
               onAddSubtask={onAddSubtask}
+              onOpen={onOpen}
             />
           ))}
         </div>
+        </SortableContext>
       )}
     </div>
   );

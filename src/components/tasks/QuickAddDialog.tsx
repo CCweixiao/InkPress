@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, Flag, Calendar, X } from "lucide-react";
+import { Flag, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TaskPriority } from "./types";
 import { PRIORITY_CONFIG } from "./types";
@@ -186,7 +186,7 @@ export function QuickAddDialog({ open, onClose, onAdd, defaultListId }: QuickAdd
                   {p === 0 ? (
                     <Flag className="h-3.5 w-3.5 text-muted-foreground" />
                   ) : (
-                    <span>{PRIORITY_CONFIG[p].emoji}</span>
+                    <Flag className={cn("h-3.5 w-3.5 fill-current", PRIORITY_CONFIG[p].color)} />
                   )}
                 </button>
               ))}

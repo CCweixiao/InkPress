@@ -1,0 +1,2 @@
+ALTER TABLE "TaskList" ADD COLUMN "ungroupedName" TEXT NOT NULL DEFAULT '未分组';
+ALTER TABLE "TaskList" ADD COLUMN "ungroupedVisible" BOOLEAN NOT NULL DEFAULT true;

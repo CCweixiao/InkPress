@@ -1,15 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { List, LayoutGrid, CalendarDays, Filter } from "lucide-react";
+import { List, LayoutGrid, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTasks } from "./use-tasks";
 import { TaskListView } from "./TaskListView";
 import { KanbanView } from "./KanbanView";
 import { CalendarView } from "./CalendarView";
 import { TrashView } from "./TrashView";
-import type { ViewMode, TaskStatus } from "./types";
-import type { SmartView } from "@/lib/tasks/smart-views";
+import { TaskDetailPanel } from "./TaskDetailPanel";
+import { QuickAddInput } from "./QuickAddInput";
+import type { ViewMode, TaskGroupMode, TaskSectionInfo } from "./types";
 
 interface TaskPanelProps {
   listId?: string;
@@ -23,15 +24,56 @@ interface TaskPanelProps {
 export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighlightConsumed, view = "main" }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
-  const [smartView, setSmartView] = useState<SmartView | null>(null);
-  const { tasks, loading, createTask, updateTask, deleteTask, reorderTasks, toggleStatus } =
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [listName, setListName] = useState<string>("所有任务");
+  const [groupMode, setGroupMode] = useState<TaskGroupMode>("status");
+  const [sections, setSections] = useState<TaskSectionInfo[]>([]);
+  const [ungroupedName, setUngroupedName] = useState("未分组");
+  const [ungroupedVisible, setUngroupedVisible] = useState(true);
+  const { tasks, loading, createTask, updateTask, deleteTask, reorderTasks, toggleStatus, refetch } =
     useTasks({
       listId,
       folderId,
       tagId,
       status: statusFilter || undefined,
-      smartView: smartView ?? undefined,
     });
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+
+  const loadList = useCallback(() => {
+    if (!listId) {
+      setListName(folderId ? "文件夹任务" : tagId ? "标签任务" : "所有任务");
+      setSections([]);
+      return;
+    }
+    return fetch(`/api/tasks/lists/${listId}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data?.list) return;
+        setListName(data.list.name);
+        setViewMode(data.list.viewMode as ViewMode);
+        setGroupMode(data.list.groupMode === "custom" ? "custom" : "status");
+        setSections(data.list.sections ?? []);
+        setUngroupedName(data.list.ungroupedName ?? "未分组");
+        setUngroupedVisible(data.list.ungroupedVisible ?? true);
+      });
+  }, [listId, folderId, tagId]);
+
+  useEffect(() => {
+    void loadList();
+  }, [loadList]);
+
+  const changeViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    if (listId) void fetch(`/api/tasks/lists/${listId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ viewMode: mode }) });
+  };
+
+  const createTopLevelTask = async (title: string, priority: Parameters<typeof createTask>[0]["priority"], dueDate: string | null) => {
+    if (groupMode === "custom" && !ungroupedVisible && sections.length === 0 && listId) {
+      await fetch(`/api/tasks/lists/${listId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ungroupedVisible: true }) });
+      setUngroupedVisible(true);
+    }
+    await createTask({ title, priority, dueDate, sectionId: groupMode === "custom" && !ungroupedVisible ? sections[0]?.id ?? null : null });
+  };
 
   useEffect(() => {
     if (!highlightTaskId || loading || tasks.length === 0) return;
@@ -64,7 +106,15 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
   const completedTasks = tasks.filter((t) => t.status === "done").length;
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full min-w-0">
+    <div className="min-w-0 flex-1 space-y-5 overflow-y-auto px-7 py-6">
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-1 rounded-full bg-primary/70" />
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">{listName}</h2>
+          <p className="text-xs text-muted-foreground">{tasks.length} 个任务 · {completedTasks} 个已完成</p>
+        </div>
+      </div>
       {/* Header with view toggle and filters */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -73,7 +123,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
             {views.map(({ mode, icon: Icon, label }) => (
               <button
                 key={mode}
-                onClick={() => setViewMode(mode)}
+                onClick={() => changeViewMode(mode)}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all",
                   viewMode === mode
@@ -110,27 +160,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
         </div>
       </div>
 
-      {/* Smart view segmented control */}
-      <div className="flex gap-1 border-b border-border pb-2">
-        {([
-          { key: null, label: "全部" },
-          { key: "today", label: "今天" },
-          { key: "next7days", label: "最近 7 天" },
-        ] as { key: SmartView | null; label: string }[]).map((opt) => (
-          <button
-            key={opt.label}
-            onClick={() => setSmartView(opt.key)}
-            className={cn(
-              "px-3 py-1 text-sm rounded-md transition-colors",
-              smartView === opt.key
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent"
-            )}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
+      <QuickAddInput onAdd={(title, priority, dueDate) => void createTopLevelTask(title, priority, dueDate)} />
 
       {/* View content */}
       {loading ? (
@@ -146,6 +176,11 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
               onUpdate={updateTask}
               onDelete={deleteTask}
               onCreateTask={createTask}
+              onOpenTask={(task) => setSelectedTaskId(task.id)}
+              sections={groupMode === "custom" ? sections : undefined}
+              ungroupedName={ungroupedName}
+              ungroupedVisible={ungroupedVisible}
+              onReorder={reorderTasks}
             />
           )}
           {viewMode === "kanban" && (
@@ -155,6 +190,15 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
               onUpdate={updateTask}
               onDelete={deleteTask}
               onReorder={reorderTasks}
+              onOpenTask={(task) => setSelectedTaskId(task.id)}
+              listId={listId}
+              initialGroupMode={groupMode}
+              onGroupModeChange={(mode) => {
+                setGroupMode(mode);
+                if (listId) void fetch(`/api/tasks/lists/${listId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ groupMode: mode }) });
+              }}
+              onTasksChanged={refetch}
+              onSectionsChanged={loadList}
             />
           )}
           {viewMode === "calendar" && (
@@ -166,6 +210,10 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
           )}
         </>
       )}
+    </div>
+    {selectedTask && (
+      <TaskDetailPanel task={selectedTask} onClose={() => setSelectedTaskId(null)} onUpdate={updateTask} onDelete={deleteTask} />
+    )}
     </div>
   );
 }

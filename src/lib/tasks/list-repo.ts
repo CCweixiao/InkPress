@@ -53,7 +53,7 @@ export async function reorderFolders(items: { id: string; sortOrder: number }[])
   );
 }
 
-export async function createList({ name, color, folderId }: { name: string; color?: string; folderId?: string | null }) {
+export async function createList({ name, color, folderId, viewMode, groupMode }: { name: string; color?: string; folderId?: string | null; viewMode?: string; groupMode?: string }) {
   const maxSort = await prisma.taskList.aggregate({ _max: { sortOrder: true } });
   return prisma.taskList.create({
     data: {
@@ -61,13 +61,15 @@ export async function createList({ name, color, folderId }: { name: string; colo
       color: color ?? "#6b7280",
       folderId: folderId ?? null,
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
+      viewMode: viewMode ?? "list",
+      groupMode: groupMode ?? "status",
     },
   });
 }
 
 export async function updateList(
   id: string,
-  patch: { name?: string; color?: string; folderId?: string | null; sortOrder?: number }
+  patch: { name?: string; color?: string; folderId?: string | null; sortOrder?: number; viewMode?: string; groupMode?: string; ungroupedName?: string; ungroupedVisible?: boolean }
 ) {
   return prisma.taskList.update({ where: { id }, data: patch });
 }
