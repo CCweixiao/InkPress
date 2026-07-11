@@ -24,7 +24,6 @@
 - 移除 Inbox 相关代码路径
 
 **不纳入（YAGNI）：**
-- 清单/文件夹拖拽排序（`sortOrder` 字段预留，无拖拽 UI）
 - 清单图标自定义（仅彩色圆点）
 - 清单内视图切换（列表/看板/日历）
 
@@ -107,9 +106,11 @@ model TaskList {
 | POST | `/api/tasks/folders` | body `{ name }` → 新建文件夹 |
 | PATCH | `/api/tasks/folders/[id]` | body `{ name?, collapsed?, sortOrder? }` |
 | DELETE | `/api/tasks/folders/[id]` | 删文件夹：清单提升为顶层（handler 先置 folderId=null） |
+| POST | `/api/tasks/folders/reorder` | body `{ items: [{ id, sortOrder }] }` → 批量重排文件夹 |
 | POST | `/api/tasks/lists` | body `{ name, color?, folderId? }` → 新建清单 |
 | PATCH | `/api/tasks/lists/[id]` | body `{ name?, color?, folderId?, sortOrder? }` |
 | DELETE | `/api/tasks/lists/[id]` | 删清单：task 软删进垃圾箱（handler 先软删 task） |
+| POST | `/api/tasks/lists/reorder` | body `{ items: [{ id, sortOrder, folderId? }] }` → 批量重排清单；folderId 变更 = 跨父级移动 |
 
 ### 改造现有
 
@@ -166,6 +167,26 @@ export type SelectedKey =
    - 文件夹右侧 = 文件夹下所有清单任务合计
    - 全部任务 = 所有未废弃任务
 
+### 拖拽排序
+
+复用项目已有的 `@dnd-kit/core` + `@dnd-kit/sortable`（TaskPanel/KanbanView 在用）。两级独立 DnD 上下文：
+
+**1. 文件夹级排序**（顶层文件夹之间）
+- 拖动文件夹行上下重排
+- 仅文件夹之间互拖；清单不能拖成文件夹，文件夹不能拖进另一个文件夹（严格两级）
+- 落库：`PATCH /api/tasks/folders/[id] { sortOrder }` 或批量 reorder 端点
+
+**2. 清单级排序**（同一父级内的清单之间）
+- 同父级（同为顶层 / 同一文件夹内）的清单上下重排
+- **跨父级拖动支持**：清单可从文件夹拖出到顶层，或从顶层拖进文件夹。这本质是 `folderId` 变更，拖放时计算新父级 + 新 sortOrder
+- 落库：`POST /api/tasks/lists/reorder`（见下方 API）
+
+**交互细节：**
+- 拖动手柄：行 hover 时左侧出现 `⠿` 拖动柄（或整行可拖，与 KanbanView 一致）
+- 拖动时高亮目标位置（dnd-kit 的 DragOverlay）
+- 文件夹折叠时其下清单不可拖出（需先展开）
+- 拖拽结束后乐观更新 + 服务端持久化，失败回滚
+
 ### 改动组件清单
 
 | 组件 | 改动 |
@@ -188,10 +209,12 @@ export type SelectedKey =
 
 ### 新建 lib
 
-`src/lib/tasks/list-repo.ts`：folder/list CRUD 服务层，参考 `src/lib/snippets/tag-repo.ts` 模式。封装：
+`src/lib/tasks/list-repo.ts`：folder/list CRUD + reorder 服务层，参考 `src/lib/snippets/tag-repo.ts` 模式。封装：
 - `listFoldersWithLists()` — 全树查询
 - `createFolder(name)` / `renameFolder(id, name)` / `deleteFolder(id)`（内置清单提升逻辑）
+- `reorderFolders(items)` — 批量更新 sortOrder（事务内）
 - `createList({ name, color, folderId })` / `updateList(id, patch)` / `deleteList(id)`（内置 task 软删逻辑）
+- `reorderLists(items)` — 批量更新 sortOrder + folderId（跨父级移动，事务内）
 
 ## 迁移策略
 
