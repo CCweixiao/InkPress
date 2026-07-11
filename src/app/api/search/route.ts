@@ -70,7 +70,7 @@ export async function GET(req: Request) {
       },
     }),
     prisma.task.findMany({
-      where: { status: { not: "archived" } },
+      where: { trashed: false, status: { not: "archived" } },
       select: { id: true, title: true, status: true, priority: true, dueDate: true },
     }),
   ]);
