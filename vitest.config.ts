@@ -4,7 +4,7 @@ import path from "node:path";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["tests/unit/**/*.test.ts"],
+    include: ["tests/unit/**/*.test.ts", "tests/api/**/*.test.ts"],
     // Several suites spawn git/AST subprocesses. Bounding workers prevents
     // process starvation and makes their real per-test timeouts deterministic.
     maxWorkers: 4,
