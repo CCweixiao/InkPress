@@ -48,6 +48,8 @@ jobs:
   build:
     name: Build (Windows x64)
     runs-on: windows-latest
+    permissions:
+      contents: write
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
@@ -149,14 +151,21 @@ jobs:
           INKPRESS_REQUIRE_WINDOWS_SIGNATURE: ${{ steps.sign.outputs.enabled }}
         run: pnpm electron:build:x64
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-x64
-          path: dist/InkPress-*-x64.exe
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
+      - name: Upload Windows installer directly to draft Release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in v*) ;; *) TAG="v$TAG" ;; esac
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes \
+              || gh release view "$TAG" >/dev/null
+          fi
+          test "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" \
+            || { echo "✗ $TAG 已公开，拒绝覆盖资产"; exit 1; }
+          gh release upload "$TAG" dist/InkPress-*-x64.exe --clobber
 
   release:
     name: Append Windows assets to GitHub Release
@@ -172,15 +181,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: windows-x64
-          path: artifacts
-
-      - name: List artifacts
-        run: ls -lh artifacts/
-
       - name: Determine tag
         id: tag
         run: |
@@ -194,21 +194,6 @@ jobs:
             v*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
             *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
           esac
-
-      - name: Upload Windows installer to draft Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft --title "$TAG" --generate-notes \
-              || gh release view "$TAG" >/dev/null
-          fi
-          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" != "true" ]; then
-            echo "✗ $TAG 已公开，拒绝逐平台 clobber 造成混合批次；请使用新的 tag"
-            exit 1
-          fi
-          gh release upload "$TAG" artifacts/*.exe --clobber
 
       - name: Publish only after all three platform assets exist
         id: finalize

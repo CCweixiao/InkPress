@@ -276,7 +276,11 @@ function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
 function smokeRequest(port: number, pathname: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.get(
-      { hostname: "127.0.0.1", port, path: pathname, timeout: 10_000 },
+      // Windows runner 上首次请求会同步完成数据库迁移、内置主题初始化和
+      // Next 首次路由加载；端口已经监听并不代表首页能在 10 秒内返回。
+      // 给单次健康检查完整的冷启动窗口，外层 smoke runner 仍有 120 秒
+      // 总超时，因此真正的死锁/启动失败仍会让发布失败。
+      { hostname: "127.0.0.1", port, path: pathname, timeout: 60_000 },
       (res) => {
         const chunks: Buffer[] = [];
         let bytes = 0;
