@@ -277,6 +277,10 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
   const [editList, setEditList] = useState<TaskListInfo | null>(null);
   const [tags, setTags] = useState<TagInfo[]>([]);
   const [collapsedTagIds, setCollapsedTagIds] = useState<Set<string>>(new Set());
+  const [sectionsCollapsed, setSectionsCollapsed] = useState<{
+    lists: boolean;
+    tags: boolean;
+  }>({ lists: false, tags: false });
   const [tagDialogOpen, setTagDialogOpen] = useState(false);
   const [editTag, setEditTag] = useState<TagInfo | null>(null);
   const [tagDialogParentId, setTagDialogParentId] = useState<string | null>(null);
@@ -488,7 +492,7 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
   // Render
   // -------------------------------------------------------------------------
   return (
-    <aside className="w-60 shrink-0 border-r border-border flex flex-col gap-1 p-3 h-full">
+    <aside className="w-60 shrink-0 border-r border-border flex flex-col p-3 h-full">
       <button
         onClick={() => onSelect({ type: "all" })}
         className={cn(
@@ -505,10 +509,24 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         )}
       </button>
 
+      {/* 可滚动中间区域 */}
+      <div className="flex-1 overflow-y-auto min-h-0 -mx-1 px-1">
       <div className="h-px bg-border my-1" />
 
       <div className="flex items-center justify-between px-2">
-        <span className="text-xs text-muted-foreground">清单</span>
+        <button
+          onClick={() =>
+            setSectionsCollapsed((s) => ({ ...s, lists: !s.lists }))
+          }
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {sectionsCollapsed.lists ? (
+            <ChevronRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" />
+          )}
+          <span>清单</span>
+        </button>
         <div className="flex items-center gap-1">
           {folders.length > 0 && (
             <button
@@ -546,6 +564,7 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
             - SortableContext for each folder's child lists (when expanded)
           Cross-group moves are ignored in onDragEnd (YAGNI per plan).
       ====================================================================== */}
+      {!sectionsCollapsed.lists && (
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -632,11 +651,33 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
           </SortableContext>
         </DndContext>
       </DndContext>
+      )}
 
       <div className="h-px bg-border my-1" />
 
       <div className="flex items-center justify-between px-2">
-        <span className="text-xs text-muted-foreground">标签</span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setTagOpen(true)}
+            className="p-0.5 rounded hover:bg-accent text-muted-foreground"
+            title="标签管理"
+          >
+            <TagIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() =>
+              setSectionsCollapsed((s) => ({ ...s, tags: !s.tags }))
+            }
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {sectionsCollapsed.tags ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+            <span>标签</span>
+          </button>
+        </div>
         <div className="flex items-center gap-1">
           <button
             onClick={() => openTagDialog(null)}
@@ -648,7 +689,7 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         </div>
       </div>
 
-      {tagTree.map((tag) => {
+      {!sectionsCollapsed.tags && tagTree.map((tag) => {
         const isSelected = selected.type === "tag" && selected.id === tag.id;
         const isCollapsed = collapsedTagIds.has(tag.id);
         const hasChildren = (tag.children?.length ?? 0) > 0;
@@ -754,6 +795,9 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         );
       })}
 
+      </div>
+
+      {/* 固定底部 */}
       <div className="h-px bg-border my-1" />
 
       <button
@@ -770,16 +814,6 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
         {counts.trashed > 0 && (
           <span className="text-xs shrink-0">{counts.trashed}</span>
         )}
-      </button>
-
-      <div className="flex-1" />
-
-      <button
-        onClick={() => setTagOpen(true)}
-        className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
-      >
-        <TagIcon className="h-4 w-4 shrink-0" />
-        标签管理
       </button>
 
       <TagManageDialog open={tagOpen} onOpenChange={setTagOpen} />
