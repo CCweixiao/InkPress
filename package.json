@@ -103,7 +103,12 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@resvg/resvg-js-darwin-x64": "2.6.2"
+    "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.205",
+    "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.205",
+    "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.205",
+    "@resvg/resvg-js-darwin-arm64": "2.6.2",
+    "@resvg/resvg-js-darwin-x64": "2.6.2",
+    "@resvg/resvg-js-win32-x64-msvc": "2.6.2"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
@@ -134,8 +139,13 @@
   "build": {
     "appId": "com.inkpress.app",
     "productName": "InkPress",
+    "asar": true,
+    "compression": "normal",
+    "npmRebuild": false,
     "electronFuses": {
-      "runAsNode": true
+      "runAsNode": true,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
     },
     "directories": {
       "output": "dist"
@@ -182,14 +192,12 @@
     ],
     "mac": {
       "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        }
+      "minimumSystemVersion": "13.0",
+      "electronLanguages": [
+        "en",
+        "zh_CN"
       ],
+      "target": "dmg",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -198,6 +206,10 @@
       "notarize": true
     },
     "dmg": {
+      "artifactName": "InkPress-${version}-${arch}.${ext}",
+      "format": "ULFO",
+      "filesystem": "HFS+",
+      "writeUpdateInfo": false,
       "contents": [
         {
           "x": 130,
@@ -213,6 +225,10 @@
     },
     "win": {
       "icon": "build/icon.png",
+      "electronLanguages": [
+        "en-US",
+        "zh-CN"
+      ],
       "target": [
         {
           "target": "nsis",
@@ -226,7 +242,14 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "artifactName": "InkPress-${version}-x64.${ext}"
+      "differentialPackage": false,
+      "packElevateHelper": false,
+      "artifactName": "InkPress-${version}-${arch}.${ext}",
+      "installerLanguages": [
+        "en_US",
+        "zh_CN"
+      ],
+      "displayLanguageSelector": false
     },
     "linux": {
       "icon": "build/icon.png",

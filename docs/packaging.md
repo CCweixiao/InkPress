@@ -1,129 +1,122 @@
-# InkPress 桌面应用打包指南（macOS）
+# InkPress 桌面应用打包指南（macOS / Windows）
 
-> 本文档记录了经过多次踩坑后沉淀的**稳定打包方案**。
-> 打包链路脆弱的根因、每一处 hack 的作用、以及正确操作步骤，全部记录在案。
-> **每次改 prepare-standalone.ts 或升级 Next.js / electron-builder 前，先读这份文档。**
+InkPress 桌面应用由 Next.js standalone server、Electron 壳和平台原生依赖组成。
+打包必须在目标平台、目标 CPU 的原生 runner 上执行，不支持跨架构生成：
 
-## 一、为什么打包这么脆弱？（根因全景）
-
-InkPress 桌面应用 = **Next.js standalone server**（跑在 Electron 内嵌 Node 里）+ **Electron 壳**。
-三套工具链（Next.js / pnpm / electron-builder）各有自己的"默认行为"，我们的打包方案必须同时满足三者的约束，任何一处偏差都会让应用启动即崩。
-
-### 脆弱链路的 11 个坑（按发现顺序）
-
-| # | 坑 | 根因 | 当前解法 |
-|---|---|---|---|
-| 1 | **better-sqlite3 ABI 不匹配** | Electron 内嵌 Node ABI=146，标准 Node ABI=127，prebuilt 二进制不通用 | `@electron/rebuild` 针对目标 Electron 版本重编译 |
-| 2 | **pnpm symlink 指向项目绝对路径** | `fs.cpSync(dereference:true)` 对 symlink **目录**仍重建 symlink 而非复制内容 | `materializeSymlinks()` 逐个物化为真实文件 |
-| 3 | **server.js 硬编码构建机绝对路径** | Next.js 把 `outputFileTracingRoot`/`turbopack.root` 写死成构建目录 | `rewriteServerJsPaths()` 替换为 `.` |
-| 4 | **standalone file tracing 漏追踪子路径** | `@swc/helpers/_`、`esm/` 等子目录没被 Next.js 静态分析追踪到 | `patchMissingPackages()` 从项目 node_modules 补全 |
-| 5 | **打包污染开发环境** | `electron-builder` 的 after-pack 阶段会 rebuild x64，覆盖开发用的 arm64 二进制 | 打包后**必须** `pnpm rebuild better-sqlite3` 恢复 |
-| 6 | ~~node_modules 改名 app_modules~~ | ~~误以为 files 规则会剔除 extraResources 里的 node_modules~~ | **保留 node_modules 原名**（已废弃改名方案） |
-| 7 | **native binding 遗漏 .next/node_modules 路径** | `ensureNativeBindingForElectron` 只扫描 `bundle/node_modules/`，遗漏 nft 追踪的 `.next/node_modules/better-sqlite3-HASH/` | 扫描范围改为整个 `bundle`，覆盖全部 4 处副本 |
-| 8 | **electron-builder 剥离 standalone 顶层 node_modules** | electron-builder 对 extraResources 也应用全局 `!**/node_modules/**` 排除 | `extraResources` 拆分：node_modules 单独一条 entry 绕过过滤 |
-| 9 | **mergeDir 跳过 pnpm 符号链接子目录** | `Dirent.isDirectory()` 对 symlink 返回 false，符号链接子目录被跳过 | `mergeDir` 改用 `fs.statSync()`（跟随符号链接）判断类型 |
-| 10 | **pnpm 兄弟解析路径物化后断裂** | 顶层包物化为独立目录后，间接依赖（如 `@swc/helpers`）在顶层不存在 | `hoistMissingTopLevel()` BFS 遍历依赖树，从虚拟根提升缺失包 |
-| 11 | **nft 追踪包的间接依赖缺失** | `.next/node_modules/` 中 nft 追踪包（如 `@prisma/client-HASH`）的依赖不在顶层 | BFS 同时扫描 `.next/node_modules/` 的 package.json dependencies |
-
-> 坑 7-11 于 2026-06-22 检测发现并修复。详见 `docs/packaging-analysis.md`。
-
-### "之前能跑"是假象
-
-旧版本能启动，是因为路径改写（坑 3）没做，server 子进程加载的是**开发目录**的 better-sqlite3，恰好那时 ABI 兼容（都是标准 Node 编译的）。一旦开发环境被 x64 rebuild 污染（坑 5），假象就破了。
-
-## 二、正确的打包流程
-
-### 前置条件
-- macOS（arm64 Apple Silicon 或 Intel x64）
-- 已 `pnpm install`
-- `~/.inkpress` 数据目录（首次会自动创建）
-
-### 打包命令（仅当前架构，推荐）
-
-```bash
-# 方式 A：只打当前机器架构（快，不污染开发环境的另一架构二进制）
-pnpm electron:build -- --arm64    # Apple Silicon
-pnpm electron:build -- --x64      # Intel
-
-# 方式 B：双架构（慢，会触发坑 5 的污染）
-pnpm electron:build
-```
-
-### ⚠️ 打包后必做（恢复开发环境）
-
-```bash
-pnpm rebuild better-sqlite3
-```
-
-electron-builder 的 after-pack 会针对打包目标架构重编译 better-sqlite3，**覆盖开发环境用的本机架构二进制**。不执行这步，`pnpm dev` 会崩（`mach-o file, but is an incompatible architecture`）。
-
-### 验证打包结果
-
-```bash
-# 1. DMG 存在
-ls -lh dist/InkPress-0.1.0-arm64.dmg
-
-# 2. 挂载验证应用架构
-hdiutil attach dist/InkPress-0.1.0-arm64.dmg -nobrowse
-file "/Volumes/InkPress 0.1.0-arm64/InkPress.app/Contents/MacOS/InkPress"
-# 应输出: Mach-O 64-bit executable arm64
-hdiutil detach "/Volumes/InkPress 0.1.0-arm64"
-
-# 3. 安装并启动
-cp -R "/Volumes/InkPress 0.1.0-arm64/InkPress.app" /Applications/
-open /Applications/InkPress.app
-
-# 4. 查日志（应无 error）
-tail ~/.inkpress/logs/inkpress.log
-
-# 5. 前台启动看 server 子进程输出（排查用）
-"/Applications/InkPress.app/Contents/MacOS/InkPress" 2>&1 | head
-```
-
-## 三、首次启动被 Gatekeeper 拦截
-
-应用未签名（无 Apple 开发者证书），首次打开会被拦截。
-- 右键 InkPress.app → 打开 → 仍要打开
-- 或：系统设置 → 隐私与安全性 → 「仍要打开」
-
-## 四、调试打包问题
-
-### server 子进程崩溃排查
-打包应用的 server 崩溃通常不写日志（崩在日志初始化前）。前台跑 Electron 主进程看实时输出：
-
-```bash
-"/Applications/InkPress.app/Contents/MacOS/InkPress" 2>&1 | tee /tmp/inkpress.log
-# 关注 [next] 开头的行（server 子进程 stdout/stderr）
-```
-
-### 常见错误对照
-
-| 错误信息 | 原因 | 修复 |
+| 发布包 | 构建宿主 | 产物 |
 |---|---|---|
-| `NODE_MODULE_VERSION 127 ... need 146` | better-sqlite3 用标准 Node 编译，Electron 要 ABI 146 | `ensureNativeBindingForElectron()` 未跑成功，检查 electron-rebuild |
-| `mach-o ... incompatible architecture (have 'x86_64', need 'arm64')` | 打包后没恢复开发环境 | `pnpm rebuild better-sqlite3` |
-| `Cannot find module '@swc/helpers/_/...'` | standalone file tracing 漏追踪 或 mergeDir 跳过符号链接子目录 | `patchMissingPackages()` + `mergeDir` 的 `statSync` 修复 |
-| `Cannot find module '@prisma/client-runtime-utils'` | nft 追踪包的间接依赖未提升到顶层 | `hoistMissingTopLevel()` 的 BFS 需扫描 `.next/node_modules/` |
-| `Cannot find module 'next'`（server.js 崩溃） | electron-builder 剥离了 standalone 顶层 node_modules | `extraResources` 拆分：node_modules 单独一条 entry |
-| `ELF 64-bit LSB shared object`（better_sqlite3.node） | node_modules 被 Linux 环境污染 | `pnpm rebuild better-sqlite3` 恢复 macOS 原生二进制 |
-| server.js 报项目绝对路径 | outputFileTracingRoot 没改写 | `rewriteServerJsPaths()` 未跑 |
+| macOS Apple Silicon | macOS arm64 | `InkPress-<version>-arm64.dmg` |
+| macOS Intel | macOS x64 | `InkPress-<version>-x64.dmg` |
+| Windows | Windows x64 | `InkPress-<version>-x64.exe` |
 
-## 五、升级依赖时的检查清单
+macOS 最低版本为 13.0。应用本身和内置 Claude CLI 的最低系统版本必须同时满足该声明。
 
-升级 Next.js / electron-builder / better-sqlite3 / pnpm 后，打包链路可能需要调整：
+## 一、稳定打包入口
 
-- [ ] `pnpm electron:build -- --arm64` 能否生成 DMG
-- [ ] 安装后应用能启动（无 server error）
-- [ ] 数据库初始化日志正常（`~/.inkpress/logs/inkpress.log` 无 error）
-- [ ] `pnpm rebuild better-sqlite3` 后 `pnpm dev` 正常
-- [ ] 配置页、文章编辑、素材上传、公众号推送四条核心链路可用
+先执行 `pnpm install`，然后在对应的原生机器上运行：
 
-## 六、关键文件索引
+```bash
+# 自动使用当前机器架构
+pnpm electron:build
+
+# Apple Silicon Mac
+pnpm electron:build:arm64
+
+# Intel Mac 或 Windows x64
+pnpm electron:build:x64
+```
+
+入口脚本会串行执行且任一步失败都会中止：
+
+1. 校验宿主平台、CPU 架构和 Node 22。
+2. TypeScript 检查与 Next.js production build。
+3. 生成目标架构 standalone bundle，补全 pnpm/NFT 漏追踪依赖。
+4. 在 bundle 副本内为 Electron ABI 重编 `better-sqlite3`。
+5. 编译 Electron 主进程，生成单平台、单架构安装包。
+6. 校验解包目录和安装介质。
+7. 真正安装后运行原生依赖与 HTTP smoke test。
+
+禁止在 Apple Silicon 上用 `--x64` 生成 Intel 包，或在 Intel 上用 `--arm64` 生成 M 系包。
+bytenode 字节码、Electron V8 snapshot 和原生 `.node` 文件都与宿主架构绑定，跨架构产物可能能生成但无法启动。
+
+## 二、完整性与瘦身策略
+
+### standalone 处理
+
+- 根目录只复制 `.next`、`node_modules`、`server.js`、`package.json`，避免 Next 动态 tracing 把本地数据库、`storage`、旧 `dist`、测试目录或凭据带进安装包。
+- 所有 pnpm symlink/junction 都物化为真实文件，避免安装后仍指向构建机绝对路径。
+- `server.js` 和 `.next/required-server-files.json` 中的构建机路径改写为相对路径。
+- 从完整安装源 merge 依赖包，保证 React `react-server` 等条件导出不是 NFT 残片。
+- `.next/static`、`public`、内置主题、系统 Skill 和 Prisma migrations 按源文件哈希复制并校验。
+- 删除只用于构建的 `*.nft.json`、source map、声明、测试和文档；业务资源目录不应用这些删除规则。
+- 只保留当前平台的 Claude CLI 与 Resvg 原生包。
+- `server.js` 用当前 Electron 的 V8 编译为 `server.jsc`，并校验 SHA-256。
+
+### 安装包策略
+
+- Electron 语言仅保留英文和简体中文。
+- macOS 使用 HFS+ / LZFSE（`ULFO`）DMG，兼顾体积、挂载和复制速度。
+- Windows 使用 NSIS 普通压缩；项目没有自动更新器，因此不生成 differential blockmap，也不附带 elevate helper。
+- 保持 `compression: normal`。`maximum` 会显著增加 CI 与安装解压时间，`store` 会明显放大下载体积。
+- Claude CLI 是功能依赖，不做 UPX、strip 或二次改写，避免破坏其签名和 hardened runtime。
+
+## 三、自动验证门禁
+
+`pnpm electron:build*` 已自动覆盖以下检查：
+
+- bundle 中入口、BUILD_ID、required-server metadata、字节码 hash 均有效。
+- 资源源目录与安装包内 `.next/static`、public、themes、系统 Skill、migrations 文件清单和 SHA-256 完全一致。
+- 所有 `.node`、Mach-O 或 PE 文件属于目标架构；Claude/Resvg 平台包版本与 wrapper 完全一致。
+- macOS 只含 `en.lproj`、`zh_CN.lproj`，Windows 只含 `en-US.pak`、`zh-CN.pak`。
+- DMG 可通过 `hdiutil verify`，实际格式为 ULFO，挂载后包含 App 和 Applications 链接。
+- 配置完整签名凭据时，macOS 必须通过 `codesign`、Gatekeeper 与 stapler ticket 校验。
+- macOS 将 App 从 DMG 复制到临时 Applications，卸载 DMG 后再启动。
+- Windows 将 NSIS 静默安装到同时包含空格和中文的临时路径，从安装目录启动后再静默卸载。
+- 打包后的 Electron Node 实际加载 React 条件导出、better-sqlite3、Resvg，并执行 `claude --version`。
+- 全新数据目录实际执行所有 Prisma migrations，并访问 `/`、`/api/themes`、`/api/settings/status`、`/api/skills`。
+
+## 四、签名、公证与发布
+
+macOS 本地可从被 `.gitignore` 忽略的 `.env.apple` 读取 Apple 凭据。正式 CI 只有在证书、证书密码、Apple ID、app-specific password 和 Team ID 全部存在时才启用签名；凭据不完整会直接失败，不会发布“只签名未公证”的半成品。
+
+三个 GitHub Actions workflow 分别在原生 arm64 Mac、x64 Mac 和 x64 Windows runner 上构建。Tag 发布先上传到同一个 draft Release；只有三个精确命名的安装包都存在时才解除 draft，避免某个平台失败后公开残缺 Release。
+
+Windows 流水线支持可选 Authenticode 门禁；配置 `WIN_CSC_LINK` 与
+`WIN_CSC_KEY_PASSWORD` 后会自动签名并强制校验安装器、主程序和卸载器。
+未配置证书时功能与安装 smoke 仍会执行，但 SmartScreen/企业策略可能提示未知发布者。
+
+## 五、常见问题
+
+| 错误 | 原因 | 检查点 |
+|---|---|---|
+| `NODE_MODULE_VERSION ...` | better-sqlite3 不是 Electron ABI | `prepare-standalone` 的 rebuild 是否完成 |
+| `cachedDataRejected` | bytenode 字节码与目标 Electron/架构不一致 | 必须在目标架构原生构建 |
+| `Cannot find module '@swc/helpers/_/...'` | standalone 包内容不完整 | `patchMissingPackages()` 与 merge 完整性门禁 |
+| `Cannot find module 'react.react-server.js'` | React 顶层包是 NFT 残片 | 条件导出 runtime probe 必须通过 |
+| `Cannot find module '@prisma/client-runtime-utils'` | traced 包间接依赖缺失 | `.next/node_modules` 局部依赖闭包 |
+| 安装后 server 引用构建机目录 | metadata 路径未改写 | `required-server-files.json` 与 server.js 路径门禁 |
+| macOS Helper 架构混杂 | target 配置固定了错误架构 | `mac.target` 必须保持架构中性，由 CLI 决定 |
+
+## 六、升级依赖检查清单
+
+升级 Next.js、Electron、electron-builder、pnpm、better-sqlite3、Claude SDK 或 Resvg 后：
+
+- [ ] 三个原生 workflow 均从干净依赖缓存完成构建。
+- [ ] 三个安装介质 smoke test 均通过，而非只启动 unpacked 目录。
+- [ ] macOS 两个包的全部 Mach-O 架构与最低系统版本通过。
+- [ ] Windows 安装、启动、卸载及全部 PE x64 门禁通过。
+- [ ] React 条件导出、SQLite、Resvg、Claude CLI、系统 Skill 和迁移门禁通过。
+- [ ] draft Release 仅在三个精确资产全部存在后发布。
+
+## 七、关键文件
 
 | 文件 | 作用 |
 |---|---|
-| `scripts/prepare-standalone.ts` | 打包前处理 standalone bundle（物化/补全/提升/改写路径/重编译 native） |
-| `electron/main.ts` | Electron 主进程，通过 Electron 标准 Helper spawn standalone server 子进程 |
-| `next.config.ts` | `output: "standalone"` + `serverExternalPackages` |
-| `package.json` → `build` | electron-builder 配置（extraResources 拆分复制 node_modules + bundle） |
-| `docs/packaging-analysis.md` | 打包机制分析与架构评估报告（体积分析、主流方案对比、迁移评估） |
+| `scripts/electron-build.mjs` | 三平台统一打包入口和门禁编排 |
+| `scripts/prepare-standalone.ts` | standalone 物化、补全、瘦身、原生 rebuild、字节码和完整性检查 |
+| `scripts/server-externals.json` | Next tracing 与 prepare 共用的 server external 单一清单 |
+| `scripts/verify-electron-package.mjs` | bundle、架构、资源、签名和安装介质校验 |
+| `scripts/smoke-installed-package.mjs` | DMG/NSIS 真实安装 smoke test |
+| `scripts/smoke-packaged-app.mjs` | 安装后原生依赖与应用启动 smoke test |
+| `electron/main.ts` | Electron 主进程及打包态 HTTP smoke checks |
+| `.github/workflows/release*.yml` | 三个目标平台的原生构建与 draft Release 协调 |

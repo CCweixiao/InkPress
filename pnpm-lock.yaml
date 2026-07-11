@@ -268,7 +268,22 @@ importers:
         specifier: ^9.0.10
         version: 9.0.10
     optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64':
+        specifier: 0.3.205
+        version: 0.3.205
+      '@anthropic-ai/claude-agent-sdk-darwin-x64':
+        specifier: 0.3.205
+        version: 0.3.205
+      '@anthropic-ai/claude-agent-sdk-win32-x64':
+        specifier: 0.3.205
+        version: 0.3.205
+      '@resvg/resvg-js-darwin-arm64':
+        specifier: 2.6.2
+        version: 2.6.2
       '@resvg/resvg-js-darwin-x64':
+        specifier: 2.6.2
+        version: 2.6.2
+      '@resvg/resvg-js-win32-x64-msvc':
         specifier: 2.6.2
         version: 2.6.2
 

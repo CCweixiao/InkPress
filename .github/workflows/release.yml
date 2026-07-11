@@ -7,10 +7,29 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/**"
+      - "electron/**"
+      - "src/**"
+      - "build/**"
+      - "public/**"
+      - "themes/**"
+      - "resources/skills/system/**"
+      - "prisma/**"
+      - "next.config.ts"
+      - "postcss.config.mjs"
+      - "prisma.config.ts"
+      - "tsconfig.json"
+      - "tsconfig.electron.json"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag 名（如 v0.1.0，无需前缀也行）"
+        description: "Release tag 名（必须为 v0.1.0 形式）"
         required: true
         default: "v0.1.0"
 
@@ -19,34 +38,74 @@ concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: true
 
-# 仅构建 arm64：GitHub Actions 自 2025-12-04 退役 macos-13 镜像后，
-# 已无任何原生 Intel macOS runner；跨架构在 arm64 runner 上打 x64 需要
-# 解决 bytenode bytecode + better-sqlite3 native binding 的 cross-arch
-# 问题（见 scripts/electron-build.mjs 的 arch guard），暂不支持。
-# Intel Mac 用户请引导到 Web 版或后续 self-hosted runner 方案。
+# Apple Silicon 与 Intel 必须分别在原生 runner 构建；本 workflow 只负责 arm64，
+# x64 由 release-macos-intel.yml 的 macos-15-intel runner 负责。
 jobs:
   build:
     name: Build (arm64)
-    runs-on: macos-latest
+    runs-on: macos-15
+    env:
+      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Checkout requested tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          case "$RAW_TAG" in
+            v*) ;;
+            *) echo "✗ 手动发布 tag 必须以 v 开头: $RAW_TAG"; exit 1 ;;
+          esac
+          VERSION="${RAW_TAG#v}"
+          if ! echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+            echo "✗ tag 版本号非法: $RAW_TAG"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          git checkout --detach "refs/tags/$TAG"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: "11.8.0"
           run_install: false
 
       - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           # 启用 pnpm store 缓存：首次运行后，依赖装包时间从 ~60s 降到 ~10s
           cache: pnpm
 
+      - name: Assert native arm64 build host
+        run: node scripts/verify-electron-package.mjs --phase host --platform darwin --arch arm64
+
+      - name: Cache Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('src/**', 'public/**', 'next.config.ts') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Cache Electron, native headers and builder tools
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.ELECTRON_CACHE }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+            ~/.electron-gyp
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --prefer-offline
         env:
           # 允许 better-sqlite3 / electron / sharp 等原生包构建
           pnpm_allow_build: "true"
@@ -55,69 +114,79 @@ jobs:
       # 例如 tag=v0.4.2 → package.json.version=0.4.2 → 产物 InkPress-0.4.2-arm64.dmg。
       # next.config.ts 的 APP_VERSION 注入和 prepare-standalone 均依赖 package.json.version。
       - name: Sync version from tag
+        env:
+          RAW_TAG: ${{ github.event_name == 'pull_request' && format('0.0.0-pr.{0}', github.event.pull_request.number) || github.event.inputs.tag || github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW="${{ github.event.inputs.tag }}"
-          else
-            RAW="${{ github.ref_name }}"
-          fi
-          VERSION="${RAW#v}"
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "✗ tag 版本号非法: $RAW（期望 vX.Y.Z）"
-            exit 1
-          fi
-          echo "同步 package.json version → $VERSION（来源: $RAW）"
-          node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
-          grep '"version"' package.json
-
-      - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
-        run: pnpm electron:prepare
+          node scripts/sync-build-version.mjs "$RAW_TAG"
 
       - name: Configure code signing
         id: sign
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-        run: |
-          if [ -n "$CSC_LINK" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "代码签名 secrets 已配置，将签名 + 公证"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "未配置签名 secrets，显式禁用签名（macos runner keychain 有默认证书会触发自动签名并报错）"
-            # 在 build.mac 写入 identity:null，比 CSC_IDENTITY_AUTO_DISCOVERY env 更可靠
-            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
-          fi
-
-      - name: Build DMG (arm64)
-        env:
-          # 透传签名 env 给 electron-builder。未签名时 CSC_LINK 为空 + identity:null 已禁用签名
+          EVENT_NAME: ${{ github.event_name }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec electron-builder --mac --arm64 --publish never
+        run: |
+          MISSING=""
+          ANY_CONFIGURED=false
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!name}" ]; then
+              ANY_CONFIGURED=true
+            else
+              MISSING="$MISSING $name"
+            fi
+          done
+          if [ -z "$MISSING" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "代码签名 secrets 已配置，将签名 + 公证"
+          elif [ "$EVENT_NAME" != "pull_request" ] || [ "$ANY_CONFIGURED" = "true" ]; then
+            echo "✗ 正式发布必须完整签名和公证；缺少:$MISSING"
+            exit 1
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "PR 未配置签名 secrets，使用显式未签名构建做安装流程验证"
+            # 同时关闭 notarize，避免无凭据构建触发网络探测或产生“签名但未公证”歧义。
+            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;j.build.mac.notarize=false;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          fi
+
+      - name: Build, verify and install-smoke DMG (arm64)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          INKPRESS_REQUIRE_MAC_SIGNATURE: ${{ steps.sign.outputs.enabled }}
+        run: pnpm electron:build:arm64
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dmg-arm64
           path: dist/*.dmg
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   release:
     name: Publish GitHub Release
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.event.inputs.tag || github.ref_name }}
+      queue: max
+      cancel-in-progress: false
     permissions:
       contents: write # 创建 Release 所需
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download DMG artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dmg-arm64
           path: artifacts
@@ -139,33 +208,53 @@ jobs:
             *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - name: Create/Update GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
-          generate_release_notes: true
-          files: artifacts/*.dmg
-          body: |
-            ## 安装包
-
-            | 文件 | 适用平台 |
-            | --- | --- |
-            | `*-arm64.dmg` | Apple Silicon（M1/M2/M3/M4） |
-
-            ## 安装说明
-
-            1. 下载 `*-arm64.dmg`，双击打开，将 InkPress 拖入 Applications
-            2. 首次打开若提示「无法验证开发者」：右键点击应用 → 选择「打开」即可绕过 Gatekeeper（未签名构建）；已签名构建可双击直接打开
-            3. 启动后数据存放在 `~/.inkpress`（数据库、文章、技能、日志）
-
-            > 注：仅支持 Apple Silicon。Intel Mac 暂未提供原生包，可使用 Web 版。
-
-            ---
+      - name: Upload arm64 DMG to draft Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes \
+              || gh release view "$TAG" >/dev/null
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" != "true" ]; then
+            echo "✗ $TAG 已公开，拒绝逐平台 clobber 造成混合批次；请使用新的 tag"
+            exit 1
+          fi
+          gh release upload "$TAG" artifacts/*.dmg --clobber
+
+      - name: Publish only after all three platform assets exist
+        id: finalize
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          READY=true
+          for FILE in \
+            "InkPress-${VERSION}-arm64.dmg" \
+            "InkPress-${VERSION}-x64.dmg" \
+            "InkPress-${VERSION}-x64.exe"; do
+            if ! grep -Fxq "$FILE" <<< "$ASSETS"; then
+              echo "等待其他平台资产：$FILE"
+              READY=false
+            fi
+          done
+          if [ "$READY" != "true" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+            gh release edit "$TAG" --draft=false
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "✓ 三个平台资产齐全，Release 已公开"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Sync version to inkpress-service
+        if: steps.finalize.outputs.published == 'true'
         continue-on-error: true
         env:
           RELEASE_REGISTER_TOKEN: ${{ secrets.RELEASE_REGISTER_TOKEN }}

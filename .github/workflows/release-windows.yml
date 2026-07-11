@@ -4,7 +4,7 @@ name: Release (Windows)
 # - 同一个 tag（v*）会同时触发两个 workflow，但文件 / concurrency group /
 #   Release 资产完全隔离，互不阻塞、互不覆盖
 # - Windows 跑挂不影响 mac 发版，反之亦然
-# - softprops/action-gh-release 默认 upsert 模式：Release 已存在则 append 资产
+# - 三个平台先向同一 draft Release 上传资产，三件齐全后才公开，避免发布残缺版本
 #
 # 触发：
 # 1. 推送 v* 形式的 tag → 自动构建并 append 到对应 Release
@@ -13,10 +13,29 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/release-windows.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/**"
+      - "electron/**"
+      - "src/**"
+      - "build/**"
+      - "public/**"
+      - "themes/**"
+      - "resources/skills/system/**"
+      - "prisma/**"
+      - "next.config.ts"
+      - "postcss.config.mjs"
+      - "prisma.config.ts"
+      - "tsconfig.json"
+      - "tsconfig.electron.json"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag 名（如 v0.1.0，无需前缀也行）"
+        description: "Release tag 名（必须为 v0.1.0 形式）"
         required: true
         default: "v0.1.0"
 
@@ -29,24 +48,68 @@ jobs:
   build:
     name: Build (Windows x64)
     runs-on: windows-latest
+    env:
+      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Checkout requested tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          case "$RAW_TAG" in
+            v*) ;;
+            *) echo "✗ 手动发布 tag 必须以 v 开头: $RAW_TAG"; exit 1 ;;
+          esac
+          VERSION="${RAW_TAG#v}"
+          if ! echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+            echo "✗ tag 版本号非法: $RAW_TAG"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          git checkout --detach "refs/tags/$TAG"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: "11.8.0"
           run_install: false
 
       - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: pnpm
 
+      - name: Assert native Windows x64 build host
+        run: node scripts/verify-electron-package.mjs --phase host --platform win32 --arch x64
+
+      - name: Cache Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('src/**', 'public/**', 'next.config.ts') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Cache Electron, native headers and builder tools
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.ELECTRON_CACHE }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+            ~/.electron-gyp
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --prefer-offline
         env:
           # 允许 better-sqlite3 / electron / sharp 等原生包构建
           pnpm_allow_build: "true"
@@ -55,54 +118,63 @@ jobs:
       # 例：tag=v0.4.3 → package.json.version=0.4.3 → 产物 InkPress-0.4.3-x64.exe
       - name: Sync version from tag
         shell: bash
+        env:
+          RAW_TAG: ${{ github.event_name == 'pull_request' && format('0.0.0-pr.{0}', github.event.pull_request.number) || github.event.inputs.tag || github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW="${{ github.event.inputs.tag }}"
+          node scripts/sync-build-version.mjs "$RAW_TAG"
+
+      - name: Configure optional Authenticode signing
+        id: sign
+        shell: bash
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if [ -n "$WIN_CSC_LINK" ] || [ -n "$WIN_CSC_KEY_PASSWORD" ]; then
+            if [ -z "$WIN_CSC_LINK" ] || [ -z "$WIN_CSC_KEY_PASSWORD" ]; then
+              echo "✗ Windows 签名凭据只配置了一部分，拒绝生成签名状态不确定的安装包"
+              exit 1
+            fi
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Authenticode 凭据已配置，将签名并强制验签"
           else
-            RAW="${{ github.ref_name }}"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "未配置 Windows 代码签名证书；安装包可安装，但可能触发 SmartScreen"
           fi
-          VERSION="${RAW#v}"
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "✗ tag 版本号非法: $RAW（期望 vX.Y.Z）"
-            exit 1
-          fi
-          echo "同步 package.json version → $VERSION（来源: $RAW）"
-          node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
-          grep '"version"' package.json
 
-      - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
-        run: pnpm electron:prepare
-
-      # Windows 暂未购买 Authenticode 证书，产物未签名。
-      # 用户首次打开会被 SmartScreen 警告，点「仍要运行」可过。
-      # 后续配置证书后，在此 step 注入 CSC_LINK/CSC_KEY_PASSWORD（Windows 版）
-      # 或用 Azure Trusted Signing（electron-builder 已原生支持）。
-      - name: Build NSIS installer (x64)
-        run: pnpm exec electron-builder --win --x64 --publish never
+      - name: Build, verify and install-smoke NSIS installer (x64)
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          INKPRESS_REQUIRE_WINDOWS_SIGNATURE: ${{ steps.sign.outputs.enabled }}
+        run: pnpm electron:build:x64
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-x64
-          path: |
-            dist/*.exe
-            dist/*.exe.blockmap
-            dist/latest*.yml
+          path: dist/InkPress-*-x64.exe
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   release:
     name: Append Windows assets to GitHub Release
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.event.inputs.tag || github.ref_name }}
+      queue: max
+      cancel-in-progress: false
     permissions:
       contents: write # append 资产到已存在的 Release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-x64
           path: artifacts
@@ -124,15 +196,67 @@ jobs:
             *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      # append 模式：release.yml 创建的 Release 已存在 → 只追加 .exe 资产，
-      # 不改 tag_name / name / body，不覆盖 mac dmg。
-      - name: Append Windows assets to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: |
-            artifacts/*.exe
-            artifacts/*.exe.blockmap
-            artifacts/latest*.yml
+      - name: Upload Windows installer to draft Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes \
+              || gh release view "$TAG" >/dev/null
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" != "true" ]; then
+            echo "✗ $TAG 已公开，拒绝逐平台 clobber 造成混合批次；请使用新的 tag"
+            exit 1
+          fi
+          gh release upload "$TAG" artifacts/*.exe --clobber
+
+      - name: Publish only after all three platform assets exist
+        id: finalize
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          READY=true
+          for FILE in \
+            "InkPress-${VERSION}-arm64.dmg" \
+            "InkPress-${VERSION}-x64.dmg" \
+            "InkPress-${VERSION}-x64.exe"; do
+            if ! grep -Fxq "$FILE" <<< "$ASSETS"; then
+              echo "等待其他平台资产：$FILE"
+              READY=false
+            fi
+          done
+          if [ "$READY" != "true" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+            gh release edit "$TAG" --draft=false
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "✓ 三个平台资产齐全，Release 已公开"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync version to inkpress-service
+        if: steps.finalize.outputs.published == 'true'
+        continue-on-error: true
+        env:
+          RELEASE_REGISTER_TOKEN: ${{ secrets.RELEASE_REGISTER_TOKEN }}
+          SYNC_URL: ${{ vars.INKPRESS_SYNC_URL || 'https://www.longoflow.com/api/releases/sync-version' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_REGISTER_TOKEN" ]; then
+            echo "⚠️ RELEASE_REGISTER_TOKEN 未配置，跳过版本同步"
+            exit 0
+          fi
+          VERSION="${{ steps.tag.outputs.tag }}"
+          GH_RELEASE_BODY=$(gh release view "$VERSION" --json body -q .body 2>/dev/null || echo "")
+          BODY_JSON=$(jq -Rs . <<< "$GH_RELEASE_BODY")
+          curl -fsS -X POST "$SYNC_URL" \
+            -H "X-Release-Token: $RELEASE_REGISTER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"packageName\":\"inkpress\",\"version\":\"${VERSION#v}\",\"channel\":\"stable\",\"changelogMarkdown\":$BODY_JSON}"

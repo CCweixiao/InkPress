@@ -1,0 +1,9 @@
+[
+  "better-sqlite3",
+  "@prisma/adapter-better-sqlite3",
+  "@prisma/client",
+  "adm-zip",
+  "ali-oss",
+  "@resvg/resvg-js",
+  "@anthropic-ai/claude-agent-sdk"
+]

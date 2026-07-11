@@ -5,7 +5,7 @@ name: Release (macOS Intel)
 #   Release 资产完全隔离，互不阻塞、互不覆盖
 # - Intel 包必须在原生 x64 runner 上构建；不能在 arm64 runner 上跨架构生成，
 #   否则 bytenode bytecode 与 better-sqlite3 原生绑定可能和运行时架构不匹配
-# - softprops/action-gh-release 默认 upsert 模式：Release 已存在则 append 资产
+# - 三个平台先向同一 draft Release 上传资产，三件齐全后才公开，避免发布残缺版本
 #
 # 触发：
 # 1. 推送 v* 形式的 tag → 自动构建并 append 到对应 Release
@@ -20,14 +20,24 @@ on:
       - ".github/workflows/release-macos-intel.yml"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "scripts/**"
       - "electron/**"
+      - "src/**"
+      - "build/**"
+      - "public/**"
+      - "themes/**"
+      - "resources/skills/system/**"
+      - "prisma/**"
       - "next.config.ts"
+      - "postcss.config.mjs"
+      - "prisma.config.ts"
+      - "tsconfig.json"
       - "tsconfig.electron.json"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag 名（如 v0.1.0，无需前缀也行）"
+        description: "Release tag 名（必须为 v0.1.0 形式）"
         required: true
         default: "v0.1.0"
 
@@ -40,24 +50,67 @@ jobs:
   build:
     name: Build (macOS Intel x64)
     runs-on: macos-15-intel
+    env:
+      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Checkout requested tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          case "$RAW_TAG" in
+            v*) ;;
+            *) echo "✗ 手动发布 tag 必须以 v 开头: $RAW_TAG"; exit 1 ;;
+          esac
+          VERSION="${RAW_TAG#v}"
+          if ! echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+            echo "✗ tag 版本号非法: $RAW_TAG"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          git checkout --detach "refs/tags/$TAG"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: "11.8.0"
           run_install: false
 
       - name: Setup Node 22（匹配 better-sqlite3 prebuilt ABI 127）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: pnpm
 
+      - name: Assert native Intel x64 build host
+        run: node scripts/verify-electron-package.mjs --phase host --platform darwin --arch x64
+
+      - name: Cache Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('src/**', 'public/**', 'next.config.ts') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Cache Electron, native headers and builder tools
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.ELECTRON_CACHE }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+            ~/.electron-gyp
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --prefer-offline
         env:
           # 允许 better-sqlite3 / electron / sharp 等原生包构建
           pnpm_allow_build: "true"
@@ -65,89 +118,78 @@ jobs:
       # 从 tag 名提取版本号写回 package.json，避免 tag 与产物文件名错位。
       # 例：tag=v0.4.3 → package.json.version=0.4.3 → 产物 InkPress-0.4.3-x64.dmg
       - name: Sync version from tag
+        env:
+          RAW_TAG: ${{ github.event_name == 'pull_request' && format('0.0.0-pr.{0}', github.event.pull_request.number) || github.event.inputs.tag || github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            RAW="v0.0.0-pr-${{ github.event.pull_request.number }}"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW="${{ github.event.inputs.tag }}"
-          else
-            RAW="${{ github.ref_name }}"
-          fi
-          VERSION="${RAW#v}"
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "✗ tag 版本号非法: $RAW（期望 vX.Y.Z）"
-            exit 1
-          fi
-          echo "同步 package.json version → $VERSION（来源: $RAW）"
-          node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
-          grep '"version"' package.json
-
-      # package.json 的 mac target 默认是 arm64；Intel workflow 必须在运行时改成 x64-only，
-      # 避免 electron-builder 同时产出 arm64 + x64 两个 DMG。
-      - name: Force macOS Intel-only target
-        run: |
-          node <<'NODE'
-          const fs = require("fs");
-          const p = "./package.json";
-          const j = JSON.parse(fs.readFileSync(p, "utf8"));
-          j.build.mac.target = [{ target: "dmg", arch: ["x64"] }];
-          j.build.dmg = {
-            ...(j.build.dmg || {}),
-            artifactName: "InkPress-${version}-x64.${ext}",
-          };
-          fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
-          NODE
-          node -e "const j=require('./package.json'); console.log(JSON.stringify({macTarget:j.build.mac.target,dmgArtifactName:j.build.dmg.artifactName}, null, 2))"
-
-      - name: Prepare Electron build（next build → prepare-standalone → tsc electron）
-        run: pnpm electron:prepare
+          node scripts/sync-build-version.mjs "$RAW_TAG"
 
       - name: Configure code signing
         id: sign
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-        run: |
-          if [ -n "$CSC_LINK" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "代码签名 secrets 已配置，将签名 + 公证"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "未配置签名 secrets，显式禁用签名（macos runner keychain 有默认证书会触发自动签名并报错）"
-            # 在 build.mac 写入 identity:null，比 CSC_IDENTITY_AUTO_DISCOVERY env 更可靠
-            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
-          fi
-
-      - name: Build DMG (macOS Intel x64)
-        env:
-          # 透传签名 env 给 electron-builder。未签名时 CSC_LINK 为空 + identity:null 已禁用签名
+          EVENT_NAME: ${{ github.event_name }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec electron-builder --mac --x64 --publish never
+        run: |
+          MISSING=""
+          ANY_CONFIGURED=false
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!name}" ]; then
+              ANY_CONFIGURED=true
+            else
+              MISSING="$MISSING $name"
+            fi
+          done
+          if [ -z "$MISSING" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "代码签名 secrets 已配置，将签名 + 公证"
+          elif [ "$EVENT_NAME" != "pull_request" ] || [ "$ANY_CONFIGURED" = "true" ]; then
+            echo "✗ 正式发布必须完整签名和公证；缺少:$MISSING"
+            exit 1
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "PR 未配置签名 secrets，使用显式未签名构建做安装流程验证"
+            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.build.mac.identity=null;j.build.mac.notarize=false;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          fi
+
+      - name: Build, verify and install-smoke DMG (macOS Intel x64)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          INKPRESS_REQUIRE_MAC_SIGNATURE: ${{ steps.sign.outputs.enabled }}
+        run: pnpm electron:build:x64
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dmg-macos-intel-x64
           path: dist/*-x64.dmg
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   release:
     name: Append macOS Intel assets to GitHub Release
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.event.inputs.tag || github.ref_name }}
+      queue: max
+      cancel-in-progress: false
     permissions:
       contents: write # append 资产到已存在的 Release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download macOS Intel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dmg-macos-intel-x64
           path: artifacts
@@ -169,12 +211,67 @@ jobs:
             *)  echo "tag=v$TAG" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      # append 模式：release.yml 创建的 Release 已存在 → 只追加 Intel DMG 资产，
-      # 不改 tag_name / name / body，不覆盖 mac arm64 或 Windows 资产。
-      - name: Append macOS Intel assets to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: artifacts/*.dmg
+      - name: Upload Intel DMG to draft Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes \
+              || gh release view "$TAG" >/dev/null
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" != "true" ]; then
+            echo "✗ $TAG 已公开，拒绝逐平台 clobber 造成混合批次；请使用新的 tag"
+            exit 1
+          fi
+          gh release upload "$TAG" artifacts/*.dmg --clobber
+
+      - name: Publish only after all three platform assets exist
+        id: finalize
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          READY=true
+          for FILE in \
+            "InkPress-${VERSION}-arm64.dmg" \
+            "InkPress-${VERSION}-x64.dmg" \
+            "InkPress-${VERSION}-x64.exe"; do
+            if ! grep -Fxq "$FILE" <<< "$ASSETS"; then
+              echo "等待其他平台资产：$FILE"
+              READY=false
+            fi
+          done
+          if [ "$READY" != "true" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+            gh release edit "$TAG" --draft=false
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "✓ 三个平台资产齐全，Release 已公开"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync version to inkpress-service
+        if: steps.finalize.outputs.published == 'true'
+        continue-on-error: true
+        env:
+          RELEASE_REGISTER_TOKEN: ${{ secrets.RELEASE_REGISTER_TOKEN }}
+          SYNC_URL: ${{ vars.INKPRESS_SYNC_URL || 'https://www.longoflow.com/api/releases/sync-version' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_REGISTER_TOKEN" ]; then
+            echo "⚠️ RELEASE_REGISTER_TOKEN 未配置，跳过版本同步"
+            exit 0
+          fi
+          VERSION="${{ steps.tag.outputs.tag }}"
+          GH_RELEASE_BODY=$(gh release view "$VERSION" --json body -q .body 2>/dev/null || echo "")
+          BODY_JSON=$(jq -Rs . <<< "$GH_RELEASE_BODY")
+          curl -fsS -X POST "$SYNC_URL" \
+            -H "X-Release-Token: $RELEASE_REGISTER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"packageName\":\"inkpress\",\"version\":\"${VERSION#v}\",\"channel\":\"stable\",\"changelogMarkdown\":$BODY_JSON}"

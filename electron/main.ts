@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import net from "node:net";
+import http from "node:http";
 import { SPLASH_LOGO_DATA_URL } from "./splash-logo";
 
 /**
@@ -24,6 +25,14 @@ let mainWindow: BrowserWindow | null = null;
 let serverPort = PREFERRED_PORT;
 let isQuitting = false;
 let splash: BrowserWindow | null = null;
+const isPackageSmokeTest = process.env.INKPRESS_PACKAGE_SMOKE_TEST === "1";
+
+if (isPackageSmokeTest && process.env.INKPRESS_SMOKE_HOME?.trim()) {
+  app.setPath(
+    "userData",
+    path.join(path.resolve(process.env.INKPRESS_SMOKE_HOME.trim()), "electron-user-data")
+  );
+}
 
 /**
  * 是否处于打包形态。
@@ -35,6 +44,9 @@ function isPackaged(): boolean {
 
 /** 用户数据根目录：打包=平台默认数据目录，开发=null（用项目目录） */
 function dataHome(): string | null {
+  if (isPackageSmokeTest && process.env.INKPRESS_SMOKE_HOME?.trim()) {
+    return path.resolve(process.env.INKPRESS_SMOKE_HOME.trim());
+  }
   return isPackaged() ? defaultDataHome() : null;
 }
 
@@ -261,6 +273,61 @@ function waitForServer(port: number, timeoutMs = 30000): Promise<void> {
   });
 }
 
+function smokeRequest(port: number, pathname: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(
+      { hostname: "127.0.0.1", port, path: pathname, timeout: 10_000 },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        res.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes <= 1024 * 1024) chunks.push(chunk);
+        });
+        res.on("end", () => {
+          if (bytes > 1024 * 1024) {
+            reject(new Error(`${pathname} 响应超过 1 MB`));
+            return;
+          }
+          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") });
+        });
+      }
+    );
+    req.once("timeout", () => req.destroy(new Error(`${pathname} 请求超时`)));
+    req.once("error", reject);
+  });
+}
+
+/** CI 直接启动已打包 app，验证 Next、数据库、迁移、主题资源和 API 均可运行。 */
+async function runPackageSmokeChecks(port: number): Promise<void> {
+  const home = await smokeRequest(port, "/");
+  if (home.status < 200 || home.status >= 400 || !home.body.includes("<!DOCTYPE html")) {
+    throw new Error(`首页 smoke 失败：HTTP ${home.status}`);
+  }
+
+  const themes = await smokeRequest(port, "/api/themes");
+  const themesJson = JSON.parse(themes.body) as { themes?: unknown[] };
+  if (themes.status !== 200 || !Array.isArray(themesJson.themes) || themesJson.themes.length === 0) {
+    throw new Error(`主题 API smoke 失败：HTTP ${themes.status}`);
+  }
+
+  const settings = await smokeRequest(port, "/api/settings/status");
+  if (settings.status !== 200) throw new Error(`设置 API smoke 失败：HTTP ${settings.status}`);
+  JSON.parse(settings.body);
+
+  const skills = await smokeRequest(port, "/api/skills");
+  const skillsJson = JSON.parse(skills.body) as {
+    skills?: Array<{ source?: string; editable?: boolean }>;
+  };
+  const hasSystemSkill =
+    skills.status === 200 &&
+    Array.isArray(skillsJson.skills) &&
+    skillsJson.skills.some((skill) => skill.source === "system" && skill.editable === false);
+  if (!hasSystemSkill) throw new Error(`系统 Skill API smoke 失败：HTTP ${skills.status}`);
+
+  console.log("[electron-smoke] HTTP /, /api/themes, /api/settings/status, /api/skills 均通过");
+}
+
 /* ============ 启动 splash ============ */
 
 /**
@@ -349,7 +416,7 @@ async function createWindow(port: number) {
 }
 
 async function bootstrap() {
-  showSplash();
+  if (!isPackageSmokeTest) showSplash();
   try {
     bootstrapData();
     serverPort = await pickPort(PREFERRED_PORT);
@@ -375,6 +442,14 @@ async function bootstrap() {
         console.log(`[next] server exited code=${code}`)
       );
     }
+    if (isPackageSmokeTest) {
+      await runPackageSmokeChecks(serverPort);
+      await killServer();
+      console.log("[electron-smoke] PASS");
+      isQuitting = true;
+      app.quit();
+      return;
+    }
     await createWindow(serverPort);
     closeSplash();
   } catch (e) {
@@ -383,6 +458,12 @@ async function bootstrap() {
     // （waitForServer 超时、createWindow 抛异常等情况下 serverProc 可能已 spawn）
     await killServer();
     closeSplash();
+    if (isPackageSmokeTest) {
+      console.error("[electron-smoke] FAIL");
+      isQuitting = true;
+      app.exit(1);
+      return;
+    }
     mainWindow = new BrowserWindow({ width: 600, height: 400 });
     const msg = e instanceof Error ? e.message : String(e);
     mainWindow.loadURL(

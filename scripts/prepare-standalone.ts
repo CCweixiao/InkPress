@@ -8,7 +8,6 @@
  *
  * 补齐内容：
  * - .next/static、public/（standalone 不含前端静态资源）
- * - src/generated/prisma（Prisma 生成客户端，非静态 import，未被追踪）
  * - resources/skills/system、themes、prisma/migrations（运行时 fs 读取的只读资源）
  * - better_sqlite3.node 原生绑定（确保顶层 + .pnpm 一致）
  *
@@ -21,6 +20,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createRequire, builtinModules } from "node:module";
 
@@ -107,17 +107,9 @@ const bundle = path.join(root, ".next", "standalone-bundle");
 
 // Next.js serverExternalPackages（next.config.ts）+ 原生模块
 // 这些包不参与 esbuild bundle，运行时从 node_modules 加载
-const SERVER_EXTERNALS = [
-  "better-sqlite3",
-  "@prisma/adapter-better-sqlite3",
-  "@prisma/client",
-  "adm-zip",
-  "ali-oss",
-  "@resvg/resvg-js",
-  // Must stay external so its platform optional package
-  // (@anthropic-ai/claude-agent-sdk-darwin-x64, etc.) is copied into the app.
-  "@anthropic-ai/claude-agent-sdk",
-];
+const SERVER_EXTERNALS = JSON.parse(
+  fs.readFileSync(path.join(root, "scripts", "server-externals.json"), "utf8")
+) as string[];
 
 if (!fs.existsSync(srcStandalone)) {
   console.error("✗ .next/standalone 不存在，请先执行 pnpm build（需 output: standalone）");
@@ -128,20 +120,53 @@ if (!fs.existsSync(srcStandalone)) {
 fs.rmSync(bundle, { recursive: true, force: true });
 
 console.log(`生成去符号链接的 standalone bundle（目标架构 ${targetArch}）…`);
-// 第一步：复制（dereference=true 会跟随 symlink 读文件内容，但对 symlink 目录本身
-// 仍会重建为 symlink —— pnpm 的 .pnpm 结构正是如此，导致 bundle 内残留指向项目源码
-// 目录的绝对路径符号链接，打包到其他机器后全部失效）。
-safeCpSync(srcStandalone, bundle);
+// 第一步：只复制 Next standalone 的标准运行时根项。Turbopack 对动态 fs 路径会把
+// storage、旧 dist、测试甚至整个工作区保守追踪进 standalone；先全量复制再删除会在
+// Windows/macOS 产生数百 MB 到数 GB 的无效 I/O，也可能短暂复制敏感本地数据。
+copyAllowedStandaloneRoots();
 // 第二步：把残留的符号链接全部物化为真实文件（关键修复）
 const materialized = materializeSymlinks(bundle);
 console.log(
   `  ✓ standalone → ${path.relative(root, bundle)}（已解析符号链接，物化 ${materialized} 处 symlink → 真实文件）`
 );
 
-// 清理 Next.js NFT 误追踪进 standalone 的项目级目录。
-// outputFileTracingRoot 默认指向项目根，导致 dist/（历史打包产物，含 DMG 与嵌套 app，可达数 GB）、
-// storage/（运行时用户数据）、开发数据库等被追踪进 standalone，打包后体积膨胀且每次构建套娃递归。
-pruneProjectArtifacts();
+// Next.js NFT 会把构建机项目根下与动态 fs 路径相关的任意内容带进 standalone，
+// 包括本地数据库、.env、服务端子项目甚至私钥。这里采用根目录 allowlist，
+// 只保留 Next standalone 的四个标准入口；业务只读资源在后面从受控源重新复制。
+pruneUnexpectedBundleRoots();
+
+function copyAllowedStandaloneRoots(): void {
+  const allowed = [".next", "node_modules", "server.js", "package.json"];
+  fs.mkdirSync(bundle, { recursive: true });
+  for (const name of allowed) {
+    const source = path.join(srcStandalone, name);
+    const destination = path.join(bundle, name);
+    if (!fs.existsSync(source)) {
+      console.error(`  ✗ standalone 缺少标准运行时根项：${name}`);
+      process.exit(1);
+    }
+    const stat = fs.statSync(source);
+    if (stat.isDirectory()) safeCpSync(source, destination);
+    else fs.copyFileSync(source, destination);
+  }
+  const skipped = fs.readdirSync(srcStandalone).filter((name) => !allowed.includes(name));
+  let reclaimedBytes = 0;
+  for (const name of skipped) {
+    const tracedCopy = path.join(srcStandalone, name);
+    reclaimedBytes += measureSize(tracedCopy);
+    // 这里只删除 Next 生成在 .next/standalone 下的副本，绝不触碰项目根的原始数据。
+    fs.rmSync(tracedCopy, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === "win32" ? 3 : 0,
+      retryDelay: 100,
+    });
+  }
+  console.log(
+    `  ✓ 根目录白名单复制 4 项，跳过并清理 ${skipped.length} 个误追踪副本` +
+      `（约 ${(reclaimedBytes / 1024 / 1024).toFixed(1)} MB）`
+  );
+}
 
 // 注：node_modules 保留原名（不改名 app_modules）。
 // extraResources 不受 build.files 规则的 "!**/node_modules/**" 约束（那仅作用于 app.asar 内部），
@@ -171,6 +196,7 @@ materializeTracedNextPackageDependencies();
 // 到原构建目录的 node_modules（ABI 不匹配 + 路径不存在）。改为相对 standalone 目录。
 rewriteServerJsPaths();
 console.log(`  ✓ server.js 内硬编码项目路径已改写为相对路径`);
+rewriteRequiredServerFilesPaths();
 
 function copyInto(src: string, destRel: string, label: string) {
   if (!fs.existsSync(src)) {
@@ -186,14 +212,7 @@ function copyInto(src: string, destRel: string, label: string) {
 copyInto(path.join(root, ".next", "static"), path.join(".next", "static"), ".next/static");
 copyInto(path.join(root, "public"), "public", "public");
 
-// 2. Prisma 生成的客户端
-copyInto(
-  path.join(root, "src", "generated", "prisma"),
-  path.join("src", "generated", "prisma"),
-  "src/generated/prisma"
-);
-
-// 3. 只读资源（系统 skill 只读原件 + 内置主题）
+// 2. 只读资源（系统 skill 只读原件 + 内置主题）
 copyInto(
   path.join(root, "resources", "skills", "system"),
   path.join("resources", "skills", "system"),
@@ -201,10 +220,10 @@ copyInto(
 );
 copyInto(path.join(root, "themes"), "themes", "themes");
 
-// 4. Prisma migrations（首次启动建表用）
+// 3. Prisma migrations（首次启动建表用）
 copyInto(path.join(root, "prisma", "migrations"), "migrations", "prisma/migrations");
 
-// 5. better-sqlite3 原生绑定：为 Electron ABI 重新编译（ELECTRON_RUN_AS_NODE 下
+// 4. better-sqlite3 原生绑定：为 Electron ABI 重新编译（ELECTRON_RUN_AS_NODE 下
 //    Electron 42 的 Node ABI=146，与标准 Node 22 的 prebuilt ABI=127 不匹配）。
 //    跨平台分发：darwin 走 Mach-O 校验，win32 跳过（无 file 命令且 .node 是 PE 格式）。
 ensureNativeBindingForElectron();
@@ -215,12 +234,21 @@ void (async () => {
   await bundleServerJs();
   // 7. 删除 bundle 已内联的 node_modules（保留 externals 及其依赖闭包）
   pruneBundledNodeModules();
-  // 8. 瘦身：剔除 externals 残留的 .d.ts / .map / .md 等
+  // 8. 显式补齐当前平台的原生运行时包（Claude CLI / Resvg），缺失即失败
+  ensurePlatformRuntimePackages();
+  // 9. 瘦身：剔除 externals 残留的测试、声明、源码映射等
   slimBundle();
-  // 9. 复制 bytenode 到 bundle/node_modules（运行时薄加载器 require('bytenode') 用）
+  // 所有 merge/copy 完成后再物化一次，杜绝后续步骤重新引入 pnpm 悬空链接
+  const finalMaterialized = materializeSymlinks(bundle);
+  if (finalMaterialized > 0) {
+    console.log(`  ✓ 最终物化 ${finalMaterialized} 处运行时 symlink`);
+  }
+  // 10. 复制 bytenode 到 bundle/node_modules（运行时薄加载器 require('bytenode') 用）
   ensureBytenodeInBundle();
-  // 10. server.js → server.jsc + 薄加载器（V8 字节码保护，防逆向）
+  // 11. server.js → server.jsc + 薄加载器（V8 字节码保护，防逆向）
   compileBytecode();
+  // 12. 完整性门禁：入口、原生架构、平台包、无符号链接/开发目录
+  verifyPreparedBundle();
   console.log("✓ standalone bundle 准备完成：" + path.relative(root, bundle));
 })().catch((err) => {
   console.error("✗ prepare-standalone 失败:", err);
@@ -234,10 +262,11 @@ void (async () => {
  * 而 better-sqlite3 官方 prebuilt 针对标准 Node（ABI=127），两者不匹配。
  * 用 @electron/rebuild 针对当前 electron 版本重新编译原生绑定。
  *
- * 注意：必须在 bundle 的 app_modules 上跑（而非项目 node_modules），
- * 因为 standalone 用 NODE_PATH 指向 app_modules 解析依赖。
+ * 注意：必须在 bundle/node_modules 上跑（而非项目 node_modules），
+ * 避免 electron-rebuild 把开发环境里的标准 Node ABI 绑定改成 Electron ABI。
  */
 function ensureNativeBindingForElectron() {
+  prepareBetterSqliteSourceForRebuild();
   if (process.platform === "darwin") {
     ensureNativeBindingForElectronDarwin();
     return;
@@ -252,6 +281,23 @@ function ensureNativeBindingForElectron() {
   process.exit(1);
 }
 
+/** NFT 顶层副本只有运行时文件；重编前用项目完整源码包替换 bundle 副本。 */
+function prepareBetterSqliteSourceForRebuild(): void {
+  const src = path.join(root, "node_modules", "better-sqlite3");
+  const dest = path.join(bundle, "node_modules", "better-sqlite3");
+  if (!fs.existsSync(path.join(src, "binding.gyp"))) {
+    console.error("  ✗ 项目 better-sqlite3 缺少 binding.gyp，无法为 Electron 重编");
+    process.exit(1);
+  }
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  safeCpSync(src, dest);
+  if (!fs.existsSync(path.join(dest, "binding.gyp"))) {
+    console.error("  ✗ better-sqlite3 完整源码复制到 bundle 失败");
+    process.exit(1);
+  }
+}
+
 /**
  * macOS：electron-rebuild 重编 + Mach-O 架构校验（依赖 `file` 命令）。
  *
@@ -259,24 +305,27 @@ function ensureNativeBindingForElectron() {
  * 而 better-sqlite3 官方 prebuilt 针对标准 Node（ABI=127），两者不匹配。
  * 用 @electron/rebuild 针对当前 electron 版本重新编译原生绑定。
  *
- * 注意：必须在 bundle 的 app_modules 上跑（而非项目 node_modules），
- * 因为 standalone 用 NODE_PATH 指向 app_modules 解析依赖。
+ * 注意：必须在 bundle/node_modules 上跑（而非项目 node_modules），
+ * 避免 electron-rebuild 把开发环境里的标准 Node ABI 绑定改成 Electron ABI。
  */
 function ensureNativeBindingForElectronDarwin() {
   console.log(`  → 为 Electron 重编译 better-sqlite3 原生绑定（darwin, arch=${targetArch}）…`);
 
-  // 在项目根目录用 @electron/rebuild 重编译（需要标准 node_modules 结构）
+  // 直接在 bundle/node_modules 内重编译，避免污染开发环境中的 Node ABI 绑定。
   const electronVersion = JSON.parse(
     fs.readFileSync(path.join(root, "node_modules", "electron", "package.json"), "utf8")
   ).version;
 
   const rebuildBin = path.join(root, "node_modules", ".bin", "electron-rebuild");
+  const rebuildAppDir = bundle;
   const result = spawnSync(
     rebuildBin,
     [
       "-f",
       "-w",
       "better-sqlite3",
+      "--module-dir",
+      rebuildAppDir,
       "--version",
       electronVersion,
       "--arch",
@@ -306,14 +355,17 @@ function ensureNativeBindingForElectronDarwin() {
     process.exit(1);
   }
 
-  // 把重编译后的 .node 复制到 bundle 的所有 better-sqlite3 副本
-  const src = findNativeBindingForArch(
-    path.join(root, "node_modules"),
-    targetArch
+  // 把重编译后的顶层 .node 复制到 bundle 的所有 better-sqlite3 副本
+  const src = path.join(
+    path.join(bundle, "node_modules"),
+    "better-sqlite3",
+    "build",
+    "Release",
+    "better_sqlite3.node"
   );
-  if (!src) {
+  if (!fs.existsSync(src)) {
     console.error(
-      `  ✗ 项目 node_modules 找不到 arch=${targetArch} 的 better_sqlite3.node`
+      `  ✗ bundle node_modules 找不到 arch=${targetArch} 的 better_sqlite3.node`
     );
     process.exit(1);
   }
@@ -325,8 +377,12 @@ function ensureNativeBindingForElectronDarwin() {
   // - .next/node_modules/better-sqlite3-*/...（Next.js nft 追踪生成的带哈希副本，运行时优先命中）
   let refreshed = 0;
   const targets = findAllFiles(bundle, "better_sqlite3.node");
+  if (targets.length === 0) {
+    console.error("  ✗ bundle 中没有 better_sqlite3.node，无法生成完整安装包");
+    process.exit(1);
+  }
   for (const t of targets) {
-    fs.copyFileSync(src, t);
+    if (path.resolve(t) !== path.resolve(src)) fs.copyFileSync(src, t);
     verifyNodeArch(t, targetArch);
     refreshed++;
   }
@@ -343,7 +399,7 @@ function ensureNativeBindingForElectronDarwin() {
  *   且 .node 是 PE 格式不是 Mach-O，无法用 Mach-O 检测命令验证架构
  * - electron-rebuild 调用走 shell（Windows .bin 是 .cmd 包装器，
  *   spawnSync 默认 shell=false 调用 .cmd 会失败）
- * - 用 findFirstNativeBinding 找任意一份 .node，信任 electron-rebuild 的产出
+ * - 直接校验重编产物的 PE machine 字段，阻止 x64/arm64 混包
  */
 function ensureNativeBindingForElectronWindows() {
   console.log(`  → 为 Electron 重编译 better-sqlite3 原生绑定（win32, arch=${targetArch}）…`);
@@ -354,12 +410,15 @@ function ensureNativeBindingForElectronWindows() {
 
   // Windows .bin/electron-rebuild 是 .cmd 包装器，必须 shell:true 让 spawn 解析 .cmd
   const rebuildBin = path.join(root, "node_modules", ".bin", "electron-rebuild");
+  const rebuildAppDir = bundle;
   const result = spawnSync(
     rebuildBin,
     [
       "-f",
       "-w",
       "better-sqlite3",
+      "--module-dir",
+      rebuildAppDir,
       "--version",
       electronVersion,
       "--arch",
@@ -390,11 +449,17 @@ function ensureNativeBindingForElectronWindows() {
     process.exit(1);
   }
 
-  // 找一份重编后的 .node（不做 Mach-O 校验，Windows 无 file 命令且 PE 格式无法用 lipo 思路）
-  const src = findFirstNativeBinding(path.join(root, "node_modules"));
-  if (!src) {
+  // 使用 bundle 顶层刚重编的绑定；随后用 PE machine 字段验证 x64/arm64。
+  const src = path.join(
+    path.join(bundle, "node_modules"),
+    "better-sqlite3",
+    "build",
+    "Release",
+    "better_sqlite3.node"
+  );
+  if (!fs.existsSync(src)) {
     console.error(
-      `  ✗ 项目 node_modules 找不到 better_sqlite3.node（electron-rebuild 应已产出）`
+      `  ✗ bundle node_modules 找不到 better_sqlite3.node（electron-rebuild 应已产出）`
     );
     process.exit(1);
   }
@@ -402,23 +467,18 @@ function ensureNativeBindingForElectronWindows() {
   // 复制到 bundle 的所有 better-sqlite3 副本
   let refreshed = 0;
   const targets = findAllFiles(bundle, "better_sqlite3.node");
+  if (targets.length === 0) {
+    console.error("  ✗ bundle 中没有 better_sqlite3.node，无法生成完整安装包");
+    process.exit(1);
+  }
   for (const t of targets) {
-    fs.copyFileSync(src, t);
+    if (path.resolve(t) !== path.resolve(src)) fs.copyFileSync(src, t);
+    verifyPeArch(t, targetArch);
     refreshed++;
   }
   console.log(
     `  ✓ better-sqlite3（Electron ABI，win32-${targetArch}）已刷新 ${refreshed} 处`
   );
-}
-
-/**
- * 在 node_modules 树中找第一份 better_sqlite3.node（不校验架构，用于无 `file` 命令的平台）。
- *
- * darwin 走 findNativeBindingForArch（带 Mach-O 架构校验），
- * win32 / 其他平台走本函数（信任 electron-rebuild 的产出，只按文件名匹配）。
- */
-function findFirstNativeBinding(nmRoot: string): string | null {
-  return findAllFiles(nmRoot, "better_sqlite3.node")[0] ?? null;
 }
 
 /**
@@ -464,6 +524,43 @@ function verifyNodeArch(nodePath: string, arch: "arm64" | "x64"): void {
       `  ✗ ${path.relative(root, nodePath)} 架构不匹配：期望 ${expected}，实际 ${actual.join(", ") || "未知"}`
     );
     process.exit(1);
+  }
+}
+
+/** 读取 Windows PE/COFF machine 字段并校验目标架构。 */
+function verifyPeArch(binaryPath: string, arch: "arm64" | "x64"): void {
+  let fd: number;
+  try {
+    fd = fs.openSync(binaryPath, "r");
+  } catch (error) {
+    console.error(`  ✗ 无法读取 PE 文件 ${path.relative(root, binaryPath)}: ${String(error)}`);
+    process.exit(1);
+  }
+  try {
+    const dos = Buffer.alloc(64);
+    if (fs.readSync(fd!, dos, 0, dos.length, 0) !== dos.length || dos.readUInt16LE(0) !== 0x5a4d) {
+      console.error(`  ✗ ${path.relative(root, binaryPath)} 不是有效 PE 文件（缺少 MZ）`);
+      process.exit(1);
+    }
+    const peOffset = dos.readUInt32LE(0x3c);
+    const pe = Buffer.alloc(6);
+    if (
+      fs.readSync(fd!, pe, 0, pe.length, peOffset) !== pe.length ||
+      pe.toString("ascii", 0, 4) !== "PE\0\0"
+    ) {
+      console.error(`  ✗ ${path.relative(root, binaryPath)} 不是有效 PE 文件（缺少 PE header）`);
+      process.exit(1);
+    }
+    const actual = pe.readUInt16LE(4);
+    const expected = arch === "arm64" ? 0xaa64 : 0x8664;
+    if (actual !== expected) {
+      console.error(
+        `  ✗ ${path.relative(root, binaryPath)} PE 架构不匹配：期望 0x${expected.toString(16)}，实际 0x${actual.toString(16)}`
+      );
+      process.exit(1);
+    }
+  } finally {
+    fs.closeSync(fd!);
   }
 }
 
@@ -549,9 +646,72 @@ function rewriteServerJsPaths() {
     return;
   }
   let content = fs.readFileSync(serverJs, "utf8");
-  // 转义路径中的正则特殊字符（路径含 / 不需转义，但稳妥起见用 split/join 避免正则）
-  content = content.split(root).join(".");
+  // Windows 路径写进 JS 字符串后反斜杠会变成 `\\`；同时兼容 Next 使用 POSIX
+  // 分隔符序列化的情况，避免 macOS 校验通过而 Windows 留下构建机路径。
+  for (const variant of buildRootVariants()) content = content.split(variant).join(".");
+  if (textContainsBuildRoot(content)) {
+    console.error("  ✗ server.js 仍包含构建机绝对路径");
+    process.exit(1);
+  }
   fs.writeFileSync(serverJs, content, "utf8");
+}
+
+/** 把 Next 运行时元数据中的构建机绝对路径改为 bundle cwd 下的相对路径。 */
+function rewriteRequiredServerFilesPaths(): void {
+  const metadata = path.join(bundle, ".next", "required-server-files.json");
+  if (!fs.existsSync(metadata)) {
+    console.error("  ✗ .next/required-server-files.json 不存在，无法生成可迁移 bundle");
+    process.exit(1);
+  }
+  const parsed = JSON.parse(fs.readFileSync(metadata, "utf8"));
+  const rewritten = replaceBuildRootInValue(parsed);
+  if (valueContainsBuildRoot(rewritten)) {
+    console.error("  ✗ required-server-files.json 仍包含构建机绝对路径");
+    process.exit(1);
+  }
+  fs.writeFileSync(metadata, JSON.stringify(rewritten), "utf8");
+  console.log("  ✓ required-server-files.json 构建机路径已改写");
+}
+
+function buildRootVariants(): string[] {
+  return [
+    root,
+    root.split(path.sep).join("/"),
+    JSON.stringify(root).slice(1, -1),
+  ].filter((value, index, values) => value && values.indexOf(value) === index);
+}
+
+function textContainsBuildRoot(value: string): boolean {
+  return buildRootVariants().some((variant) => value.includes(variant));
+}
+
+function replaceBuildRootInValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    let result = value;
+    // JSON.parse 已还原反斜杠，只需处理原生与 POSIX 两种路径表示。
+    for (const variant of [root, root.split(path.sep).join("/")]) {
+      result = result.split(variant).join(".");
+    }
+    return result;
+  }
+  if (Array.isArray(value)) return value.map(replaceBuildRootInValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, replaceBuildRootInValue(nested)])
+    );
+  }
+  return value;
+}
+
+function valueContainsBuildRoot(value: unknown): boolean {
+  if (typeof value === "string") {
+    return [root, root.split(path.sep).join("/")].some((variant) => value.includes(variant));
+  }
+  if (Array.isArray(value)) return value.some(valueContainsBuildRoot);
+  if (value && typeof value === "object") {
+    return Object.values(value).some(valueContainsBuildRoot);
+  }
+  return false;
 }
 
 /**
@@ -641,12 +801,8 @@ function hoistMissingTopLevel(): void {
   const bundleVirtualRoot = path.join(bundleNm, ".pnpm", "node_modules");
   if (!fs.existsSync(projVirtualRoot)) return;
 
-  // 1. 用项目虚拟根补全 bundle 虚拟根（nft 追踪常遗漏子路径 exports 如 @swc/helpers/_/）
-  if (fs.existsSync(bundleVirtualRoot)) {
-    mergeDir(projVirtualRoot, bundleVirtualRoot);
-  }
-
-  // 2. BFS：从顶层已有包出发，沿 dependencies 边遍历，仅提升缺失的运行时依赖
+  // BFS：从顶层已有包出发，沿 dependencies 边遍历，仅提升/补全运行时依赖。
+  // 不再全量复制项目虚拟根（上千个 pnpm symlink、GB 级 I/O）；每个实际需要的包按需 merge。
   const queue: string[] = [];
   const collectTopLevel = (dir: string, prefix = "") => {
     let entries: fs.Dirent[];
@@ -709,13 +865,19 @@ function hoistMissingTopLevel(): void {
   while (queue.length > 0) {
     const pkg = queue.shift()!;
     let pkgDir = path.join(bundleNm, pkg);
-    // 包不存在于顶层 → 从虚拟根提升
-    if (!fs.existsSync(pkgDir)) {
-      const srcDep = path.join(bundleVirtualRoot, pkg);
-      if (!fs.existsSync(srcDep)) continue;
-      safeCpSync(srcDep, pkgDir);
-      hoisted++;
-    }
+    const projectTopLevel = path.join(root, "node_modules", pkg);
+    const projectSource = path.join(projVirtualRoot, pkg);
+    const bundleSource = path.join(bundleVirtualRoot, pkg);
+    const srcDep = fs.existsSync(projectTopLevel)
+      ? projectTopLevel
+      : fs.existsSync(projectSource)
+        ? projectSource
+        : bundleSource;
+    if (!fs.existsSync(srcDep)) continue;
+    const wasMissing = !fs.existsSync(pkgDir);
+    fs.mkdirSync(path.dirname(pkgDir), { recursive: true });
+    mergeDir(srcDep, pkgDir);
+    if (wasMissing) hoisted++;
     // 读取 dependencies 继续 BFS
     let deps: string[] = [];
     try {
@@ -943,39 +1105,28 @@ function findAllFiles(dir: string, name: string): string[] {
   return results;
 }
 /**
- * 清理被 Next.js file tracing 误追踪进 standalone 的项目级目录与开发产物。
+ * 把 Next standalone 根目录收敛到标准运行时入口。
  *
- * outputFileTracingRoot 默认为项目根目录，NFT 会把项目根下被 server.js 依赖图触及的
- * 文件按相对路径复制进 standalone。dist/（electron-builder 输出，含历史 DMG + 嵌套 app，
- * 可达数 GB）、storage/（运行时用户数据）、开发数据库等因此被误带入，导致打包体积膨胀
- * 数 GB，且每次构建都会套娃递归（dist/ 里嵌套着上一次构建的 dist/）。
- *
- * 此处在复制 standalone → bundle 后立即清理，从源头杜绝膨胀。
+ * NFT 对动态 fs 路径会做保守追踪，黑名单永远追不上本地新增目录；实测会误带
+ * `.env`、dev.database、graphify-out、inkpress-service（含本地 pem）和历史安装包。
+ * 因此这里只保留 Next standalone 的标准四项，其余业务资源随后从仓库固定路径重建。
  */
-function pruneProjectArtifacts(): void {
-  const targets = [
-    "dist", // 历史打包产物（DMG + 嵌套 .app），可达数 GB
-    "storage", // 运行时用户数据（文章正文 / 素材）
-    ".e2e-data", // e2e 测试数据
-    "dev.db", // 开发 SQLite 数据库
-    "dev.db-journal",
-    "pnpm-lock.yaml", // 锁文件，运行时不需要
-    "tsconfig.tsbuildinfo", // TS 增量编译缓存
-  ];
+function pruneUnexpectedBundleRoots(): void {
+  const allowed = new Set([".next", "node_modules", "server.js", "package.json"]);
   let totalRemoved = 0;
   let cleaned = 0;
-  for (const rel of targets) {
-    const p = path.join(bundle, rel);
-    if (!fs.existsSync(p)) continue;
+  for (const entry of fs.readdirSync(bundle, { withFileTypes: true })) {
+    if (allowed.has(entry.name)) continue;
+    const p = path.join(bundle, entry.name);
     const size = measureSize(p);
     fs.rmSync(p, { recursive: true, force: true });
     totalRemoved += size;
     cleaned++;
-    console.log(`    ✓ 清理 ${rel}（约 ${(size / 1024 / 1024).toFixed(1)} MB）`);
+    console.log(`    ✓ 清理非运行时根项 ${entry.name}（约 ${(size / 1024 / 1024).toFixed(1)} MB）`);
   }
   if (cleaned > 0) {
     console.log(
-      `  ✓ 清理 ${cleaned} 个误追踪目录/文件（共约 ${(totalRemoved / 1024 / 1024).toFixed(1)} MB）`
+      `  ✓ allowlist 清理 ${cleaned} 个误追踪根项（共约 ${(totalRemoved / 1024 / 1024).toFixed(1)} MB）`
     );
   }
 }
@@ -1026,9 +1177,40 @@ function slimBundle() {
   let removedFiles = 0;
   let removedBytes = 0;
 
+  const normalizeRel = (filePath: string) =>
+    path.relative(bundle, filePath).split(path.sep).join("/");
+
+  const removableRuntimeDirs = new Set([
+    "test",
+    "tests",
+    "__tests__",
+    "__mocks__",
+    "example",
+    "examples",
+    "benchmark",
+    "benchmarks",
+    "coverage",
+    ".github",
+  ]);
+
+  const shouldRemoveDirectory = (dirPath: string): boolean => {
+    const rel = normalizeRel(dirPath);
+    const insideNodeModules = rel.startsWith("node_modules/") || rel.includes("/node_modules/");
+    return insideNodeModules && removableRuntimeDirs.has(path.basename(dirPath));
+  };
+
   const shouldRemove = (filePath: string): boolean => {
     const base = path.basename(filePath);
-    const rel = path.relative(bundle, filePath);
+    // Windows path.relative 使用反斜杠；统一为 POSIX 分隔符后再套用规则。
+    const rel = normalizeRel(filePath);
+    const insideNodeModules = rel.startsWith("node_modules/") || rel.includes("/node_modules/");
+
+    // Next output file tracing 清单仅供构建/部署工具使用，standalone 运行时不读取；
+    // 其中还包含构建机绝对路径，发布前删除可稳定减少十余 MB 并避免路径泄漏。
+    if (rel.startsWith(".next/") && base.endsWith(".nft.json")) return true;
+
+    // 下面的源码/文档裁剪只能作用于第三方依赖，严禁误删 public、系统 Skill、主题或迁移。
+    if (!insideNodeModules) return base === ".DS_Store";
 
     // 1. better-sqlite3 的编译期产物（sqlite 源码 + C++ 源码）
     if (rel.includes("better-sqlite3")) {
@@ -1040,8 +1222,8 @@ function slimBundle() {
     if (base.endsWith(".d.mts")) return true;
     if (base.endsWith(".d.cts")) return true;
     if (base.endsWith(".ts") && !base.endsWith(".d.ts")) return true;
-    if (base.endsWith(".ts.map")) return true;
-    if (base.endsWith(".js.map")) return true;
+    if (base.endsWith(".tsx") || base.endsWith(".mts") || base.endsWith(".cts")) return true;
+    if (base.endsWith(".map")) return true;
     if (base.endsWith(".md") || base.endsWith(".markdown")) return true;
     if (base.endsWith(".tgz")) return true;
     if (base === "LICENSE" || base.startsWith("LICENSE.") || base.startsWith("LICENCE")) return true;
@@ -1069,6 +1251,12 @@ function slimBundle() {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
+        if (shouldRemoveDirectory(full)) {
+          removedFiles += countFiles(full);
+          removedBytes += measureSize(full);
+          fs.rmSync(full, { recursive: true, force: true });
+          continue;
+        }
         walk(full);
         // 删完子文件后，若目录变空则删除空目录
         try {
@@ -1137,6 +1325,16 @@ async function bundleServerJs(): Promise<void> {
   const resolvePlugin = {
     name: "inkpress-resolve",
     setup(buildInst: any) {
+      // esbuild 会为某些动态 require 通配模式直接枚举同目录文件，绕过 onResolve；
+      // 完整补包后 LICENSE/README 也可能被当作模块载入。它们属于构建期文档且稍后会
+      // 从 node_modules 裁剪，使用 empty loader 可避免被误解析成 JavaScript。
+      buildInst.onLoad(
+        {
+          filter:
+            /[\\/](LICENSE|LICENCE|NOTICE|README|CHANGELOG|CHANGES|CONTRIBUTING|SECURITY)(\.[^\\/]*)?$/i,
+        },
+        () => ({ contents: "", loader: "empty" })
+      );
       buildInst.onResolve({ filter: /.*/ }, (args: any) => {
         // 1. require.resolve → external（Next 内部用，运行时从 node_modules 解析）
         if (args.kind === "require-resolve") {
@@ -1166,6 +1364,13 @@ async function bundleServerJs(): Promise<void> {
           const importerDir = args.importer ? path.dirname(args.importer) : bundle;
           const importerRequire = createRequire(path.join(importerDir, "__anchor__.js"));
           const resolved = importerRequire.resolve(args.path);
+          // require.resolve 也能命中 LICENSE、WASM、原生 .node 等非 JS 资源。
+          // 这些文件必须保留在完整包中，但绝不能交给 esbuild 当 JavaScript 解析。
+          // JSON 可由 esbuild 安全内联，其余非脚本资源沿用 Node 的运行时加载语义。
+          const resolvedExt = path.extname(resolved).toLowerCase();
+          if (![".js", ".cjs", ".mjs", ".json"].includes(resolvedExt)) {
+            return { path: resolved, external: true };
+          }
           return { path: resolved };
         } catch {
           return { path: args.path, external: true };
@@ -1303,15 +1508,19 @@ function collectExternalClosure(opts?: { includeNext?: boolean }): Set<string> {
   }
 
   const readPkgDeps = (pkgName: string): string[] => {
+    // Next 的 optionalDependencies 是构建期 SWC（~119 MB）和图片优化 Sharp（~16 MB）。
+    // 本项目运行预编译 standalone，且 next/image 已设置 unoptimized，不需要在目标机编译/转图。
+    // 只跳过 Next 自身的 optional 依赖；其他 external（Claude/Resvg）的平台包必须保留。
+    const depsFromPackageJson = (pj: Record<string, any>): string[] => [
+      ...Object.keys(pj.dependencies || {}),
+      ...(pkgName === "next" ? [] : Object.keys(pj.optionalDependencies || {})),
+    ];
     // 优先用 Node 的模块解析（能穿透 pnpm 的 .pnpm 深层结构）
     try {
       const bundleRequire = createRequire(path.join(bundle, "__closure_anchor__.js"));
       const resolved = bundleRequire.resolve(`${pkgName}/package.json`);
       const pj = JSON.parse(fs.readFileSync(resolved, "utf8"));
-      return [
-        ...Object.keys(pj.dependencies || {}),
-        ...Object.keys(pj.optionalDependencies || {}),
-      ];
+      return depsFromPackageJson(pj);
     } catch {
       /* fallthrough */
     }
@@ -1324,10 +1533,7 @@ function collectExternalClosure(opts?: { includeNext?: boolean }): Set<string> {
       if (fs.existsSync(p)) {
         try {
           const pj = JSON.parse(fs.readFileSync(p, "utf8"));
-          return [
-            ...Object.keys(pj.dependencies || {}),
-            ...Object.keys(pj.optionalDependencies || {}),
-          ];
+          return depsFromPackageJson(pj);
         } catch {
           /* ignore */
         }
@@ -1398,17 +1604,23 @@ function pruneBundledNodeModules(): void {
     }
   };
 
-  // 1. 把闭包内的包从 .pnpm 虚拟根提升到顶层（如果顶层没有）
+  // 1. 把闭包内的包从完整项目虚拟根按需 merge 到顶层。
+  // NFT 可能已创建“存在但残缺”的目录，不能仅用 existsSync 判断后跳过。
   const virtualRoot = path.join(pnpmDir, "node_modules");
-  if (fs.existsSync(virtualRoot)) {
-    for (const pkg of closure) {
-      const topLevel = path.join(nmDir, pkg);
-      if (fs.existsSync(topLevel)) continue;
-      const virtualPkg = path.join(virtualRoot, pkg);
-      if (fs.existsSync(virtualPkg)) {
-        fs.mkdirSync(path.dirname(topLevel), { recursive: true });
-        safeCpSync(virtualPkg, topLevel);
-      }
+  const projectVirtualRoot = path.join(root, "node_modules", ".pnpm", "node_modules");
+  for (const pkg of closure) {
+    const topLevel = path.join(nmDir, pkg);
+    const projectTopLevel = path.join(root, "node_modules", pkg);
+    const projectPkg = path.join(projectVirtualRoot, pkg);
+    const bundlePkg = path.join(virtualRoot, pkg);
+    const source = fs.existsSync(projectTopLevel)
+      ? projectTopLevel
+      : fs.existsSync(projectPkg)
+        ? projectPkg
+        : bundlePkg;
+    if (fs.existsSync(source)) {
+      fs.mkdirSync(path.dirname(topLevel), { recursive: true });
+      mergeDir(source, topLevel);
     }
   }
 
@@ -1473,6 +1685,262 @@ function pruneBundledNodeModules(): void {
   console.log(`    ✓ externals 闭包保留：${closure.size} 个包`);
 }
 
+type PlatformRuntimeSpec = {
+  packageName: string;
+  binary: string;
+  executable?: boolean;
+};
+
+/** 当前目标平台必须随包携带的原生运行时。 */
+function platformRuntimeSpecs(): PlatformRuntimeSpec[] {
+  if (process.platform === "darwin") {
+    return [
+      {
+        packageName: `@anthropic-ai/claude-agent-sdk-darwin-${targetArch}`,
+        binary: "claude",
+        executable: true,
+      },
+      {
+        packageName: `@resvg/resvg-js-darwin-${targetArch}`,
+        binary: `resvgjs.darwin-${targetArch}.node`,
+      },
+    ];
+  }
+  if (process.platform === "win32" && targetArch === "x64") {
+    return [
+      {
+        packageName: "@anthropic-ai/claude-agent-sdk-win32-x64",
+        binary: "claude.exe",
+        executable: true,
+      },
+      {
+        packageName: "@resvg/resvg-js-win32-x64-msvc",
+        binary: "resvgjs.win32-x64-msvc.node",
+      },
+    ];
+  }
+  console.error(`  ✗ 尚未定义 ${process.platform}-${targetArch} 的原生运行时清单`);
+  process.exit(1);
+}
+
+/**
+ * pnpm/Next tracing 对「无 main/exports 的 optional native package」解析不稳定。
+ * 从根项目显式 optionalDependency 复制到 bundle 顶层，SDK 的 createRequire 可稳定向上解析。
+ */
+function ensurePlatformRuntimePackages(): void {
+  for (const spec of platformRuntimeSpecs()) {
+    const src = path.join(root, "node_modules", spec.packageName);
+    const srcBinary = path.join(src, spec.binary);
+    if (!fs.existsSync(srcBinary)) {
+      console.error(
+        `  ✗ 缺少 ${spec.packageName}/${spec.binary}。` +
+          " 请重新执行 pnpm install --frozen-lockfile，且不要使用 --no-optional/--omit=optional。"
+      );
+      process.exit(1);
+    }
+    const dest = path.join(bundle, "node_modules", spec.packageName);
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    safeCpSync(src, dest);
+    const destBinary = path.join(dest, spec.binary);
+    if (spec.executable && process.platform !== "win32") fs.chmodSync(destBinary, 0o755);
+    if (process.platform === "darwin") verifyNodeArch(destBinary, targetArch);
+    else verifyPeArch(destBinary, targetArch);
+    console.log(`  ✓ 原生运行时 ${spec.packageName} → node_modules/${spec.packageName}`);
+  }
+}
+
+/** 最终 bundle 完整性门禁；任何缺失都直接中止打包。 */
+function verifyPreparedBundle(): void {
+  const required = [
+    "server.js",
+    "server.jsc",
+    "server.jsc.sha256",
+    ".next/BUILD_ID",
+    ".next/required-server-files.json",
+    ".next/static",
+    "public",
+    "resources/skills/system",
+    "themes",
+    "migrations",
+    "node_modules/next/package.json",
+    "node_modules/better-sqlite3/package.json",
+    "node_modules/bytenode/lib/index.js",
+  ];
+  for (const rel of required) {
+    if (!fs.existsSync(path.join(bundle, rel))) {
+      console.error(`  ✗ bundle 完整性失败：缺少 ${rel}`);
+      process.exit(1);
+    }
+  }
+
+  for (const [source, destination, label] of [
+    [path.join(root, ".next", "static"), path.join(bundle, ".next", "static"), ".next/static"],
+    [path.join(root, "public"), path.join(bundle, "public"), "public"],
+    [path.join(root, "themes"), path.join(bundle, "themes"), "themes"],
+    [
+      path.join(root, "resources", "skills", "system"),
+      path.join(bundle, "resources", "skills", "system"),
+      "resources/skills/system",
+    ],
+    [path.join(root, "prisma", "migrations"), path.join(bundle, "migrations"), "migrations"],
+  ] as const) {
+    verifyMirroredTree(source, destination, label);
+  }
+  const skillFiles = findAllFiles(path.join(bundle, "resources", "skills", "system"), "SKILL.md");
+  if (skillFiles.length === 0) {
+    console.error("  ✗ bundle 系统 Skill 内容为空（缺少 SKILL.md）");
+    process.exit(1);
+  }
+
+  const expectedHash = fs.readFileSync(path.join(bundle, "server.jsc.sha256"), "utf8").trim();
+  const actualHash = crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(path.join(bundle, "server.jsc")))
+    .digest("hex");
+  if (expectedHash !== actualHash) {
+    console.error("  ✗ server.jsc SHA-256 不匹配");
+    process.exit(1);
+  }
+
+  const metadataText = fs.readFileSync(
+    path.join(bundle, ".next", "required-server-files.json"),
+    "utf8"
+  );
+  const metadataValue = JSON.parse(metadataText);
+  if (valueContainsBuildRoot(metadataValue)) {
+    console.error("  ✗ bundle 运行时元数据泄漏构建机绝对路径");
+    process.exit(1);
+  }
+
+  const allowedRoots = new Set([
+    ".next",
+    "node_modules",
+    "server.js",
+    "server.jsc",
+    "server.jsc.sha256",
+    "package.json",
+    "public",
+    "resources",
+    "themes",
+    "migrations",
+  ]);
+  const unexpected = fs.readdirSync(bundle).filter((name) => !allowedRoots.has(name));
+  if (unexpected.length > 0) {
+    console.error(`  ✗ bundle 含未授权根项：${unexpected.join(", ")}`);
+    process.exit(1);
+  }
+
+  const symlinks: string[] = [];
+  const scanLinks = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) symlinks.push(path.relative(bundle, full));
+      else if (entry.isDirectory()) scanLinks(full);
+    }
+  };
+  scanLinks(bundle);
+  if (symlinks.length > 0) {
+    console.error(`  ✗ bundle 仍含 ${symlinks.length} 个符号链接：${symlinks.slice(0, 5).join(", ")}`);
+    process.exit(1);
+  }
+
+  // SWC 与 Sharp 仅用于构建/图片优化，打进应用会额外增加约 135 MB。
+  const forbiddenBuildPackages = [
+    path.join(bundle, "node_modules", "sharp"),
+    path.join(bundle, "node_modules", "@next", `swc-${process.platform}-${targetArch}`),
+  ];
+  for (const p of forbiddenBuildPackages) {
+    if (fs.existsSync(p)) {
+      console.error(`  ✗ 构建期包未被裁剪：${path.relative(bundle, p)}`);
+      process.exit(1);
+    }
+  }
+
+  const nativeBindings = findAllFiles(bundle, "better_sqlite3.node");
+  if (nativeBindings.length === 0) {
+    console.error("  ✗ bundle 缺少 better_sqlite3.node");
+    process.exit(1);
+  }
+  for (const binding of nativeBindings) {
+    if (process.platform === "darwin") verifyNodeArch(binding, targetArch);
+    else verifyPeArch(binding, targetArch);
+  }
+  for (const spec of platformRuntimeSpecs()) {
+    const binary = path.join(bundle, "node_modules", spec.packageName, spec.binary);
+    if (!fs.existsSync(binary)) {
+      console.error(`  ✗ bundle 缺少平台运行时 ${spec.packageName}/${spec.binary}`);
+      process.exit(1);
+    }
+  }
+
+  verifyReactServerExports();
+
+  const bytes = measureSize(bundle);
+  const files = countFiles(bundle);
+  console.log(
+    `  ✓ bundle 完整性通过：${files} files，${(bytes / 1024 / 1024).toFixed(1)} MB，arch=${targetArch}`
+  );
+}
+
+/** 用目标 Electron/V8 的 react-server 条件实际解析 React，防止 NFT 残片漏掉 exports 目标。 */
+function verifyReactServerExports(): void {
+  const electronBin = resolveElectronBinary();
+  const anchor = path.join(bundle, "__runtime_contract__.cjs");
+  const code = `
+const { createRequire } = require("node:module");
+const req = createRequire(${JSON.stringify(anchor)});
+const react = req("react");
+const reactDom = req("react-dom");
+if (typeof react.createElement !== "function" || !reactDom) process.exit(2);
+console.log("[react-server-contract] PASS");
+`;
+  const result = spawnSync(electronBin, ["--conditions=react-server", "-e", code], {
+    cwd: bundle,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    encoding: "utf8",
+  });
+  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  if (result.status !== 0 || !output.includes("[react-server-contract] PASS")) {
+    console.error(`  ✗ React react-server 条件导出不完整：\n${output.slice(-4000)}`);
+    process.exit(1);
+  }
+}
+
+/** 对受控资源目录做文件名 + 内容哈希全量比对，防止瘦身规则误删业务资源。 */
+function verifyMirroredTree(source: string, destination: string, label: string): void {
+  const manifest = (base: string): Map<string, string> => {
+    const result = new Map<string, string>();
+    const visit = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) visit(full);
+        else if (stat.isFile()) {
+          const rel = path.relative(base, full).split(path.sep).join("/");
+          const hash = crypto.createHash("sha256").update(fs.readFileSync(full)).digest("hex");
+          result.set(rel, hash);
+        }
+      }
+    };
+    visit(base);
+    return result;
+  };
+
+  const expected = manifest(source);
+  const actual = manifest(destination);
+  if (expected.size !== actual.size) {
+    console.error(`  ✗ ${label} 镜像文件数不一致：源=${expected.size}，bundle=${actual.size}`);
+    process.exit(1);
+  }
+  for (const [file, hash] of expected) {
+    if (actual.get(file) !== hash) {
+      console.error(`  ✗ ${label} 镜像缺失或内容不一致：${file}`);
+      process.exit(1);
+    }
+  }
+}
+
 /* ============ Bytecode 保护：server.js → server.jsc + 薄加载器 ============ */
 
 /**
@@ -1535,9 +2003,8 @@ function ensureBytenodeInBundle(): void {
  * 2. 编译脚本内部：bytenode.compileFile → 写 server.jsc + server.jsc.sha256 + 薄加载器
  * 3. 验证 server.jsc 产物存在
  *
- * 失败策略：
- * - 默认 exit(1) 终止构建（bytecode 是核心保护，不应静默失败）
- * - INKPRESS_BYTECODE_FALLBACK=1 允许回退明文 server.js（调试/紧急发布用）
+ * 失败策略：直接终止构建。安装包完整性门禁始终要求 bytecode + SHA-256，
+ * 不允许悄悄回退为与正式产物结构不同的明文入口。
  */
 function compileBytecode(): void {
   const compileScript = path.join(root, "scripts", "compile-bytecode.cjs");
@@ -1566,15 +2033,7 @@ function compileBytecode(): void {
   if (result.stderr) process.stderr.write(result.stderr);
 
   if (result.status !== 0 || !fs.existsSync(jscPath)) {
-    if (process.env.INKPRESS_BYTECODE_FALLBACK === "1") {
-      console.warn(
-        `  ⚠ bytecode 编译失败，INKPRESS_BYTECODE_FALLBACK=1 → 回退明文 server.js`
-      );
-      return;
-    }
-    console.error(
-      `  ✗ bytecode 编译失败（退出码 ${result.status}）。设置 INKPRESS_BYTECODE_FALLBACK=1 可回退明文 server.js`
-    );
+    console.error(`  ✗ bytecode 编译失败（退出码 ${result.status}）`);
     process.exit(1);
   }
 
