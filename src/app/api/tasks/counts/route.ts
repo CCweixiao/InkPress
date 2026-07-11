@@ -21,20 +21,6 @@ export async function GET() {
     }
   }
 
-  // legacy bySpace + inbox（桥接期保留，Task 9 移除）
-  const bySpaceActive = await prisma.task.groupBy({
-    by: ["spaceId"],
-    where: { trashed: false },
-    _count: true,
-  });
-  const bySpace: Record<string, number> = {};
-  let inbox = 0;
-  for (const row of bySpaceActive) {
-    const count = row._count;
-    if (row.spaceId === null) inbox += count;
-    else bySpace[row.spaceId] = count;
-  }
-
   const trashed = await prisma.task.count({
     where: {
       trashed: true,
@@ -42,5 +28,5 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({ total, inbox, bySpace, byList, trashed });
+  return NextResponse.json({ total, byList, trashed });
 }

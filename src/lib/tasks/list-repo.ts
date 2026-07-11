@@ -80,13 +80,13 @@ export async function deleteList(id: string): Promise<void> {
   }
   const now = new Date();
   const expiresAt = computeExpiresAt(now);
-  await prisma.$transaction([
-    prisma.task.updateMany({
+  await prisma.$transaction(async (tx) => {
+    await tx.task.updateMany({
       where: { listId: id },
       data: { listId: DEFAULT_LIST_ID, trashed: true, trashedAt: now, expiresAt },
-    }),
-    prisma.taskList.delete({ where: { id } }),
-  ]);
+    });
+    await tx.taskList.delete({ where: { id } });
+  });
 }
 
 /** 批量更新 list sortOrder + folderId（跨父级移动，事务）。 */

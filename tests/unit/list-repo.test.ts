@@ -18,6 +18,12 @@ describe("list-repo", () => {
     await prisma.task.deleteMany();
     await prisma.taskList.deleteMany();
     await prisma.taskFolder.deleteMany();
+    // 重新 seed 默认清单（deleteList 把 task 重指到 DEFAULT_LIST_ID）
+    await prisma.taskList.upsert({
+      where: { id: DEFAULT_LIST_ID },
+      create: { id: DEFAULT_LIST_ID, name: "默认清单", color: "#6b7280", sortOrder: 0 },
+      update: {},
+    });
   });
 
   it("createFolder + listFoldersWithLists 返回树", async () => {
@@ -25,7 +31,9 @@ describe("list-repo", () => {
     const tree = await listFoldersWithLists();
     expect(tree.folders).toHaveLength(1);
     expect(tree.folders[0].id).toBe(f.id);
-    expect(tree.standaloneLists).toHaveLength(0);
+    // beforeEach seed 的默认清单始终存在于 standaloneLists
+    expect(tree.standaloneLists).toHaveLength(1);
+    expect(tree.standaloneLists[0].id).toBe(DEFAULT_LIST_ID);
   });
 
   it("deleteFolder 把其下 list 提升为顶层", async () => {
@@ -34,9 +42,13 @@ describe("list-repo", () => {
     await deleteFolder(f.id);
     const tree = await listFoldersWithLists();
     expect(tree.folders).toHaveLength(0);
-    expect(tree.standaloneLists).toHaveLength(1);
-    expect(tree.standaloneLists[0].id).toBe(l.id);
-    expect(tree.standaloneLists[0].folderId).toBeNull();
+    // 默认清单 + 提升的 OKR
+    expect(tree.standaloneLists).toHaveLength(2);
+    const ids = tree.standaloneLists.map((s) => s.id);
+    expect(ids).toContain(l.id);
+    expect(ids).toContain(DEFAULT_LIST_ID);
+    const okr = tree.standaloneLists.find((s) => s.id === l.id)!;
+    expect(okr.folderId).toBeNull();
   });
 
   it("deleteList 把其下 task 重指默认清单 + 软删进垃圾箱", async () => {

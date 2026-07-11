@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isToday, isNext7Days, isInbox, filterBySmartView } from "@/lib/tasks/smart-views";
+import { isToday, isNext7Days, filterBySmartView } from "@/lib/tasks/smart-views";
 import type { Task } from "@/components/tasks/types";
 
 const NOW = new Date("2026-07-14T10:00:00.000Z"); // 2026-07-14 Tuesday
@@ -83,22 +83,6 @@ describe("isNext7Days", () => {
   });
 });
 
-describe("isInbox", () => {
-  // inbox 语义已废弃（Task.listId 必填，总有默认清单）。Task 9 移除 inbox。
-  it("listId 有值且未完成 → false（inbox 已废弃）", () => {
-    expect(isInbox(makeTask({ listId: "cl_default_list_seed_fixed", status: "todo" }))).toBe(false);
-  });
-  it("status=done → false", () => {
-    expect(isInbox(makeTask({ status: "done" }))).toBe(false);
-  });
-  it("status=archived → false", () => {
-    expect(isInbox(makeTask({ status: "archived" }))).toBe(false);
-  });
-  it("status=cancelled → false", () => {
-    expect(isInbox(makeTask({ status: "cancelled" }))).toBe(false);
-  });
-});
-
 describe("filterBySmartView", () => {
   const tasks: Task[] = [
     makeTask({ id: "a", listId: "list-a", dueDate: "2026-07-14T08:00:00.000Z" }), // today
@@ -115,10 +99,6 @@ describe("filterBySmartView", () => {
   it("next7days → 留 a 和 b", () => {
     const r = filterBySmartView(tasks, "next7days", NOW);
     expect(r.map((t) => t.id).sort()).toEqual(["a", "b"]);
-  });
-  it("inbox → 空（inbox 已废弃）", () => {
-    const r = filterBySmartView(tasks, "inbox", NOW);
-    expect(r).toEqual([]);
   });
 });
 
@@ -139,9 +119,5 @@ describe("filterBySmartView trashed 过滤", () => {
 
   it("trashed 任务不进入 next7days 视图", () => {
     expect(filterBySmartView([todayTask], "next7days", now)).toEqual([]);
-  });
-
-  it("trashed 任务不进入 inbox 视图", () => {
-    expect(filterBySmartView([todayTask], "inbox", now)).toEqual([]);
   });
 });

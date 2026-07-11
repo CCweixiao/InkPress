@@ -1,11 +1,6 @@
 import type { Task } from "@/components/tasks/types";
 
-export type SmartView = "today" | "next7days" | "inbox";
-
-/** 是否为"已结束"的终态：done / cancelled / archived 都不再进入活动视图。 */
-function isTerminalStatus(task: Task): boolean {
-  return task.status === "done" || task.status === "cancelled" || task.status === "archived";
-}
+export type SmartView = "today" | "next7days";
 
 /** 取某日历天的 [start, end) 时间区间（UTC）。 */
 function dayRange(date: Date): { start: Date; end: Date } {
@@ -39,13 +34,6 @@ export function isNext7Days(task: Task, now: Date): boolean {
   return d >= start && d < end;
 }
 
-/** 任务是否属于"收集箱"：无 list 且未结束。
- *  注意：Task.listId 现在是必填字符串（总有默认清单），inbox 语义已废弃。
- *  Task 9 将移除此函数与 SmartView "inbox"。 */
-export function isInbox(_task: Task): boolean {
-  return false;
-}
-
 /** 按智能视图批量过滤。now 默认 new Date()。trashed 任务一律排除。 */
 export function filterBySmartView(tasks: Task[], view: SmartView, now: Date = new Date()): Task[] {
   const active = tasks.filter((t) => !t.trashed);
@@ -54,7 +42,5 @@ export function filterBySmartView(tasks: Task[], view: SmartView, now: Date = ne
       return active.filter((t) => isToday(t, now));
     case "next7days":
       return active.filter((t) => isNext7Days(t, now));
-    case "inbox":
-      return active.filter((t) => isInbox(t));
   }
 }

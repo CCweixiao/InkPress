@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { filterBySmartView, type SmartView } from "@/lib/tasks/smart-views";
+import { DEFAULT_LIST_ID } from "@/lib/tasks/list-repo";
 import type { Task } from "@/components/tasks/types";
 
 const createSchema = z.object({
@@ -11,7 +12,6 @@ const createSchema = z.object({
   priority: z.number().int().min(0).max(4).optional(),
   dueDate: z.string().nullable().optional(),
   parentId: z.string().nullable().optional(),
-  spaceId: z.string().nullable().optional(),
   listId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
@@ -22,14 +22,13 @@ const createSchema = z.object({
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const status = searchParams.get("status");
-  const spaceId = searchParams.get("spaceId");
   const listId = searchParams.get("listId");
   const folderId = searchParams.get("folderId");
   const parentId = searchParams.get("parentId");
   const priority = searchParams.get("priority");
   const smartViewRaw = searchParams.get("smartView");
   const smartView: SmartView | null =
-    smartViewRaw === "today" || smartViewRaw === "next7days" || smartViewRaw === "inbox"
+    smartViewRaw === "today" || smartViewRaw === "next7days"
       ? smartViewRaw
       : null;
   const trashedFlag = searchParams.get("trashed") === "true";
@@ -47,7 +46,6 @@ export async function GET(req: NextRequest) {
   } else {
     where.trashed = false;
     if (status) where.status = status;
-    if (spaceId) where.spaceId = spaceId;
     if (listId) where.listId = listId;
     if (folderId) where.list = { folderId };
     if (parentId !== null && parentId !== undefined) {
@@ -76,7 +74,6 @@ export async function GET(req: NextRequest) {
         },
       },
       tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
-      space: { select: { id: true, name: true } },
       list: { select: { id: true, name: true, color: true, folderId: true, folder: { select: { id: true, name: true } } } },
     },
   });
@@ -104,7 +101,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { title, content, status, priority, dueDate, parentId, spaceId, listId, sortOrder, tagsJson, tagIds } =
+    const { title, content, status, priority, dueDate, parentId, listId, sortOrder, tagsJson, tagIds } =
       parsed.data;
 
     // 获取同级最大 sortOrder
@@ -121,8 +118,7 @@ export async function POST(req: NextRequest) {
         priority: priority ?? 0,
         dueDate: dueDate ? new Date(dueDate) : null,
         parentId: parentId ?? null,
-        spaceId: spaceId ?? null,
-        listId: listId ?? null,
+        listId: listId ?? DEFAULT_LIST_ID,
         sortOrder: sortOrder ?? (maxSort._max.sortOrder ?? 0) + 1,
         tagsJson: tagsJson ?? "[]",
         tags: tagIds?.length

@@ -401,7 +401,6 @@ model Space {
 
   articles Article[]
   assets   Asset[]
-  tasks    Task[]
 
   @@index([trashed])
 }
@@ -615,8 +614,7 @@ model Task {
   isAllDay    Boolean   @default(true)
   completedAt DateTime?
   parentId    String? // 子任务关系
-  spaceId     String? // 关联空间
-  listId      String? // 关联任务清单
+  listId      String // 关联任务清单（必填）
   sortOrder   Int       @default(0) // 拖拽排序
   tagsJson    String    @default("[]") // 标签 JSON 数组
   isCollapsed Boolean   @default(false) // 子任务折叠状态
@@ -629,12 +627,10 @@ model Task {
 
   parent   Task?  @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
   children Task[] @relation("TaskSubtasks")
-  space    Space? @relation(fields: [spaceId], references: [id])
-  list     TaskList? @relation(fields: [listId], references: [id], onDelete: Restrict)
+  list     TaskList @relation(fields: [listId], references: [id], onDelete: Restrict)
   tags     TaskTag[]
 
   // 复合索引：精准命中"按清单/状态分组 + 排序显示"主查询路径
-  @@index([spaceId, status, sortOrder])
   @@index([listId, status, sortOrder])
   @@index([status, dueDate])
   @@index([parentId])
