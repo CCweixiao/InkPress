@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get("status");
   const listId = searchParams.get("listId");
   const folderId = searchParams.get("folderId");
+  const q = searchParams.get("q");
+  const limitRaw = searchParams.get("limit");
   const tagId = searchParams.get("tagId");
   const parentId = searchParams.get("parentId");
   const priority = searchParams.get("priority");
@@ -38,6 +40,36 @@ export async function GET(req: NextRequest) {
   await prisma.task.deleteMany({
     where: { trashed: true, expiresAt: { lt: new Date() } },
   });
+
+  // 全局搜索：q 存在时忽略其他 filter，只按 title contains + 非 trashed
+  if (q) {
+    const limit = Math.min(Math.max(parseInt(limitRaw ?? "10", 10) || 10, 1), 20);
+    const searchTasks = await prisma.task.findMany({
+      where: {
+        title: { contains: q },
+        trashed: false,
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+      take: limit,
+      include: {
+        tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+            folderId: true,
+            folder: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    const flat = searchTasks.map((t) => ({
+      ...t,
+      tags: t.tags.map((tt) => tt.tag),
+    }));
+    return NextResponse.json({ tasks: flat });
+  }
 
   const where: Record<string, unknown> = {};
   if (trashedFlag) {
