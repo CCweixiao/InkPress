@@ -29,7 +29,7 @@ import {
   Trash2,
   Tag as TagIcon,
   Plus,
-  MoreHorizontal,
+  Pencil,
   GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -166,7 +166,7 @@ function SortableFolderRow({
         className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100"
         title="编辑文件夹"
       >
-        <MoreHorizontal className="h-3.5 w-3.5" />
+        <Pencil className="h-3.5 w-3.5" />
       </button>
       {/* Drag handle */}
       <button
@@ -238,7 +238,7 @@ function SortableListRow({
         className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
         title="编辑清单"
       >
-        <MoreHorizontal className="h-3.5 w-3.5" />
+        <Pencil className="h-3.5 w-3.5" />
       </button>
       {/* Drag handle */}
       <button
@@ -875,7 +875,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                 className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
                 title="编辑标签"
               >
-                <MoreHorizontal className="h-3.5 w-3.5" />
+                <Pencil className="h-3.5 w-3.5" />
               </button>
             </div>
             {hasChildren && !isCollapsed && (
@@ -912,7 +912,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                         className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
                         title="编辑标签"
                       >
-                        <MoreHorizontal className="h-3.5 w-3.5" />
+                        <Pencil className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   );
