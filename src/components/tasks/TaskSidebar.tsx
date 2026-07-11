@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ListChecks, FolderOpen, FolderClosed, ChevronRight, ChevronDown, Trash2, Tag as TagIcon, Plus } from "lucide-react";
+import { ListChecks, FolderOpen, FolderClosed, ChevronRight, ChevronDown, Trash2, Tag as TagIcon, Plus, MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TagManageDialog } from "./TagManageDialog";
 import { TaskFolderDialog } from "./TaskFolderDialog";
@@ -47,6 +47,8 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [listDialogOpen, setListDialogOpen] = useState(false);
   const [listDialogFolderId, setListDialogFolderId] = useState<string | null>(null);
+  const [editFolder, setEditFolder] = useState<TaskFolderInfo | null>(null);
+  const [editList, setEditList] = useState<TaskListInfo | null>(null);
 
   const load = useCallback(async () => {
     const [treeRes, countRes] = await Promise.all([
@@ -126,22 +128,29 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
 
       {/* 顶层独立清单 */}
       {standaloneLists.map((list) => (
-        <button
+        <div
           key={list.id}
-          onClick={() => onSelect({ type: "list", id: list.id })}
           className={cn(
-            "flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors",
+            "group flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors cursor-pointer",
             selected.type === "list" && selected.id === list.id
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:bg-accent hover:text-foreground"
           )}
+          onClick={() => onSelect({ type: "list", id: list.id })}
         >
           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: list.color }} />
           <span className="flex-1 text-left truncate">{list.name}</span>
           {(counts.byList[list.id] ?? 0) > 0 && (
             <span className="text-xs shrink-0">{counts.byList[list.id]}</span>
           )}
-        </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setEditFolder(null); setEditList(list); }}
+            className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
+            title="编辑清单"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </div>
       ))}
 
       {/* 文件夹 */}
@@ -179,25 +188,39 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
+            <button
+              onClick={() => setEditFolder(folder)}
+              className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100"
+              title="编辑文件夹"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
           </div>
           {!folder.collapsed &&
             folder.lists.map((list) => (
-              <button
+              <div
                 key={list.id}
-                onClick={() => onSelect({ type: "list", id: list.id })}
                 className={cn(
-                  "flex items-center gap-2 w-full pl-8 pr-2 py-1.5 rounded-md text-sm transition-colors",
+                  "group flex items-center gap-2 w-full pl-8 pr-2 py-1.5 rounded-md text-sm transition-colors cursor-pointer",
                   selected.type === "list" && selected.id === list.id
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground"
                 )}
+                onClick={() => onSelect({ type: "list", id: list.id })}
               >
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: list.color }} />
                 <span className="flex-1 text-left truncate">{list.name}</span>
                 {(counts.byList[list.id] ?? 0) > 0 && (
                   <span className="text-xs shrink-0">{counts.byList[list.id]}</span>
                 )}
-              </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setEditFolder(null); setEditList(list); }}
+                  className="p-0.5 rounded hover:bg-accent opacity-0 group-hover:opacity-100 shrink-0"
+                  title="编辑清单"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
         </div>
       ))}
@@ -228,15 +251,18 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
 
       <TagManageDialog open={tagOpen} onOpenChange={setTagOpen} />
       <TaskFolderDialog
-        open={folderDialogOpen}
-        onOpenChange={setFolderDialogOpen}
+        open={folderDialogOpen || editFolder !== null}
+        onOpenChange={(o) => { if (!o) { setFolderDialogOpen(false); setEditFolder(null); } }}
         onSaved={load}
+        folder={editFolder}
       />
       <TaskListDialog
-        open={listDialogOpen}
-        onOpenChange={setListDialogOpen}
+        open={listDialogOpen || editList !== null}
+        onOpenChange={(o) => { if (!o) { setListDialogOpen(false); setEditList(null); } }}
         folderId={listDialogFolderId}
+        folders={folders.map(f => ({ id: f.id, name: f.name }))}
         onSaved={load}
+        list={editList}
       />
     </aside>
   );
