@@ -21,6 +21,8 @@ import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   ListChecks,
   Menu,
+  Search,
+  X,
   FolderOpen,
   FolderClosed,
   ChevronRight,
@@ -74,6 +76,7 @@ type Counts = {
 interface TaskSidebarProps {
   selected: SelectedKey;
   onSelect: (key: SelectedKey) => void;
+  onSelectTask?: (taskId: string, listId: string) => void;
   refreshKey?: number;
 }
 
@@ -258,7 +261,7 @@ function SortableListRow({
 // ===========================================================================
 // Main sidebar
 // ===========================================================================
-export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps) {
+export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: TaskSidebarProps) {
   const [folders, setFolders] = useState<TaskFolderInfo[]>([]);
   const [standaloneLists, setStandaloneLists] = useState<TaskListInfo[]>([]);
   const [counts, setCounts] = useState<Counts>({
@@ -284,6 +287,10 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
   const [tagDialogOpen, setTagDialogOpen] = useState(false);
   const [editTag, setEditTag] = useState<TagInfo | null>(null);
   const [tagDialogParentId, setTagDialogParentId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [taskResults, setTaskResults] = useState<Array<{ id: string; title: string; list?: { id: string; name: string } }>>([]);
+  const [searching, setSearching] = useState(false);
 
   const load = useCallback(async () => {
     const [treeRes, countRes, tagsRes] = await Promise.all([
@@ -314,6 +321,41 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
   useEffect(() => {
     load();
   }, [load, refreshKey]);
+
+  // 搜索防抖
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // 任务搜索（服务端）
+  useEffect(() => {
+    const q = debouncedQuery.trim();
+    if (!q) {
+      setTaskResults([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    fetch(`/api/tasks?q=${encodeURIComponent(q)}&limit=5`)
+      .then((r) => (r.ok ? r.json() : { tasks: [] }))
+      .then((data) => {
+        if (!cancelled) {
+          setTaskResults(data.tasks ?? []);
+          setSearching(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTaskResults([]);
+          setSearching(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -360,6 +402,25 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
   };
 
   const parentTagOptions = tags.filter((t) => t.parentId === null);
+
+  const searchResults = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase();
+    if (!q) return { folders: [], lists: [], tags: [] };
+    const match = (name: string) => name.toLowerCase().includes(q);
+    const matchedFolders = folders.filter((f) => match(f.name)).slice(0, 5);
+    const allLists = [
+      ...standaloneLists,
+      ...folders.flatMap((f) => f.lists),
+    ];
+    const matchedLists = allLists.filter((l) => match(l.name)).slice(0, 5);
+    const matchedTags = tags.filter((t) => match(t.name)).slice(0, 5);
+    return { folders: matchedFolders, lists: matchedLists, tags: matchedTags };
+  }, [debouncedQuery, folders, standaloneLists, tags]);
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setDebouncedQuery("");
+  };
 
   const toggleTagCollapsed = (id: string) => {
     setCollapsedTagIds((prev) => {
@@ -508,6 +569,127 @@ export function TaskSidebar({ selected, onSelect, refreshKey }: TaskSidebarProps
           <span className="text-xs shrink-0">{counts.total}</span>
         )}
       </button>
+
+      {/* 搜索框 */}
+      <div className="relative mt-1">
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50">
+          <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") clearSearch();
+            }}
+            placeholder="搜索文件夹/标签/任务..."
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground min-w-0"
+          />
+          {searchQuery && (
+            <button
+              onClick={clearSearch}
+              className="p-0.5 rounded hover:bg-accent text-muted-foreground shrink-0"
+              title="清空"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* 下拉浮层 */}
+        {debouncedQuery.trim() && (
+          <div className="absolute top-full left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-popover border border-border rounded-md shadow-md z-50">
+            {searchResults.folders.length === 0 &&
+            searchResults.lists.length === 0 &&
+            searchResults.tags.length === 0 &&
+            taskResults.length === 0 ? (
+              <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                {searching ? "搜索中..." : "无匹配结果"}
+              </div>
+            ) : (
+              <>
+                {(searchResults.folders.length > 0 || searchResults.lists.length > 0) && (
+                  <div className="py-1">
+                    <div className="px-3 py-1 text-xs text-muted-foreground">文件夹/清单</div>
+                    {searchResults.folders.map((f) => (
+                      <button
+                        key={`f-${f.id}`}
+                        onClick={() => {
+                          onSelect({ type: "folder", id: f.id });
+                          clearSearch();
+                        }}
+                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                        <span className="flex-1 truncate">{f.name}</span>
+                      </button>
+                    ))}
+                    {searchResults.lists.map((l) => (
+                      <button
+                        key={`l-${l.id}`}
+                        onClick={() => {
+                          onSelect({ type: "list", id: l.id });
+                          clearSearch();
+                        }}
+                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                      >
+                        <Menu className="h-3.5 w-3.5 shrink-0" />
+                        <span className="flex-1 truncate">{l.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {searchResults.tags.length > 0 && (
+                  <div className="py-1 border-t border-border">
+                    <div className="px-3 py-1 text-xs text-muted-foreground">标签</div>
+                    {searchResults.tags.map((t) => (
+                      <button
+                        key={`t-${t.id}`}
+                        onClick={() => {
+                          onSelect({ type: "tag", id: t.id });
+                          clearSearch();
+                        }}
+                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: t.color }}
+                        />
+                        <span className="flex-1 truncate">{t.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {taskResults.length > 0 && (
+                  <div className="py-1 border-t border-border">
+                    <div className="px-3 py-1 text-xs text-muted-foreground">任务</div>
+                    {taskResults.map((t) => (
+                      <button
+                        key={`task-${t.id}`}
+                        onClick={() => {
+                          if (t.list?.id && onSelectTask) {
+                            onSelectTask(t.id, t.list.id);
+                            clearSearch();
+                          }
+                        }}
+                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                        disabled={!t.list?.id || !onSelectTask}
+                      >
+                        <span className="w-3.5 h-3.5 border border-current rounded shrink-0" />
+                        <span className="flex-1 truncate">{t.title}</span>
+                        {t.list?.name && (
+                          <span className="text-xs text-muted-foreground shrink-0">
+                            [{t.list.name}]
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 可滚动中间区域 */}
       <div className="flex-1 overflow-y-auto min-h-0 -mx-1 px-1">

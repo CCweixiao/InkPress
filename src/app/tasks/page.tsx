@@ -16,6 +16,11 @@ export default function TasksPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
 
+  const handleSelectTask = (taskId: string, listId: string) => {
+    setSelected({ type: "list", id: listId });
+    setHighlightTaskId(taskId);
+  };
+
   // Global keyboard shortcut for quick add
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -93,7 +98,7 @@ export default function TasksPage() {
       <div className="flex flex-1 mx-auto max-w-6xl w-full px-6">
         {/* Desktop sidebar */}
         <div className="hidden md:block">
-          <TaskSidebar selected={selected} onSelect={setSelected} refreshKey={refreshKey} />
+          <TaskSidebar selected={selected} onSelect={setSelected} onSelectTask={handleSelectTask} refreshKey={refreshKey} />
         </div>
 
         {/* Mobile sidebar drawer */}
@@ -107,6 +112,7 @@ export default function TasksPage() {
                   setSelected(k);
                   setSidebarOpen(false);
                 }}
+                onSelectTask={handleSelectTask}
                 refreshKey={refreshKey}
               />
             </div>
