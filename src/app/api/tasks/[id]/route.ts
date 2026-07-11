@@ -11,6 +11,7 @@ const updateSchema = z.object({
   dueDate: z.string().nullable().optional(),
   parentId: z.string().nullable().optional(),
   spaceId: z.string().nullable().optional(),
+  listId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
   isCollapsed: z.boolean().optional(),
@@ -48,7 +49,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     }
 
     const data: Record<string, unknown> = {};
-    const { title, content, status, priority, dueDate, parentId, spaceId, sortOrder, tagsJson, isCollapsed, tagIds } =
+    const { title, content, status, priority, dueDate, parentId, spaceId, listId, sortOrder, tagsJson, isCollapsed, tagIds } =
       parsed.data;
 
     if (title !== undefined) data.title = title;
@@ -66,6 +67,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (dueDate !== undefined) data.dueDate = dueDate ? new Date(dueDate) : null;
     if (parentId !== undefined) data.parentId = parentId;
     if (spaceId !== undefined) data.spaceId = spaceId;
+    if (listId !== undefined) data.listId = listId;
     if (sortOrder !== undefined) data.sortOrder = sortOrder;
     if (tagsJson !== undefined) data.tagsJson = tagsJson;
     if (isCollapsed !== undefined) data.isCollapsed = isCollapsed;

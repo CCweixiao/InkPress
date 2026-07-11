@@ -4,29 +4,37 @@ import { prisma } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// GET /api/tasks/counts — 侧边栏聚合计数
 export async function GET() {
-  // 主视图（未废弃）按 spaceId 聚合
   const active = await prisma.task.groupBy({
-    by: ["spaceId"],
+    by: ["listId"],
     where: { trashed: false },
     _count: true,
   });
 
-  const bySpace: Record<string, number> = {};
+  const byList: Record<string, number> = {};
   let total = 0;
-  let inbox = 0;
   for (const row of active) {
     const count = row._count;
     total += count;
-    if (row.spaceId === null) {
-      inbox += count;
-    } else {
-      bySpace[row.spaceId] = count;
+    if (row.listId !== null) {
+      byList[row.listId] = count;
     }
   }
 
-  // 垃圾箱：只计 trashed root
+  // legacy bySpace + inbox（桥接期保留，Task 9 移除）
+  const bySpaceActive = await prisma.task.groupBy({
+    by: ["spaceId"],
+    where: { trashed: false },
+    _count: true,
+  });
+  const bySpace: Record<string, number> = {};
+  let inbox = 0;
+  for (const row of bySpaceActive) {
+    const count = row._count;
+    if (row.spaceId === null) inbox += count;
+    else bySpace[row.spaceId] = count;
+  }
+
   const trashed = await prisma.task.count({
     where: {
       trashed: true,
@@ -34,5 +42,5 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({ total, inbox, bySpace, trashed });
+  return NextResponse.json({ total, inbox, bySpace, byList, trashed });
 }

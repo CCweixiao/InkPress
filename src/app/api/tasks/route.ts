@@ -12,6 +12,7 @@ const createSchema = z.object({
   dueDate: z.string().nullable().optional(),
   parentId: z.string().nullable().optional(),
   spaceId: z.string().nullable().optional(),
+  listId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
   tagIds: z.array(z.string()).optional(),
@@ -22,6 +23,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const status = searchParams.get("status");
   const spaceId = searchParams.get("spaceId");
+  const listId = searchParams.get("listId");
+  const folderId = searchParams.get("folderId");
   const parentId = searchParams.get("parentId");
   const priority = searchParams.get("priority");
   const smartViewRaw = searchParams.get("smartView");
@@ -45,7 +48,8 @@ export async function GET(req: NextRequest) {
     where.trashed = false;
     if (status) where.status = status;
     if (spaceId) where.spaceId = spaceId;
-    else if (smartView === "inbox") where.spaceId = null;
+    if (listId) where.listId = listId;
+    if (folderId) where.list = { folderId };
     if (parentId !== null && parentId !== undefined) {
       where.parentId = parentId === "null" ? null : parentId;
     } else {
@@ -73,6 +77,7 @@ export async function GET(req: NextRequest) {
       },
       tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
       space: { select: { id: true, name: true } },
+      list: { select: { id: true, name: true, color: true, folderId: true, folder: { select: { id: true, name: true } } } },
     },
   });
 
@@ -99,7 +104,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { title, content, status, priority, dueDate, parentId, spaceId, sortOrder, tagsJson, tagIds } =
+    const { title, content, status, priority, dueDate, parentId, spaceId, listId, sortOrder, tagsJson, tagIds } =
       parsed.data;
 
     // 获取同级最大 sortOrder
@@ -117,6 +122,7 @@ export async function POST(req: NextRequest) {
         dueDate: dueDate ? new Date(dueDate) : null,
         parentId: parentId ?? null,
         spaceId: spaceId ?? null,
+        listId: listId ?? null,
         sortOrder: sortOrder ?? (maxSort._max.sortOrder ?? 0) + 1,
         tagsJson: tagsJson ?? "[]",
         tags: tagIds?.length
