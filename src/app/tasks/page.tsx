@@ -112,7 +112,10 @@ export default function TasksPage() {
                   setSelected(k);
                   setSidebarOpen(false);
                 }}
-                onSelectTask={handleSelectTask}
+                onSelectTask={(taskId, listId) => {
+                  handleSelectTask(taskId, listId);
+                  setSidebarOpen(false);
+                }}
                 refreshKey={refreshKey}
               />
             </div>

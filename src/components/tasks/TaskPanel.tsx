@@ -40,9 +40,9 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
       const el = document.querySelector(`[data-task-id="${highlightTaskId}"]`);
       if (!el) return;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-primary", "rounded-md");
+      el.classList.add("ring-2", "ring-primary", "rounded-md", "animate-pulse");
       setTimeout(() => {
-        el.classList.remove("ring-2", "ring-primary", "rounded-md");
+        el.classList.remove("ring-2", "ring-primary", "rounded-md", "animate-pulse");
         onHighlightConsumed?.();
       }, 2000);
     }, 100);
