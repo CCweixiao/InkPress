@@ -293,7 +293,6 @@ export async function prepareAgentContext(input: {
   // 仅保留最近 2 条消息中的调用——旧证据已在 UI 证据块留痕，原始大 payload 不必逐轮重复占用。
   const heavyTools = [
     "propose_article_revision",
-    "propose_technical_document_revision",
     "web_extract",
   ];
   if (estimatedTokens > input.contextBudgetTokens) {

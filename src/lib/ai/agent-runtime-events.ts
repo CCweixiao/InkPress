@@ -65,7 +65,6 @@ export type ActivityKind =
 export type ToolCategory =
   | "skill"
   | "article"
-  | "technical-document"
   | "asset"
   | "code"
   | "git"
@@ -98,7 +97,7 @@ export type ToolDisplayPhase =
  */
 export type ToolDisplayContext = {
   target: {
-    kind: "article" | "technical-document";
+    kind: "article";
     id: string;
     title: string;
   };

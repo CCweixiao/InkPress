@@ -19,25 +19,13 @@ if (!fs.existsSync(dbPath)) {
 }
 const db = new Database(dbPath);
 
-const colExists = (t, c) =>
-  db.prepare(`PRAGMA table_info('${t}')`).all().some((x) => x.name === c);
 const tableExists = (t) =>
   db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t) !==
   undefined;
 
 const applied = [];
 
-// 1. TechnicalDocument.codeSourceJson（migration 20260621213000 的 ALTER 段）
-db.transaction(() => {
-  if (!colExists("TechnicalDocument", "codeSourceJson")) {
-    db.exec(
-      `ALTER TABLE "TechnicalDocument" ADD COLUMN "codeSourceJson" TEXT NOT NULL DEFAULT '{}';`
-    );
-    applied.push("TechnicalDocument.codeSourceJson");
-  }
-})();
-
-// 2. CodeSourceGrant 表 + 索引（migration 20260621213000 的建表段）
+// 1. CodeSourceGrant 表 + 索引（migration 20260621213000 的建表段）
 db.transaction(() => {
   if (!tableExists("CodeSourceGrant")) {
     db.exec(`
@@ -110,7 +98,6 @@ db.transaction(() => {
 
 console.log("✓ Applied:", applied.length ? applied.join(", ") : "(无变更，dev.db 已是最新)");
 console.log("\n验证:");
-console.log("  TechnicalDocument.codeSourceJson?", colExists("TechnicalDocument", "codeSourceJson"));
 console.log("  CodeSourceGrant table?", tableExists("CodeSourceGrant"));
 console.log("\n_prisma_migrations:");
 db

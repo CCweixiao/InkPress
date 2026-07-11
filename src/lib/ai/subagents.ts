@@ -62,7 +62,7 @@ export const INKPRESS_SUBAGENTS: Record<string, AgentDefinition> = {
 
 /** 供 buildClaudeAgentOptions 注入 Options.agents。 */
 export function buildSubagents(capabilities?: {
-  targetKind: "article" | "technical-document";
+  targetKind: "article";
   hasCodeSource: boolean;
   webResearchEnabled: boolean;
 }): Record<string, AgentDefinition> {
@@ -76,9 +76,7 @@ export function buildSubagents(capabilities?: {
     });
     result.research = { ...INKPRESS_SUBAGENTS.research, tools: researchTools };
   }
-  if (capabilities.targetKind === "article") {
-    result.review = INKPRESS_SUBAGENTS.review;
-  }
+  result.review = INKPRESS_SUBAGENTS.review;
   if (capabilities.webResearchEnabled) {
     result.fact_check = INKPRESS_SUBAGENTS.fact_check;
   }

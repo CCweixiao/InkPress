@@ -41,8 +41,6 @@ vi.mock("@/lib/content-store", () => ({
   contentExistsAt,
   withArticleContentWriteLock,
   writeContentAt,
-  readTechnicalDocumentContent: vi.fn(),
-  writeTechnicalDocumentContent: vi.fn(),
   articleFilePath: vi.fn(() => "articles/article-1.md"),
 }));
 

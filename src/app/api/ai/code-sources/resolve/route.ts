@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 const schema = z.object({
   target: z.object({
-    kind: z.enum(["article", "technical-document"]),
+    kind: z.enum(["article"]),
     id: z.string().min(1),
   }),
   message: z.string().min(1),

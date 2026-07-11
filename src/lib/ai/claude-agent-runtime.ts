@@ -23,7 +23,7 @@ const log = moduleLogger("ai.claude-agent");
 export type RunClaudeAgentInput = {
   target: ClaudeAgentTarget;
   sessionId: string;
-  /** 仅 propose_technical_document_revision 的 sourceSnapshotJson 用。 */
+  /** github_pull_request / 代码工具取授权 codeSource 用。 */
   codeSource?: CodeSourceReference;
   /** P5：SDK 会话 id；非空时 resume（跨轮记忆），空则新会话。 */
   claudeAgentSessionId?: string;

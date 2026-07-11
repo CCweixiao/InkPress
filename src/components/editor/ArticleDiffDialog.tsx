@@ -161,9 +161,7 @@ export function ArticleDiffDialog({
               </div>
               <div className="min-w-0">
                 <DialogTitle className="flex flex-wrap items-center gap-2 text-base font-semibold tracking-normal">
-                  {proposal.proposalKind === "technical-document"
-                    ? "技术文档修改审查"
-                    : "文章修改审查"}
+                  文章修改审查
                   <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {proposal.stats.oldLines} → {proposal.stats.newLines} 行
                   </span>

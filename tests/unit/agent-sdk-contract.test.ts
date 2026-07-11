@@ -37,7 +37,7 @@ const sdkResultFixtures: SDKMessage[] = [
 ];
 
 describe("agent capability selection", () => {
-  it("does not expose code, web, or technical-document tools to an article-only turn", () => {
+  it("does not expose code or web tools to an article-only turn", () => {
     const names = selectInkPressTools({
       targetKind: "article",
       hasCodeSource: false,
@@ -45,25 +45,23 @@ describe("agent capability selection", () => {
     }).map((tool) => tool.name);
 
     expect(names).toContain("propose_article_revision");
-    expect(names).not.toContain("propose_technical_document_revision");
     expect(names).not.toContain("project_read");
     expect(names).not.toContain("git_log");
     expect(names).not.toContain("web_search");
     expect(names).not.toContain("web_fetch");
   });
 
-  it("enables code and web tools only for a capable technical-document turn", () => {
+  it("enables code and web tools for a capable article turn", () => {
     const names = selectInkPressTools({
-      targetKind: "technical-document",
+      targetKind: "article",
       hasCodeSource: true,
       webResearchEnabled: true,
     }).map((tool) => tool.name);
 
-    expect(names).toContain("propose_technical_document_revision");
+    expect(names).toContain("propose_article_revision");
+    expect(names).toContain("set_article_digest");
     expect(names).toContain("project_read");
     expect(names).toContain("web_search");
-    expect(names).not.toContain("propose_article_revision");
-    expect(names).not.toContain("set_article_digest");
   });
 });
 

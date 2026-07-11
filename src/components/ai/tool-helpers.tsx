@@ -109,7 +109,6 @@ const TOOL_REGISTRY: Record<string, ToolDescriptor> = {
     label: "生成文章修改提案",
     summarize: () => "文章修改提案已生成",
   },
-  propose_technical_document_revision: { label: "生成技术文档提案" },
 };
 
 /** 工具中文名（由注册表派生，与 ToolCallBlock 标题一致）。 */

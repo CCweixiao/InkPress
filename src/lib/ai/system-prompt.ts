@@ -12,14 +12,12 @@ import { getArticleProfile } from "@/lib/ai/article-type-profile";
 
 export type InkPressSystemPromptInput = {
   target: {
-    kind: "article" | "technical-document";
+    kind: "article";
     title: string;
     /** 当前正文 Markdown（用于让 Agent 据此修改/重写）。 */
     markdown: string;
-    /** P3 文章类型 profile id（article 时注入写作类型引导）。 */
+    /** P3 文章类型 profile id（注入写作类型引导）。 */
     profileId?: string;
-    /** P3 技术文档子类型（architecture|implementation|call-chain|module-reference|dependency）。 */
-    documentType?: string;
   };
   skillCatalog: SkillCatalogItem[];
   /** 本轮路由/斜杠命令建议优先加载的 Skill。 */
@@ -46,53 +44,19 @@ export const SNIPPET_FUSION_HINT = `## 灵感素材融入
 6. 引用素材：以 blockquote 形式保留，可调整引入语。
 7. 不要把 {{snippet:id}} 标记回显进正文；加载失败/不存在的素材静默跳过。`;
 
-/** 技术文档子类型 → 中文名（PDC §7.3，补 documentType 现成缺陷）。 */
-const DOCUMENT_TYPE_LABELS: Record<string, string> = {
-  architecture: "架构文档",
-  implementation: "实现文档",
-  "call-chain": "调用链文档",
-  "module-reference": "模块参考",
-  dependency: "依赖文档",
-};
-
-/** 技术文档子类型 → 写作要点引导。 */
-const DOCUMENT_TYPE_GUIDES: Record<string, string> = {
-  architecture:
-    "讲清系统分层、模块职责、关键交互。用 Mermaid 画架构图；先用代码探索工具取证，再下结论，区分事实与推断。",
-  implementation:
-    "聚焦某功能的实现细节：数据流、关键算法、边界处理。配代码片段（project_read 取证），说明为什么这样实现。",
-  "call-chain":
-    "端到端追踪一次请求/操作的完整路径。用 project_search/project_read 定位入口，画出调用序列图。",
-  "module-reference":
-    "模块的 API、入参出参、用法示例、注意事项。结构化、便于查阅。",
-  dependency:
-    "项目的外部/内部依赖、版本、用途、引入原因与风险。",
-};
-
 export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): string {
   const profile = getArticleProfile(input.target.profileId);
-  const docLabel =
-    DOCUMENT_TYPE_LABELS[input.target.documentType ?? ""] ?? "技术文档";
-  const targetLabel =
-    input.target.kind === "technical-document"
-      ? docLabel
-      : `公众号文章（${profile.name}）`;
+  const targetLabel = `公众号文章（${profile.name}）`;
   const title = input.target.title?.trim() || "未命名";
-  // P3：按 profile / documentType 注入「写作类型」引导段。
-  const typeSection: string[] =
-    input.target.kind === "article"
-      ? [
-          "",
-          `## 写作类型：${profile.name}`,
-          profile.promptSection,
-          "",
-          "**审稿清单（完稿前自检）：**",
-          ...profile.checklist.map((c) => `- [ ] ${c}`),
-        ]
-      : input.target.documentType &&
-          DOCUMENT_TYPE_GUIDES[input.target.documentType]
-        ? ["", `## ${docLabel} 写作要点`, DOCUMENT_TYPE_GUIDES[input.target.documentType]]
-        : [];
+  // P3：按 profile 注入「写作类型」引导段。
+  const typeSection: string[] = [
+    "",
+    `## 写作类型：${profile.name}`,
+    profile.promptSection,
+    "",
+    "**审稿清单（完稿前自检）：**",
+    ...profile.checklist.map((c) => `- [ ] ${c}`),
+  ];
   const skillLines = input.skillCatalog.length
     ? input.skillCatalog.map((s) => `- ${s.id}：${s.description}`).join("\n")
     : "- （暂无已安装 Skill）";
@@ -163,7 +127,7 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
   ];
 
   return [
-    "你是 InkPress 的写作 Agent，专注中文写作场景（公众号文章、技术文档）。",
+    "你是 InkPress 的写作 Agent，专注中文写作场景（公众号文章）。",
     `当前正在协助用户处理一篇「${targetLabel}」：《${title}》。`,
     "你需要自己识别用户意图、规划步骤，并按需选择 Skill 与工具；外层服务不会再做 LLM 意图路由。",
     "",
@@ -174,7 +138,6 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
     "- mcp__inkpress__read_current_article：按字符范围读取当前文章完整正文。当前正文被截断时，必须用它覆盖全文后，才能提交完整替换提案。",
     "- mcp__inkpress__set_article_digest：为文章生成摘要（≤120 字）并写回摘要字段；摘要要写入字段时**必须**用此工具，不要贴在正文里。",
     "- mcp__inkpress__propose_article_revision：创建或修改公众号文章时**必须**调用，提交完整 Markdown，不要在聊天里直接贴完整正文。",
-    "- mcp__inkpress__propose_technical_document_revision：创建或修改技术文档时同理。",
     ...codeSection,
     ...webSection,
     ...typeSection,

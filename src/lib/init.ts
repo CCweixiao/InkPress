@@ -104,7 +104,6 @@ export async function ensureDataHome(): Promise<void> {
     path.join(storageDir(), "spaces"),
     path.join(storageDir(), "library"),
     path.join(storageDir(), "code-sources"),
-    path.join(storageDir(), "technical-documents"),
     cacheDir(),
     databaseDir(),
     backupDir(),

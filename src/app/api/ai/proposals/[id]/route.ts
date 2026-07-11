@@ -75,33 +75,7 @@ export async function GET(_req: Request, { params }: Params) {
     });
   }
 
-  const documentProposal =
-    await prisma.agentTechnicalDocumentProposal.findUnique({ where: { id } });
-  if (!documentProposal) {
-    return NextResponse.json({ error: "提案不存在。" }, { status: 404 });
-  }
-  return NextResponse.json({
-    proposal: {
-      id: documentProposal.id,
-      proposalKind: "technical-document",
-      targetId: documentProposal.technicalDocumentId,
-      baseTitle: documentProposal.baseTitle,
-      baseMarkdown: documentProposal.baseMarkdown,
-      baseDigest: documentProposal.baseSnapshotHash,
-      title: documentProposal.title,
-      markdown: documentProposal.markdown,
-      digest: documentProposal.snapshotHash,
-      summary: documentProposal.summary,
-      status: documentProposal.status,
-      createdAt: documentProposal.createdAt,
-      decidedAt: documentProposal.decidedAt,
-      sourceSnapshot: JSON.parse(documentProposal.sourceSnapshotJson || "{}"),
-      stats: changeStats(
-        documentProposal.baseMarkdown,
-        documentProposal.markdown
-      ),
-    },
-  });
+  return NextResponse.json({ error: "提案不存在。" }, { status: 404 });
 }
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -117,28 +91,15 @@ export async function PATCH(req: Request, { params }: Params) {
   if (article.count === 1) {
     return NextResponse.json({ ok: true, status: "rejected" });
   }
-  const document = await prisma.agentTechnicalDocumentProposal.updateMany({
-    where: { id, status: "pending" },
-    data: { status: "rejected", decidedAt: new Date() },
-  });
-  if (document.count === 1) {
-    return NextResponse.json({ ok: true, status: "rejected" });
-  }
   const existingArticle = await prisma.agentArticleProposal.findUnique({
     where: { id },
     select: { status: true },
   });
-  const existingDocument =
-    await prisma.agentTechnicalDocumentProposal.findUnique({
-      where: { id },
-      select: { status: true },
-    });
-  const existing = existingArticle ?? existingDocument;
-  if (!existing) {
+  if (!existingArticle) {
     return NextResponse.json({ error: "提案不存在。" }, { status: 404 });
   }
   return NextResponse.json(
-    { error: "该提案已被其他操作处理。", status: existing.status },
+    { error: "该提案已被其他操作处理。", status: existingArticle.status },
     { status: 409 }
   );
 }

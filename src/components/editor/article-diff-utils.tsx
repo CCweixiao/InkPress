@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 export type ProposalDetail = {
   id: string;
-  proposalKind?: "article" | "technical-document";
+  proposalKind?: "article";
   targetId?: string;
   baseTitle: string;
   baseMarkdown: string;

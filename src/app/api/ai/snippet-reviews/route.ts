@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const targetSchema = z.object({
-  kind: z.enum(["article", "technical-document"]),
+  kind: z.enum(["article"]),
   id: z.string().min(1),
 });
 

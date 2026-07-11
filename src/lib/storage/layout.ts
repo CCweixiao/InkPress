@@ -23,10 +23,6 @@ export function articlePrefix(input: { articleId: string; spaceId?: string | nul
   return join("articles", safeSegment(input.articleId, "unknown-article"));
 }
 
-export function technicalDocumentPrefix(documentId: string) {
-  return join("technical-documents", safeSegment(documentId, "unknown-document"));
-}
-
 export function assetObjectPrefix(input: {
   kind: string;
   spaceId?: string | null;

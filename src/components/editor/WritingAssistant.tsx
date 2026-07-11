@@ -88,7 +88,7 @@ import {
 
 type ProposalSummary = {
   id: string;
-  proposalKind?: "article" | "technical-document";
+  proposalKind?: "article";
   title?: string | null;
   summary: string;
   status: string;
@@ -306,7 +306,7 @@ function ProposalCard({
     setStatus("applied");
     setDetail((current) => (current ? { ...current, status: "applied" } : current));
     setDiffOpen(false);
-    const applied = data.article ?? data.technicalDocument;
+    const applied = data.article;
     if (applied && typeof applied === "object") {
       onApplied(applied as Record<string, unknown>);
     }
@@ -348,12 +348,7 @@ function ProposalCard({
             <Sparkles className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold">
-              {(detail?.proposalKind ?? fallback?.proposalKind) ===
-              "technical-document"
-                ? "技术文档修改提案"
-                : "文章修改提案"}
-            </div>
+            <div className="text-xs font-semibold">文章修改提案</div>
             <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
               {detail?.summary ?? fallback?.summary ?? "正在加载提案详情…"}
             </p>
@@ -407,16 +402,14 @@ function ProposalCard({
             {previewOpen && (
               <DiffPreview detail={detail} onOpenFull={() => setDiffOpen(true)} />
             )}
-            {detail.proposalKind !== "technical-document" && (
-              <div className="rounded-md border bg-background px-2.5 py-2 text-[11px]">
-                <div className="font-medium">审稿清单 · {profile.name}</div>
-                <ul className="mt-1 space-y-0.5 text-muted-foreground">
-                  {profile.checklist.map((item) => (
-                    <li key={item}>· {item}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <div className="rounded-md border bg-background px-2.5 py-2 text-[11px]">
+              <div className="font-medium">审稿清单 · {profile.name}</div>
+              <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                {profile.checklist.map((item) => (
+                  <li key={item}>· {item}</li>
+                ))}
+              </ul>
+            </div>
           </div>
         )}
         {error && <p className="text-xs text-red-600">{error}</p>}
@@ -681,18 +674,13 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 
 export type RenderCtx = {
   role: "user" | "assistant" | "system";
-  targetKind: "article" | "technical-document";
+  targetKind: "article";
   setFullscreenText: (text: string | null) => void;
   onApplyArticle?: (article: {
     title: string;
     contentMd: string;
     digest: string | null;
     contentRevision: number;
-  }) => void;
-  onApplyTechnicalDocument?: (document: {
-    title: string;
-    markdown: string;
-    snapshotHash: string;
   }) => void;
   resumeAfterApproval: () => Promise<void>;
   /** 代码源授权状态变化（pending 时父级锁定 composer）。 */
@@ -997,8 +985,7 @@ function EvidenceChip({
 function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
   const toolName = getToolName(part);
   const proposalId =
-    toolName === "propose_article_revision" ||
-    toolName === "propose_technical_document_revision"
+    toolName === "propose_article_revision"
       ? proposalIdFromOutput(part.output)
       : "";
   if (proposalId) {
@@ -1007,24 +994,14 @@ function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
         proposalId={proposalId}
         profileId={ctx.profileId}
         onApplied={(result) => {
-          if (ctx.targetKind === "article") {
-            ctx.onApplyArticle?.(
-              result as {
-                title: string;
-                contentMd: string;
-                digest: string | null;
-                contentRevision: number;
-              }
-            );
-          } else {
-            ctx.onApplyTechnicalDocument?.(
-              result as {
-                title: string;
-                markdown: string;
-                snapshotHash: string;
-              }
-            );
-          }
+          ctx.onApplyArticle?.(
+            result as {
+              title: string;
+              contentMd: string;
+              digest: string | null;
+              contentRevision: number;
+            }
+          );
         }}
       />
     );
@@ -1405,11 +1382,10 @@ type AgentMessageRowProps = {
   settled: boolean;
   isLastAssistant: boolean;
   showUserDivider: boolean;
-  targetKind: "article" | "technical-document";
+  targetKind: "article";
   busy: boolean;
   setFullscreenText: (text: string | null) => void;
   onApplyArticle?: RenderCtx["onApplyArticle"];
-  onApplyTechnicalDocument?: RenderCtx["onApplyTechnicalDocument"];
   onRerun: NonNullable<RenderCtx["rerun"]>;
   onResumeAfterApproval: RenderCtx["resumeAfterApproval"];
   onApprovalStatusChange?: RenderCtx["onApprovalStatusChange"];
@@ -1433,7 +1409,6 @@ const AgentMessageRow = memo(function AgentMessageRow({
   busy,
   setFullscreenText,
   onApplyArticle,
-  onApplyTechnicalDocument,
   onRerun,
   onResumeAfterApproval,
   onApprovalStatusChange,
@@ -1468,7 +1443,6 @@ const AgentMessageRow = memo(function AgentMessageRow({
       targetKind,
       setFullscreenText,
       onApplyArticle,
-      onApplyTechnicalDocument,
       resumeAfterApproval: onResumeAfterApproval,
       onApprovalStatusChange,
       onApprovalFailed,
@@ -1484,7 +1458,6 @@ const AgentMessageRow = memo(function AgentMessageRow({
       targetKind,
       setFullscreenText,
       onApplyArticle,
-      onApplyTechnicalDocument,
       onResumeAfterApproval,
       onApprovalStatusChange,
       onApprovalFailed,
@@ -1563,13 +1536,12 @@ export function WritingAssistant({
   profileId,
   onProfileChange,
   onApplyArticle,
-  onApplyTechnicalDocument,
   onFlushArticle,
   onFlushTarget,
   onApplyDigest,
 }: {
   articleId?: string;
-  targetKind?: "article" | "technical-document";
+  targetKind?: "article";
   targetId?: string;
   currentMarkdown: string;
   /** P3 文章类型 profile id（显示 ArticleProfileBadge）。 */
@@ -1580,11 +1552,6 @@ export function WritingAssistant({
     contentMd: string;
     digest: string | null;
     contentRevision: number;
-  }) => void;
-  onApplyTechnicalDocument?: (document: {
-    title: string;
-    markdown: string;
-    snapshotHash: string;
   }) => void;
   onFlushArticle?: () => Promise<void>;
   onFlushTarget?: () => Promise<void>;
@@ -2424,7 +2391,6 @@ export function WritingAssistant({
                   busy={busy}
                   setFullscreenText={setFullscreenText}
                   onApplyArticle={onApplyArticle}
-                  onApplyTechnicalDocument={onApplyTechnicalDocument}
                   onRerun={stableRerun}
                   onResumeAfterApproval={stableResumeAfterApproval}
                   onApprovalStatusChange={handleApprovalStatusChange}
@@ -2452,24 +2418,14 @@ export function WritingAssistant({
                   fallback={proposal}
                   profileId={profileId}
                   onApplied={(result) => {
-                    if (targetKind === "article") {
-                      onApplyArticle?.(
-                        result as {
-                          title: string;
-                          contentMd: string;
-                          digest: string | null;
-                          contentRevision: number;
-                        }
-                      );
-                    } else {
-                      onApplyTechnicalDocument?.(
-                        result as {
-                          title: string;
-                          markdown: string;
-                          snapshotHash: string;
-                        }
-                      );
-                    }
+                    onApplyArticle?.(
+                      result as {
+                        title: string;
+                        contentMd: string;
+                        digest: string | null;
+                        contentRevision: number;
+                      }
+                    );
                   }}
                 />
               ))}

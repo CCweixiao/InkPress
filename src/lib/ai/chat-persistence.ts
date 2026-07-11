@@ -10,9 +10,7 @@ const log = moduleLogger("ai.chat-persistence");
  */
 type DbClient = Pick<typeof prisma, "agentChatMessage" | "agentChatSession">;
 
-export type AgentTarget =
-  | { kind: "article"; id: string }
-  | { kind: "technical-document"; id: string };
+export type AgentTarget = { kind: "article"; id: string };
 
 type AgentChatMessageRow = {
   id: string;
@@ -163,25 +161,13 @@ async function saveWithin(
 }
 
 export async function getOrCreateAgentSession(target: AgentTarget | string) {
-  const normalized: AgentTarget =
-    typeof target === "string" ? { kind: "article", id: target } : target;
-  if (normalized.kind === "article") {
-    return prisma.agentChatSession.upsert({
-      where: { articleId: normalized.id },
-      update: { targetKind: "article", runtime: "claude-agent" },
-      create: {
-        articleId: normalized.id,
-        targetKind: "article",
-        runtime: "claude-agent",
-      },
-    });
-  }
+  const id = typeof target === "string" ? target : target.id;
   return prisma.agentChatSession.upsert({
-    where: { technicalDocumentId: normalized.id },
-    update: { targetKind: "technical-document", runtime: "claude-agent" },
+    where: { articleId: id },
+    update: { targetKind: "article", runtime: "claude-agent" },
     create: {
-      technicalDocumentId: normalized.id,
-      targetKind: "technical-document",
+      articleId: id,
+      targetKind: "article",
       runtime: "claude-agent",
     },
   });
@@ -190,10 +176,7 @@ export async function getOrCreateAgentSession(target: AgentTarget | string) {
 /** 仅读取目标对应的 Agent 会话；打开页面/刷新历史时不制造空会话记录。 */
 export async function findAgentSession(target: AgentTarget) {
   return prisma.agentChatSession.findFirst({
-    where:
-      target.kind === "article"
-        ? { articleId: target.id }
-        : { technicalDocumentId: target.id },
+    where: { articleId: target.id },
   });
 }
 

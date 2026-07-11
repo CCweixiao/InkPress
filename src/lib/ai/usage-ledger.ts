@@ -434,34 +434,15 @@ async function loadTargetTitleMap(
         .filter(Boolean)
     )
   );
-  const documentIds = Array.from(
-    new Set(
-      targets
-        .filter((t) => t.targetKind === "technical-document")
-        .map((t) => t.targetId)
-        .filter(Boolean)
-    )
-  );
-  const [articles, documents] = await Promise.all([
-    articleIds.length
-      ? prisma.article.findMany({
-          where: { id: { in: articleIds } },
-          select: { id: true, title: true },
-        })
-      : [],
-    documentIds.length
-      ? prisma.technicalDocument.findMany({
-          where: { id: { in: documentIds } },
-          select: { id: true, title: true },
-        })
-      : [],
-  ]);
+  const articles = articleIds.length
+    ? await prisma.article.findMany({
+        where: { id: { in: articleIds } },
+        select: { id: true, title: true },
+      })
+    : [];
   const titles = new Map<string, string>();
   for (const article of articles) {
     titles.set(`article:${article.id}`, article.title || "未命名文章");
-  }
-  for (const doc of documents) {
-    titles.set(`technical-document:${doc.id}`, doc.title || "未命名文档");
   }
   return titles;
 }

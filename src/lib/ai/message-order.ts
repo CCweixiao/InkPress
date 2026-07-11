@@ -11,10 +11,7 @@ export function isArticleProposalPart(part: AgentMessagePart): boolean {
       : part.type?.startsWith("tool-")
         ? part.type.slice(5)
         : part.toolName;
-  return (
-    toolName === "propose_article_revision" ||
-    toolName === "propose_technical_document_revision"
-  );
+  return toolName === "propose_article_revision";
 }
 
 /** 提案审核必须位于本轮总结之后，避免工具先返回时把审核卡顶到过程消息中间。 */

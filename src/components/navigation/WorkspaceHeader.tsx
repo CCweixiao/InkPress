@@ -7,7 +7,6 @@ import {
   BookOpen,
   Boxes,
   CheckSquare,
-  FileCode2,
   FolderOpen,
   Settings,
   Sparkles,
@@ -19,7 +18,6 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/tasks", label: "任务", icon: CheckSquare },
-  { href: "/technical-documents", label: "技术文档", icon: FileCode2 },
   { href: "/materials", label: "素材", icon: FolderOpen },
   { href: "/snippets", label: "灵感", icon: Sparkles },
   { href: "/skills", label: "技能仓库", icon: Boxes },

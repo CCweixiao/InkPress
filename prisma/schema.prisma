@@ -49,8 +49,7 @@ model Article {
 model AgentChatSession {
   id                  String   @id @default(cuid())
   articleId           String?  @unique
-  technicalDocumentId String?  @unique
-  targetKind          String   @default("article") // article | technical-document
+  targetKind          String   @default("article") // article
   summary             String   @default("")
   summaryUpToPosition Int      @default(-1)
   // Monotonic clear epoch; stale turns must never resurrect messages after /clear.
@@ -80,14 +79,12 @@ model AgentChatSession {
   updatedAt           DateTime @updatedAt
 
   article           Article?           @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  technicalDocument TechnicalDocument? @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
   messages          AgentChatMessage[]
   codeSourceGrants  CodeSourceGrant[]
   toolActionGrants  ToolActionGrant[]
   snippetInjectionReviews SnippetInjectionReview[]
 
   @@index([articleId])
-  @@index([technicalDocumentId])
   @@index([activeTurnExpiresAt])
 }
 
@@ -168,7 +165,7 @@ model AgentUsageTurn {
   id                       String   @id @default(cuid())
   sessionId                String
   turnId                   String
-  targetKind               String // article | technical-document
+  targetKind               String // article
   targetId                 String
   providerId               String?
   modelId                  String?
@@ -262,26 +259,6 @@ model AgentArticleProposal {
   @@index([status])
 }
 
-model TechnicalDocument {
-  id           String   @id @default(cuid())
-  title        String   @default("")
-  documentType String   @default("architecture") // architecture | implementation | call-chain | module-reference | dependency
-  projectId    String
-  contentPath  String?
-  snapshotHash String   @default("")
-  codeSourceJson String @default("{}")
-  status       String   @default("draft")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  chatSession AgentChatSession?
-  versions    TechnicalDocumentVersion[]
-  proposals   AgentTechnicalDocumentProposal[]
-
-  @@index([projectId])
-  @@index([updatedAt])
-}
-
 /// 统一存储对象：只描述文件实际存放位置和完整性。
 /// SQLite 保留元数据；文件可位于本地 storage、阿里云 OSS 或未来的 S3/R2/COS/MinIO。
 model StorageObject {
@@ -339,48 +316,6 @@ model CodeGraphCache {
   @@index([spaceId])
   @@index([articleId])
   @@index([snapshotHash])
-  @@index([status])
-}
-
-model TechnicalDocumentVersion {
-  id                  String   @id @default(cuid())
-  technicalDocumentId String
-  version             Int
-  title               String
-  markdown            String
-  snapshotHash        String   @default("")
-  sourceSnapshotJson  String   @default("{}")
-  createdAt           DateTime @default(now())
-
-  technicalDocument TechnicalDocument @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
-
-  @@unique([technicalDocumentId, version])
-  @@index([technicalDocumentId])
-}
-
-model AgentTechnicalDocumentProposal {
-  id                  String    @id @default(cuid())
-  technicalDocumentId String
-  sessionId           String?
-  baseVersionHash     String
-  baseTitle           String    @default("")
-  baseMarkdown        String    @default("")
-  baseSnapshotHash    String    @default("")
-  title               String?
-  markdown            String
-  snapshotHash        String?
-  sourceSnapshotJson  String    @default("{}")
-  summary             String    @default("")
-  status              String    @default("pending")
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  appliedAt           DateTime?
-  decidedAt           DateTime?
-
-  technicalDocument TechnicalDocument @relation(fields: [technicalDocumentId], references: [id], onDelete: Cascade)
-
-  @@index([technicalDocumentId])
-  @@index([sessionId])
   @@index([status])
 }
 

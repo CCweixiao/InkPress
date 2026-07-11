@@ -16,8 +16,6 @@ import { articlePrefix } from "@/lib/storage/layout";
  */
 const STORAGE_ROOT = storageDir();
 
-const TECHNICAL_DOCUMENTS_DIR = path.join(STORAGE_ROOT, "technical-documents");
-
 const articleWriteTails = new Map<string, Promise<void>>();
 /** Serialize article body read/claim/write/finalize flows in this process. */
 export async function withArticleContentWriteLock<T>(articleId: string, operation: () => Promise<T>): Promise<T> {
@@ -114,37 +112,6 @@ export async function deleteContentAt(relPath: string): Promise<void> {
   } catch {
     // ignore
   }
-}
-
-export function technicalDocumentRelativePath(id: string): string {
-  return path.posix.join("technical-documents", `${sanitizeId(id)}.md`);
-}
-
-function technicalDocumentAbsolutePath(id: string): string {
-  return path.join(STORAGE_ROOT, technicalDocumentRelativePath(id));
-}
-
-export async function writeTechnicalDocumentContent(
-  id: string,
-  content: string
-): Promise<void> {
-  const filePath = technicalDocumentAbsolutePath(id);
-  await fs.mkdir(TECHNICAL_DOCUMENTS_DIR, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, content, "utf8");
-  await fs.rename(tmp, filePath);
-}
-
-export async function readTechnicalDocumentContent(id: string): Promise<string> {
-  try {
-    return await fs.readFile(technicalDocumentAbsolutePath(id), "utf8");
-  } catch {
-    return "";
-  }
-}
-
-export async function deleteTechnicalDocumentContent(id: string): Promise<void> {
-  await fs.unlink(technicalDocumentAbsolutePath(id)).catch(() => {});
 }
 
 /**

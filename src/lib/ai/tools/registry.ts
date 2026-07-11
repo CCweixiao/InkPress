@@ -44,7 +44,7 @@ import { ARTICLE_BODY_BUDGET } from "@/lib/ai/system-prompt";
 /** MCP 工具执行时拿到的 InkPress 上下文（每次 query 前由 runtime 组装）。 */
 export type InkPressToolContext = {
   target: {
-    kind: "article" | "technical-document";
+    kind: "article";
     id: string;
     title: string;
     markdown: string;
@@ -54,7 +54,7 @@ export type InkPressToolContext = {
     contentRevision?: number;
   };
   sessionId: string;
-  /** 仅 propose_technical_document_revision 的 sourceSnapshotJson 用。 */
+  /** github_pull_request / 代码工具取授权 codeSource 用。 */
   codeSource?: CodeSourceReference;
   /** github_pull_request 取 githubToken 用（buildClaudeAgentOptions 经 getAgentConfig 解析）。 */
   agentConfig?: AgentConfig;
@@ -219,17 +219,6 @@ const readCurrentArticleDisplay: ToolDisplayFactory = ({ phase, args, output, er
           : `正在读取 ${Number(a.start ?? 0)}-${Number(a.end ?? 0)}`,
   };
 };
-
-const proposeTechnicalDocumentRevisionDisplay: ToolDisplayFactory = ({ phase }) => ({
-  title: "生成技术文档提案",
-  activityKind: "proposal",
-  summary:
-    phase === "failed"
-      ? undefined
-      : phase === "completed"
-        ? "技术文档提案已生成"
-        : "正在生成技术文档提案",
-});
 
 const projectOverviewDisplay: ToolDisplayFactory = ({ phase, output }) => {
   const o = outOf(output);
@@ -598,63 +587,6 @@ const proposeArticleRevisionTool: InkPressToolDefinition = {
       status: proposal.status,
       summary: proposal.summary,
       title: proposal.title,
-      stats: {
-        oldLines: oldLines.length,
-        newLines: newLines.length,
-        changedLines: Math.max(oldLines.length, newLines.length),
-      },
-    };
-  },
-};
-
-const proposeTechnicalDocumentRevisionTool: InkPressToolDefinition = {
-  name: "propose_technical_document_revision",
-  permission: "allow",
-  category: "technical-document",
-  version: "1.0.0",
-  display: proposeTechnicalDocumentRevisionDisplay,
-  description:
-    "当用户要求创建或修改技术文档时调用。提交完整 Markdown、项目快照和来源证据供审阅。",
-  inputSchema: {
-    title: z.string().max(200).optional(),
-    markdown: z.string().min(1),
-    snapshotHash: z.string().optional(),
-    sourceSnapshot: z.record(z.string(), z.unknown()).optional(),
-    summary: z.string().min(1).max(500),
-  },
-  execute: async (ctx, args) => {
-    if (ctx.target.kind !== "technical-document")
-      throw new Error("当前目标不是技术文档。");
-    const markdown = String(args.markdown ?? "");
-    const title = args.title != null ? String(args.title) : undefined;
-    const snapshotHash = args.snapshotHash != null ? String(args.snapshotHash) : undefined;
-    const sourceSnapshot = (args.sourceSnapshot ?? {}) as Record<string, unknown>;
-    const summary = String(args.summary ?? "");
-    const oldLines = ctx.target.markdown.split("\n");
-    const newLines = markdown.split("\n");
-    const proposal = await prisma.agentTechnicalDocumentProposal.create({
-      data: {
-        technicalDocumentId: ctx.target.id,
-        sessionId: ctx.sessionId,
-        baseVersionHash: baseVersionHashOf(ctx),
-        baseTitle: ctx.target.title,
-        baseMarkdown: ctx.target.markdown,
-        baseSnapshotHash: ctx.target.snapshotHash ?? "",
-        title: title ?? null,
-        markdown,
-        snapshotHash: snapshotHash ?? ctx.target.snapshotHash ?? null,
-        sourceSnapshotJson: JSON.stringify({
-          ...sourceSnapshot,
-          ...(ctx.codeSource ? { codeSource: ctx.codeSource } : {}),
-        }),
-        summary,
-      },
-    });
-    return {
-      proposalId: proposal.id,
-      proposalKind: "technical-document",
-      status: proposal.status,
-      summary: proposal.summary,
       stats: {
         oldLines: oldLines.length,
         newLines: newLines.length,
@@ -1081,7 +1013,6 @@ export const INKPRESS_TOOLS: InkPressToolDefinition[] = [
   readCurrentArticleTool,
   setArticleDigestTool,
   proposeArticleRevisionTool,
-  proposeTechnicalDocumentRevisionTool,
   // P4 代码工具
   projectOverviewTool,
   projectSearchTool,
@@ -1096,7 +1027,7 @@ export const INKPRESS_TOOLS: InkPressToolDefinition[] = [
 ];
 
 export type InkPressToolCapabilities = {
-  targetKind: "article" | "technical-document";
+  targetKind: "article";
   hasCodeSource: boolean;
   webResearchEnabled: boolean;
 };
@@ -1108,9 +1039,6 @@ export function selectInkPressTools(
   return INKPRESS_TOOLS.filter((tool) => {
     if (tool.category === "article") {
       return capabilities.targetKind === "article";
-    }
-    if (tool.category === "technical-document") {
-      return capabilities.targetKind === "technical-document";
     }
     if (tool.category === "code" || tool.category === "git") {
       return capabilities.hasCodeSource;

@@ -8,7 +8,6 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
   readContentAt,
-  readTechnicalDocumentContent,
 } from "@/lib/content-store";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import {
@@ -66,7 +65,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const targetSchema = z.object({
-  kind: z.enum(["article", "technical-document"]),
+  kind: z.enum(["article"]),
   id: z.string().min(1),
 });
 
@@ -96,8 +95,6 @@ type LoadedTarget = {
   title: string;
   markdown: string;
   digest?: string;
-  documentType?: string;
-  snapshotHash?: string;
   profileId?: string | null;
   contentRevision?: number;
 };
@@ -110,32 +107,17 @@ function normalizeTarget(input: {
 }
 
 async function loadTarget(target: AgentTarget): Promise<LoadedTarget | null> {
-  if (target.kind === "article") {
-    const article = await prisma.article.findUnique({ where: { id: target.id } });
-    if (!article) return null;
-    return {
-      target,
-      title: article.title,
-      markdown: article.contentPath
-        ? await readContentAt(article.contentPath)
-        : article.contentMd,
-      digest: article.digest ?? "",
-      profileId: article.profileId,
-      contentRevision: article.contentRevision,
-    };
-  }
-  const document = await prisma.technicalDocument.findUnique({
-    where: { id: target.id },
-  });
-  if (!document) return null;
+  const article = await prisma.article.findUnique({ where: { id: target.id } });
+  if (!article) return null;
   return {
     target,
-    title: document.title,
-    markdown: document.contentPath
-      ? await readTechnicalDocumentContent(document.id)
-      : "",
-    documentType: document.documentType,
-    snapshotHash: document.snapshotHash,
+    title: article.title,
+    markdown: article.contentPath
+      ? await readContentAt(article.contentPath)
+      : article.contentMd,
+    digest: article.digest ?? "",
+    profileId: article.profileId,
+    contentRevision: article.contentRevision,
   };
 }
 
@@ -259,34 +241,19 @@ export async function GET(req: NextRequest) {
   if (beforePosition !== undefined) {
     return NextResponse.json(page);
   }
-  const proposals =
-    target.kind === "article"
-      ? await prisma.agentArticleProposal.findMany({
-          where: { articleId: target.id },
-          orderBy: { createdAt: "desc" },
-          take: 30,
-          select: {
-            id: true,
-            title: true,
-            summary: true,
-            status: true,
-            createdAt: true,
-            decidedAt: true,
-          },
-        })
-      : await prisma.agentTechnicalDocumentProposal.findMany({
-          where: { technicalDocumentId: target.id },
-          orderBy: { createdAt: "desc" },
-          take: 30,
-          select: {
-            id: true,
-            title: true,
-            summary: true,
-            status: true,
-            createdAt: true,
-            decidedAt: true,
-          },
-        });
+  const proposals = await prisma.agentArticleProposal.findMany({
+    where: { articleId: target.id },
+    orderBy: { createdAt: "desc" },
+    take: 30,
+    select: {
+      id: true,
+      title: true,
+      summary: true,
+      status: true,
+      createdAt: true,
+      decidedAt: true,
+    },
+  });
   // 用户历史输入缓存（仅取 user 消息文本，供对话框上下键导航）。
   // 限最近 50 条（position 倒序取后再翻正）：上下键历史足够用，避免长会话每次 refresh 全量扫描。
   const userMessages = session
@@ -628,7 +595,7 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         });
         const messageText = lastUserText(runtimeMessages);
         const articleBodyTokens = estimateTokens(
-          `${loaded.title}\n${loaded.digest ?? loaded.documentType ?? ""}\n${articleMarkdown}`
+          `${loaded.title}\n${loaded.digest ?? ""}\n${articleMarkdown}`
         );
         const articleBodyTooLarge = articleBodyTokens > config.contextBudgetTokens * 0.65;
         // P3：斜杠命令 forceSkillIds 在前 + 文章 profile 的 defaultSkills 在后，合并去重。
@@ -850,8 +817,6 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
                 title: loaded.title,
                 markdown: articleMarkdown,
                 digest: loaded.digest,
-                documentType: loaded.documentType,
-                snapshotHash: loaded.snapshotHash,
                 profileId: loaded.profileId ?? undefined,
                 contentRevision: loaded.contentRevision,
               },
@@ -1036,10 +1001,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "缺少对话目标。" }, { status: 400 });
   }
   const session = await prisma.agentChatSession.findFirst({
-    where:
-      target.kind === "article"
-        ? { articleId: target.id }
-        : { technicalDocumentId: target.id },
+    where: { articleId: target.id },
   });
   if (session) {
     const pendingToolGrants = await prisma.toolActionGrant.findMany({
@@ -1054,14 +1016,10 @@ export async function DELETE(req: NextRequest) {
       prisma.snippetInjectionReview.deleteMany({
         where: { sessionId: session.id },
       }),
-      // 提案硬删（防 DB 膨胀）：应用过的正文已在文章文件/技术文档版本里，不依赖提案行
-      target.kind === "article"
-        ? prisma.agentArticleProposal.deleteMany({
-            where: { sessionId: session.id },
-          })
-        : prisma.agentTechnicalDocumentProposal.deleteMany({
-            where: { sessionId: session.id },
-          }),
+      // 提案硬删（防 DB 膨胀）：应用过的正文已在文章文件里，不依赖提案行
+      prisma.agentArticleProposal.deleteMany({
+        where: { sessionId: session.id },
+      }),
       prisma.agentChatSession.update({
         where: { id: session.id },
         data: {

@@ -31,22 +31,21 @@ import path from "node:path";
 import { selectInkPressTools } from "@/lib/ai/tools/registry";
 
 export type ClaudeAgentTarget = {
-  kind: "article" | "technical-document";
+  kind: "article";
   id: string;
   title: string;
   markdown: string;
   digest?: string;
-  documentType?: string;
   snapshotHash?: string;
   contentRevision?: number;
-  /** P3 文章类型 profile id（article 时影响 prompt 引导 + 默认 skill）。 */
+  /** P3 文章类型 profile id（影响 prompt 引导 + 默认 skill）。 */
   profileId?: string;
 };
 
 export type BuildClaudeAgentOptionsInput = {
   target: ClaudeAgentTarget;
   sessionId: string;
-  /** 仅 propose_technical_document_revision 的 sourceSnapshotJson 用。 */
+  /** github_pull_request / 代码工具取授权 codeSource 用。 */
   codeSource?: CodeSourceReference;
   /** P5：SDK 会话 id，非空时 resume 该会话（跨轮/跨刷新记忆）；空则新会话。 */
   claudeAgentSessionId?: string;
