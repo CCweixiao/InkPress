@@ -14,6 +14,7 @@ export default function TasksPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selected, setSelected] = useState<SelectedKey>({ type: "all" });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
 
   // Global keyboard shortcut for quick add
   useEffect(() => {
@@ -114,7 +115,15 @@ export default function TasksPage() {
 
         {/* Main */}
         <main className="flex-1 py-6 min-w-0">
-          <TaskPanel key={refreshKey} listId={listId} folderId={folderId} tagId={tagId} view={view} />
+          <TaskPanel
+            key={refreshKey}
+            listId={listId}
+            folderId={folderId}
+            tagId={tagId}
+            highlightTaskId={highlightTaskId ?? undefined}
+            onHighlightConsumed={() => setHighlightTaskId(null)}
+            view={view}
+          />
         </main>
       </div>
 

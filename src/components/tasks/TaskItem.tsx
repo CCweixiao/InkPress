@@ -98,7 +98,7 @@ export function TaskItem({
   };
 
   return (
-    <div className={cn("group", animatingDone && "task-complete-animation")}>
+    <div data-task-id={task.id} className={cn("group", animatingDone && "task-complete-animation")}>
       <div
         className={cn(
           "flex items-center gap-2 px-3 py-2 rounded-lg transition-all duration-150",

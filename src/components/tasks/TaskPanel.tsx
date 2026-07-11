@@ -15,10 +15,12 @@ interface TaskPanelProps {
   listId?: string;
   folderId?: string;
   tagId?: string;
+  highlightTaskId?: string;
+  onHighlightConsumed?: () => void;
   view?: "main" | "trash";
 }
 
-export function TaskPanel({ listId, folderId, tagId, view = "main" }: TaskPanelProps) {
+export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighlightConsumed, view = "main" }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [smartView, setSmartView] = useState<SmartView | null>(null);
@@ -30,6 +32,22 @@ export function TaskPanel({ listId, folderId, tagId, view = "main" }: TaskPanelP
       status: statusFilter || undefined,
       smartView: smartView ?? undefined,
     });
+
+  useEffect(() => {
+    if (!highlightTaskId || loading || tasks.length === 0) return;
+    // 等一帧让 DOM 完成渲染
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-task-id="${highlightTaskId}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-primary", "rounded-md");
+      setTimeout(() => {
+        el.classList.remove("ring-2", "ring-primary", "rounded-md");
+        onHighlightConsumed?.();
+      }, 2000);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [highlightTaskId, loading, tasks, onHighlightConsumed]);
 
   if (view === "trash") {
     return <TrashView />;
