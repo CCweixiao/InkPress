@@ -5,17 +5,24 @@ import { Plus, Flag, Calendar, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TaskPriority } from "./types";
 import { PRIORITY_CONFIG } from "./types";
+import { TagPicker } from "./TagPicker";
 
 interface QuickAddDialogProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (data: { title: string; priority: TaskPriority; dueDate: string | null }) => Promise<boolean>;
+  onAdd: (data: {
+    title: string;
+    priority: TaskPriority;
+    dueDate: string | null;
+    tagIds: string[];
+  }) => Promise<boolean>;
 }
 
 export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<TaskPriority>(0);
   const [dueDate, setDueDate] = useState("");
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -26,6 +33,7 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
       setTitle("");
       setPriority(0);
       setDueDate("");
+      setTagIds([]);
     }
   }, [open]);
 
@@ -53,12 +61,14 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
       title: title.trim(),
       priority,
       dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+      tagIds,
     });
     setSubmitting(false);
     if (success) {
       setTitle("");
       setPriority(0);
       setDueDate("");
+      setTagIds([]);
       onClose();
     }
   };
@@ -133,6 +143,14 @@ export function QuickAddDialog({ open, onClose, onAdd }: QuickAddDialogProps) {
                 onChange={(e) => setDueDate(e.target.value)}
                 className="text-xs bg-transparent border-none outline-none text-muted-foreground"
               />
+            </div>
+
+            {/* Tag picker */}
+            <div className="flex items-center gap-1 ml-2">
+              <TagPicker selectedIds={tagIds} onChange={setTagIds} />
+              {tagIds.length > 0 && (
+                <span className="text-xs text-muted-foreground">{tagIds.length} 个标签</span>
+              )}
             </div>
 
             <div className="flex-1" />

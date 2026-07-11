@@ -28,7 +28,12 @@ export default function TasksPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const handleQuickAdd = async (data: { title: string; priority: TaskPriority; dueDate: string | null }) => {
+  const handleQuickAdd = async (data: {
+    title: string;
+    priority: TaskPriority;
+    dueDate: string | null;
+    tagIds: string[];
+  }) => {
     const res = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
