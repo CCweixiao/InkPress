@@ -63,9 +63,9 @@ export default function TasksPage() {
   const view: "main" | "trash" = selected.type === "trash" ? "trash" : "main";
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-40">
+      <header className="border-b border-border bg-background/80 backdrop-blur shrink-0 z-40">
         <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button
@@ -95,9 +95,9 @@ export default function TasksPage() {
       </header>
 
       {/* Body: sidebar + main */}
-      <div className="flex flex-1 mx-auto max-w-6xl w-full px-6">
+      <div className="flex flex-1 min-h-0 mx-auto max-w-6xl w-full px-6">
         {/* Desktop sidebar */}
-        <div className="hidden md:block">
+        <div className="hidden md:block h-full">
           <TaskSidebar selected={selected} onSelect={setSelected} onSelectTask={handleSelectTask} refreshKey={refreshKey} />
         </div>
 
@@ -123,7 +123,7 @@ export default function TasksPage() {
         )}
 
         {/* Main */}
-        <main className="flex-1 py-6 min-w-0">
+        <main className="flex-1 py-6 min-w-0 overflow-y-auto">
           <TaskPanel
             key={refreshKey}
             listId={listId}

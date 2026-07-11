@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { filterBySmartView, type SmartView } from "@/lib/tasks/smart-views";
-import { DEFAULT_LIST_ID } from "@/lib/tasks/list-repo";
 import type { Task } from "@/components/tasks/types";
 
 const createSchema = z.object({
@@ -147,6 +146,19 @@ export async function POST(req: NextRequest) {
     const { title, content, status, priority, dueDate, parentId, listId, sortOrder, tagsJson, tagIds } =
       parsed.data;
 
+    // 未指定清单时，取第一个可用清单；无清单则报错
+    let resolvedListId = listId;
+    if (!resolvedListId) {
+      const firstList = await prisma.taskList.findFirst({
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+        select: { id: true },
+      });
+      if (!firstList) {
+        return NextResponse.json({ error: "请先创建一个清单" }, { status: 400 });
+      }
+      resolvedListId = firstList.id;
+    }
+
     // 获取同级最大 sortOrder
     const maxSort = await prisma.task.aggregate({
       where: { parentId: parentId ?? null },
@@ -161,7 +173,7 @@ export async function POST(req: NextRequest) {
         priority: priority ?? 0,
         dueDate: dueDate ? new Date(dueDate) : null,
         parentId: parentId ?? null,
-        listId: listId ?? DEFAULT_LIST_ID,
+        listId: resolvedListId,
         sortOrder: sortOrder ?? (maxSort._max.sortOrder ?? 0) + 1,
         tagsJson: tagsJson ?? "[]",
         tags: tagIds?.length

@@ -72,19 +72,27 @@ export async function updateList(
   return prisma.taskList.update({ where: { id }, data: patch });
 }
 
-/** 删 list：其下 task 重指到默认清单 + 软删进垃圾箱，再删 list。
- *  因为 listId NOT NULL + onDelete: Restrict，必须先把 task 挪走才能删 list。 */
+/** 删 list：其下 task 重指到另一清单 + 软删进垃圾箱，再删 list。
+ *  因为 listId NOT NULL + onDelete: Restrict，必须先把 task 挪走才能删 list。
+ *  若删除的是最后一个清单（无其他清单可挪），则硬删其下所有 task。 */
 export async function deleteList(id: string): Promise<void> {
-  if (id === DEFAULT_LIST_ID) {
-    throw new Error("默认清单不可删除");
-  }
+  const fallback = await prisma.taskList.findFirst({
+    where: { id: { not: id } },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+    select: { id: true },
+  });
   const now = new Date();
   const expiresAt = computeExpiresAt(now);
   await prisma.$transaction(async (tx) => {
-    await tx.task.updateMany({
-      where: { listId: id },
-      data: { listId: DEFAULT_LIST_ID, trashed: true, trashedAt: now, expiresAt },
-    });
+    if (fallback) {
+      await tx.task.updateMany({
+        where: { listId: id },
+        data: { listId: fallback.id, trashed: true, trashedAt: now, expiresAt },
+      });
+    } else {
+      // 最后一个清单：无处可挪，硬删其下 task
+      await tx.task.deleteMany({ where: { listId: id } });
+    }
     await tx.taskList.delete({ where: { id } });
   });
 }

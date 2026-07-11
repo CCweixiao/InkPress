@@ -36,7 +36,6 @@ import {
   GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TagManageDialog } from "./TagManageDialog";
 import { TaskFolderDialog } from "./TaskFolderDialog";
 import { TaskListDialog } from "./TaskListDialog";
 import { TagEditDialog, type TagInfo } from "./TagEditDialog";
@@ -270,7 +269,6 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
     byTag: {},
     trashed: 0,
   });
-  const [tagOpen, setTagOpen] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [listDialogOpen, setListDialogOpen] = useState(false);
   const [listDialogFolderId, setListDialogFolderId] = useState<string | null>(
@@ -840,13 +838,6 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
       <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setTagOpen(true)}
-            className="p-0.5 rounded hover:bg-accent text-muted-foreground"
-            title="标签管理"
-          >
-            <TagIcon className="h-3.5 w-3.5" />
-          </button>
-          <button
             onClick={() =>
               setSectionsCollapsed((s) => ({ ...s, tags: !s.tags }))
             }
@@ -905,9 +896,9 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
               ) : (
                 <span className="w-5" />
               )}
-              <span
-                className="w-2 h-2 rounded-full shrink-0"
-                style={{ backgroundColor: tag.color }}
+              <TagIcon
+                className="h-3.5 w-3.5 shrink-0"
+                style={{ color: tag.color }}
               />
               <span className="flex-1 text-left truncate">{tag.name}</span>
               {count > 0 && <span className="text-xs shrink-0">{count}</span>}
@@ -950,9 +941,9 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                       onClick={() => onSelect({ type: "tag", id: child.id })}
                     >
                       <span className="w-5" />
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: child.color }}
+                      <TagIcon
+                        className="h-3.5 w-3.5 shrink-0"
+                        style={{ color: child.color }}
                       />
                       <span className="flex-1 text-left truncate">{child.name}</span>
                       {childCount > 0 && (
@@ -998,7 +989,6 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
         )}
       </button>
 
-      <TagManageDialog open={tagOpen} onOpenChange={setTagOpen} />
       <TaskFolderDialog
         open={folderDialogOpen || editFolder !== null}
         onOpenChange={(o) => {

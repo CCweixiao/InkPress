@@ -65,8 +65,22 @@ describe("list-repo", () => {
     expect(listExists).toBeNull();
   });
 
-  it("deleteList 拒绝删除默认清单", async () => {
-    await expect(deleteList(DEFAULT_LIST_ID)).rejects.toThrow();
+  it("deleteList 允许删除默认清单（不再有不可删限制）", async () => {
+    await deleteList(DEFAULT_LIST_ID);
+    const exists = await prisma.taskList.findUnique({ where: { id: DEFAULT_LIST_ID } });
+    expect(exists).toBeNull();
+  });
+
+  it("deleteList 最后一个清单时硬删其下 task", async () => {
+    // 先删掉 seed 的默认清单，使清单A 成为唯一清单
+    await deleteList(DEFAULT_LIST_ID);
+    const l = await createList({ name: "唯一清单" });
+    const t = await prisma.task.create({ data: { title: "任务1", listId: l.id } });
+    await deleteList(l.id);
+    const taskAfter = await prisma.task.findUnique({ where: { id: t.id } });
+    expect(taskAfter).toBeNull();
+    const listAfter = await prisma.taskList.findUnique({ where: { id: l.id } });
+    expect(listAfter).toBeNull();
   });
 
   it("reorderLists 支持跨父级移动（folderId 变更）", async () => {
