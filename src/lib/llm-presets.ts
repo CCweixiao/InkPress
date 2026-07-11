@@ -16,6 +16,13 @@ export type LlmPreset = {
   name: string;
   apiProvider: string;
   baseUrl: string;
+  /**
+   * 模型列表拉取用的独立 base（OpenAI 兼容风格）。
+   * 部分厂商的 Anthropic 兼容端点不支持 /v1/models（如智谱），
+   * 但其 OpenAI 兼容端点提供 /models，通过此字段指定。
+   * 缺省时用 {baseUrl}/v1/models（Anthropic 风格）。
+   */
+  modelsBaseUrl?: string;
   models: { id: string; name: string }[];
   docsUrl?: string;
 };

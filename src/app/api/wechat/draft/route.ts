@@ -5,6 +5,7 @@ import { convertToWeChat } from "@/lib/convert/to-wechat";
 import { uploadBodyImage } from "@/lib/wechat/material";
 import { addDraft, updateDraft } from "@/lib/wechat/draft";
 import { readContentAt } from "@/lib/content-store";
+import { readStorageObjectBuffer } from "@/lib/storage";
 import { moduleLogger } from "@/lib/logger";
 import { withApiLog } from "@/lib/api-log";
 import { requireLicenseForApi } from "@/lib/license/guard";
@@ -53,6 +54,15 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
   // 每个失败分支都记 warn：图片下载失败是公众号图片缺失的最常见根因，
   // 之前被上层 .catch(()=>null) 吞掉，现在这里留下明确日志。
   const fetcher = async (url: string): Promise<ArrayBuffer> => {
+    // 本地存储对象（/api/storage/<id>）：服务端 fetch 无法解析相对 URL，
+    // 直接从磁盘读取（readStorageObjectBuffer 已含路径越界防护）
+    const localMatch = url.match(/^\/api\/storage\/(.+)$/);
+    if (localMatch) {
+      const id = decodeURIComponent(localMatch[1]);
+      const buf = await readStorageObjectBuffer(id);
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     try {

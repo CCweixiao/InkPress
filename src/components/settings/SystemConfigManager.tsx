@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  ListPlus,
 } from "lucide-react";
 import {
   DndContext,
@@ -43,6 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 import { LLM_PRESETS } from "@/lib/llm-presets";
 import { ConfigImportExport } from "./ConfigImportExport";
+import { FetchModelsDialog, type FetchedModel } from "./FetchModelsDialog";
 import { ProviderLogo } from "./provider-logos";
 
 export const LLM_CONFIG_KEY = "inkpress.llm";
@@ -1781,8 +1783,19 @@ function ProviderFormFields({
   mutations: ProviderMutations;
 }) {
   const [newModelId, setNewModelId] = useState("");
+  const [fetchOpen, setFetchOpen] = useState(false);
   const apiKeyMasked = node.apiKey === "********";
   const modelIds = node.models.map((m) => `model:${node.id}:${m.id}`);
+  const existingModelIds = useMemo(
+    () => new Set(node.models.map((m) => m.id)),
+    [node.models]
+  );
+  // 拉取按钮可用条件：
+  // - apiKeyMasked（已保存 provider）：从 DB 读明文 key，只需 baseUrl 有值即可。
+  // - 非 masked（用户刚输入明文 key 或未保存 provider）：baseUrl + apiKey 都需有值。
+  const canFetch = apiKeyMasked
+    ? node.isConfigured && node.baseUrl.trim().length > 0
+    : node.baseUrl.trim().length > 0 && node.apiKey.trim().length > 0;
 
   return (
     <>
@@ -1882,7 +1895,7 @@ function ProviderFormFields({
             ))
           )}
         </SortableContext>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Input
             value={newModelId}
             placeholder="模型 id，如 gpt-4o"
@@ -1894,7 +1907,7 @@ function ProviderFormFields({
                 setNewModelId("");
               }
             }}
-            className="h-9"
+            className="min-w-40 flex-1"
           />
           <Button
             type="button"
@@ -1907,6 +1920,21 @@ function ProviderFormFields({
           >
             <Plus className="h-3.5 w-3.5" />
             添加模型
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!canFetch}
+            title={
+              canFetch
+                ? "从 /v1/models 拉取可用模型列表"
+                : "请先填写 Base URL 与 API Key"
+            }
+            onClick={() => setFetchOpen(true)}
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            拉取模型
           </Button>
         </div>
       </div>
@@ -1925,6 +1953,32 @@ function ProviderFormFields({
           </Button>
         </div>
       )}
+
+      <FetchModelsDialog
+        open={fetchOpen}
+        onOpenChange={setFetchOpen}
+        providerName={node.name || node.id}
+        baseUrl={node.baseUrl}
+        apiKey={node.apiKey}
+        providerId={apiKeyMasked ? node.id : undefined}
+        existingModelIds={existingModelIds}
+        onImport={(imported: FetchedModel[]) => {
+          // 防御性去重：忽略已存在的 id，避免并发导致重复。
+          const seen = new Set(node.models.map((m) => m.id));
+          const additions = imported
+            .filter((m) => !seen.has(m.id))
+            .map((m) => ({
+              id: m.id,
+              name: m.name,
+              enabled: true,
+              isDefault: false,
+            }));
+          if (additions.length === 0) return;
+          mutations.patchProvider(node, {
+            models: [...node.models, ...additions],
+          });
+        }}
+      />
     </>
   );
 }

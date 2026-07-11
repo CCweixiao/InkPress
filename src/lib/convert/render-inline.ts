@@ -54,7 +54,7 @@ export const BASE_CSS = `
 #nice .code__dots i:nth-child(2){background:#febc2e;}
 #nice .code__dots i:nth-child(3){background:#28c840;}
 #nice .code__lang{font-size:10px;line-height:1;color:#8b949e;letter-spacing:.12em;font-weight:600;}
-#nice pre{margin:0;padding:1.05em 1.2em 1.2em;border-radius:0;overflow-x:auto;font-size:13px;line-height:1.72;letter-spacing:0;}
+#nice pre{margin:0;padding:1.05em 1.2em 1.2em;border-radius:0;overflow-x:auto;font-size:13px;line-height:1.72;letter-spacing:0;white-space:pre-wrap;}
 #nice code{font-family:Menlo,Monaco,Consolas,monospace;}
 #nice pre code{background:none;padding:0;}
 #nice .codespan{padding:.15em .42em;border-radius:4px;font-size:.88em;letter-spacing:0;word-break:normal;overflow-wrap:anywhere;}

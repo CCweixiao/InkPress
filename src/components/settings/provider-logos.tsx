@@ -18,6 +18,8 @@ const BRAND_COLOR: Record<string, string> = {
   openrouter: "#475569", // OpenRouter 中性石板灰
   azure: "#0078D4", // Microsoft Azure 蓝
   ollama: "#111827", // Ollama 近黑
+  "moonshot-kimi": "#0E7C86", // Kimi（月之暗面）青绿
+  minimax: "#5B5BD6", // MiniMax 靛紫
 };
 
 /** 白色识别图形（统一缩放到方块内留出 padding） */
@@ -92,6 +94,22 @@ function BrandGlyph({ id }: { id: string }) {
             <path d="M12 8.6c-3.4 0-5.6 2.1-5.6 4.7S8.6 18 12 18s5.6-2.1 5.6-4.7-2.2-4.7-5.6-4.7Zm-2 4.2a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Zm4 0a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Z" />
           </g>
         </g>
+      );
+    case "moonshot-kimi":
+      // 弯月（月之暗面 / Kimi）
+      return (
+        <path
+          fill="#fff"
+          d="M17 4A10 10 0 1 0 17 20A8 8 0 0 1 17 4Z"
+        />
+      );
+    case "minimax":
+      // 几何六边形（MiniMax）
+      return (
+        <path
+          fill="#fff"
+          d="M12 3 20 7.5v9L12 21 4 16.5v-9L12 3Zm0 3.5L7 9.75v4.5l5 3.25 5-3.25v-4.5L12 6.5Z"
+        />
       );
     default:
       // 自定义供应商：通用芯片图形
