@@ -682,10 +682,15 @@ model Tag {
   id        String    @id @default(cuid())
   name      String    @unique
   color     String    @default("#6b7280")
+  parentId  String?   // null = 一级标签；非空 = 二级标签
   sortOrder Int       @default(0)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  parent    Tag?      @relation("TagHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children  Tag[]     @relation("TagHierarchy")
   tasks     TaskTag[]
+
+  @@index([parentId])
 }
 
 model TaskTag {
