@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Task, TaskPriority, TaskStatus } from "./types";
-import { PRIORITY_CONFIG, STATUS_CONFIG } from "./types";
+import { PRIORITY_CONFIG } from "./types";
 import { TagPicker } from "./TagPicker";
 
 interface TaskItemProps {
@@ -85,6 +85,12 @@ export function TaskItem({
   const isDone = task.status === "done" || task.status === "cancelled";
   const isOverdue =
     task.dueDate && !isDone && new Date(task.dueDate) < new Date();
+  const isToday =
+    task.dueDate &&
+    !isDone &&
+    new Date(task.dueDate).toDateString() === new Date().toDateString();
+
+  const listColor = task.list?.color;
 
   const formatDueDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -101,7 +107,7 @@ export function TaskItem({
     <div data-task-id={task.id} className={cn("group", animatingDone && "task-complete-animation")}>
       <div
         className={cn(
-          "flex items-center gap-2 px-3 py-2 rounded-lg transition-all duration-150",
+          "relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all duration-150",
           "hover:bg-accent/50",
           isDone && "opacity-60",
           depth > 0 && "ml-6"
@@ -110,10 +116,18 @@ export function TaskItem({
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
       >
+        {/* 左侧清单颜色色条（仅顶层任务 + hover 显示） */}
+        {depth === 0 && listColor && (
+          <span
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full transition-opacity"
+            style={{ backgroundColor: listColor, opacity: showActions ? 0.7 : 0 }}
+          />
+        )}
+
         {/* Drag handle */}
         <span
           className={cn(
-            "cursor-grab text-muted-foreground/40 hover:text-muted-foreground transition-opacity",
+            "cursor-grab text-muted-foreground/40 hover:text-muted-foreground transition-opacity shrink-0",
             showActions ? "opacity-100" : "opacity-0"
           )}
           {...dragHandleProps}
@@ -153,13 +167,6 @@ export function TaskItem({
           )}
         </button>
 
-        {/* Priority indicator */}
-        {task.priority > 0 && (
-          <span className={cn("text-xs shrink-0", PRIORITY_CONFIG[task.priority as TaskPriority].color)}>
-            <Flag className="h-3.5 w-3.5 fill-current" />
-          </span>
-        )}
-
         {/* Title */}
         {editing ? (
           <input
@@ -173,7 +180,7 @@ export function TaskItem({
         ) : (
           <span
             className={cn(
-              "flex-1 text-sm cursor-text select-none",
+              "flex-1 text-sm cursor-text select-none min-w-0 truncate",
               isDone && "line-through text-muted-foreground"
             )}
             onDoubleClick={() => setEditing(true)}
@@ -184,12 +191,12 @@ export function TaskItem({
 
         {/* Tags */}
         {task.tags?.length > 0 && (
-          <div className="flex gap-1">
+          <div className="flex gap-1 shrink-0">
             {task.tags.slice(0, 2).map((t) => (
               <span
                 key={t.id}
-                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded shrink-0"
-                style={{ backgroundColor: t.color + "22", color: t.color }}
+                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md shrink-0 font-medium"
+                style={{ backgroundColor: t.color + "1a", color: t.color }}
               >
                 <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: t.color }} />
                 {t.name}
@@ -203,12 +210,16 @@ export function TaskItem({
           </div>
         )}
 
-        {/* Due date */}
+        {/* Due date pill */}
         {task.dueDate && (
           <span
             className={cn(
-              "text-xs flex items-center gap-1 shrink-0",
-              isOverdue ? "text-red-500" : "text-muted-foreground"
+              "flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md shrink-0 font-medium",
+              isOverdue
+                ? "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300"
+                : isToday
+                  ? "bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
+                  : "bg-muted text-muted-foreground"
             )}
           >
             <Calendar className="h-3 w-3" />
@@ -216,9 +227,28 @@ export function TaskItem({
           </span>
         )}
 
+        {/* Priority flag */}
+        {task.priority > 0 && (
+          <span
+            className={cn(
+              "flex items-center justify-center w-5 h-5 rounded-md shrink-0",
+              task.priority >= 3
+                ? "bg-red-100 dark:bg-red-900/40"
+                : task.priority === 2
+                  ? "bg-yellow-100 dark:bg-yellow-900/40"
+                  : "bg-blue-100 dark:bg-blue-900/40"
+            )}
+            title={`优先级：${PRIORITY_CONFIG[task.priority as TaskPriority].label}`}
+          >
+            <Flag
+              className={cn("h-3 w-3 fill-current", PRIORITY_CONFIG[task.priority as TaskPriority].color)}
+            />
+          </span>
+        )}
+
         {/* Progress for subtasks */}
         {hasChildren && (
-          <span className="text-xs text-muted-foreground shrink-0">
+          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
             {completedChildren}/{totalChildren}
           </span>
         )}
@@ -226,7 +256,7 @@ export function TaskItem({
         {/* Actions */}
         <div
           className={cn(
-            "flex items-center gap-1 transition-opacity",
+            "flex items-center gap-0.5 transition-opacity shrink-0",
             showActions ? "opacity-100" : "opacity-0"
           )}
         >
@@ -236,14 +266,14 @@ export function TaskItem({
           />
           <button
             onClick={() => onAddSubtask(task.id)}
-            className="p-1 text-muted-foreground hover:text-foreground rounded"
+            className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
             title="添加子任务"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={() => onDelete(task.id)}
-            className="p-1 text-muted-foreground hover:text-red-500 rounded"
+            className="p-1 text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded"
             title="删除"
           >
             <Trash2 className="h-3.5 w-3.5" />

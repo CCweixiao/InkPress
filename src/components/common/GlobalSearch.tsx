@@ -45,7 +45,13 @@ const EMPTY: SearchResult = {
  * - 结果分类（文章/空间/素材/技能）分区展示，点击跳转
  * - ESC 可关闭；点遮罩不关闭（固定弹窗，避免误触丢失输入）
  */
-export function GlobalSearch() {
+export function GlobalSearch({
+  triggerClassName,
+  showShortcut = false,
+}: {
+  triggerClassName?: string;
+  showShortcut?: boolean;
+} = {}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -64,6 +70,19 @@ export function GlobalSearch() {
       setResult(EMPTY);
     }
   }, [open]);
+
+  // 与桌面创作工具一致：⌘/Ctrl + K 随时唤起全局检索。
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
 
   // debounce 搜索
   useEffect(() => {
@@ -111,11 +130,19 @@ export function GlobalSearch() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-accent"
-        title="搜索"
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-[color,background-color,box-shadow] hover:bg-accent hover:text-foreground",
+          triggerClassName
+        )}
+        title="搜索（⌘/Ctrl + K）"
       >
         <Search className="h-4 w-4" />
         <span className="hidden md:inline">搜索</span>
+        {showShortcut && (
+          <kbd className="ml-1 hidden rounded-md bg-background/80 px-1.5 py-0.5 font-mono text-[9px] leading-none text-muted-foreground/75 ring-1 ring-border/70 lg:inline dark:bg-white/[0.05] dark:ring-white/10">
+            ⌘K
+          </kbd>
+        )}
       </button>
 
       <Dialog

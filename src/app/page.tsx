@@ -1,16 +1,9 @@
-import Link from "next/link";
-import Image from "next/image";
-import { Boxes, CheckSquare as CheckSquareIcon, FileCode2, FolderOpen, Settings, Sparkles, Trash2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getUiPreferences } from "@/lib/ui-preferences";
 import { previewSnippetAt } from "@/lib/content-store";
-import { APP_VERSION, REPO_URL, releaseTagUrl } from "@/lib/site";
-import { Button } from "@/components/ui/button";
 import { HomeView } from "@/components/spaces/HomeView";
-import { GlobalSearch } from "@/components/common/GlobalSearch";
 import { BackToTop } from "@/components/common/BackToTop";
-import { GitHubIcon } from "@/components/common/GitHubIcon";
-import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { WorkspaceHeader } from "@/components/navigation/WorkspaceHeader";
 import type { ArticleListItem } from "@/components/articles/ArticleCard";
 import type { SpaceItem } from "@/components/spaces/SpaceSection";
 
@@ -71,100 +64,7 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen">
-      {/* 顶栏 */}
-      <header className="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-40">
-        <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 shrink-0">
-            <Image
-              src="/inkpress-logo-transparent.png"
-              alt="InkPress"
-              width={28}
-              height={28}
-              className="h-7 w-7"
-              priority
-            />
-            <span className="font-semibold text-lg">InkPress</span>
-            <span className="text-xs text-muted-foreground ml-1 hidden sm:inline">
-              数字文刊工坊
-            </span>
-          </div>
-          {/* 全局搜索 */}
-          <div className="flex-1 max-w-md">
-            <GlobalSearch />
-          </div>
-          <nav className="flex items-center gap-1 shrink-0">
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/tasks">
-                <CheckSquareIcon className="h-4 w-4" />
-                任务
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/technical-documents">
-                <FileCode2 className="h-4 w-4" />
-                技术文档
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/materials">
-                <FolderOpen className="h-4 w-4" />
-                素材
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/snippets">
-                <Sparkles className="h-4 w-4" />
-                灵感
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/skills">
-                <Boxes className="h-4 w-4" />
-                技能仓库
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/recycle">
-                <Trash2 className="h-4 w-4" />
-                回收站
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/settings">
-                <Settings className="h-4 w-4" />
-                设置
-              </Link>
-            </Button>
-          </nav>
-
-          {/* 主题切换 + GitHub 仓库 + 版本徽章 */}
-          <div className="flex items-center gap-1 shrink-0 border-l border-border pl-2 ml-1">
-            <ThemeToggle />
-            <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-              <a
-                href={REPO_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="GitHub 仓库"
-                title="GitHub 仓库"
-              >
-                <GitHubIcon className="h-4 w-4" />
-              </a>
-            </Button>
-            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs font-mono">
-              <a
-                href={releaseTagUrl()}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`v${APP_VERSION} Release`}
-                title={`当前版本 v${APP_VERSION} · 查看 Release`}
-              >
-                v{APP_VERSION}
-              </a>
-            </Button>
-          </div>
-        </div>
-      </header>
+      <WorkspaceHeader />
 
       <main className="mx-auto max-w-6xl px-6 py-8 space-y-6">
         <HomeView

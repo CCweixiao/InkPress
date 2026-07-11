@@ -19,7 +19,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
-  Menu,
   Search,
   X,
   FolderOpen,
@@ -36,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { TaskFolderDialog } from "./TaskFolderDialog";
 import { TaskListDialog } from "./TaskListDialog";
 import { TagEditDialog, type TagInfo } from "./TagEditDialog";
+import { getAllListEmojis, subscribeListIcons, DEFAULT_LIST_EMOJI } from "@/lib/tasks/list-icons";
 
 export type SelectedKey =
   | { type: "all" }
@@ -152,7 +152,9 @@ function SortableFolderRow({
         {folder.name}
       </button>
       {folderTaskCount > 0 && (
-        <span className="text-xs shrink-0">{folderTaskCount}</span>
+        <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-1.5 leading-5 shrink-0">
+          {folderTaskCount}
+        </span>
       )}
       <button
         onClick={onAddList}
@@ -191,6 +193,7 @@ function SortableListRow({
   onSelect,
   onEdit,
   indent,
+  emoji,
 }: {
   list: TaskListInfo;
   count: number;
@@ -198,6 +201,7 @@ function SortableListRow({
   onSelect: () => void;
   onEdit: () => void;
   indent?: boolean;
+  emoji?: string;
 }) {
   const {
     attributes,
@@ -227,9 +231,26 @@ function SortableListRow({
       )}
       onClick={onSelect}
     >
-      <Menu className="h-4 w-4 shrink-0" />
+      <span
+        className="flex items-center justify-center w-5 h-5 rounded-md shrink-0 text-xs"
+        style={{ backgroundColor: list.color + "1f" }}
+        title={list.name}
+      >
+        {emoji && emoji !== DEFAULT_LIST_EMOJI ? (
+          <span>{emoji}</span>
+        ) : (
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: list.color }}
+          />
+        )}
+      </span>
       <span className="flex-1 text-left truncate">{list.name}</span>
-      {count > 0 && <span className="text-xs shrink-0">{count}</span>}
+      {count > 0 && (
+        <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-1.5 leading-5 shrink-0">
+          {count}
+        </span>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -286,6 +307,14 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [taskResults, setTaskResults] = useState<Array<{ id: string; title: string; list?: { id: string; name: string } }>>([]);
   const [searching, setSearching] = useState(false);
+  const [listEmojis, setListEmojis] = useState<Record<string, string>>({});
+
+  // 订阅清单图标变更（localStorage 持久化，跨组件同步）
+  useEffect(() => {
+    setListEmojis(getAllListEmojis());
+    const unsub = subscribeListIcons(() => setListEmojis(getAllListEmojis()));
+    return unsub;
+  }, []);
 
   const load = useCallback(async () => {
     const [treeRes, countRes, tagsRes] = await Promise.all([
@@ -598,7 +627,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                         }}
                         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
                       >
-                        <Menu className="h-3.5 w-3.5 shrink-0" />
+                        <span
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: l.color }}
+                        />
                         <span className="flex-1 truncate">{l.name}</span>
                       </button>
                     ))}
@@ -616,9 +648,9 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                         }}
                         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
                       >
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: t.color }}
+                        <TagIcon
+                          className="h-3.5 w-3.5 shrink-0"
+                          style={{ color: t.color }}
                         />
                         <span className="flex-1 truncate">{t.name}</span>
                       </button>
@@ -725,6 +757,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                 setEditFolder(null);
                 setEditList(list);
               }}
+              emoji={listEmojis[list.id]}
             />
           ))}
         </SortableContext>
@@ -777,6 +810,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                           setEditList(list);
                         }}
                         indent
+                        emoji={listEmojis[list.id]}
                       />
                     ))}
                   </SortableContext>
@@ -856,7 +890,11 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                 style={{ color: tag.color }}
               />
               <span className="flex-1 text-left truncate">{tag.name}</span>
-              {count > 0 && <span className="text-xs shrink-0">{count}</span>}
+              {count > 0 && (
+                <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-1.5 leading-5 shrink-0">
+                  {count}
+                </span>
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -902,7 +940,9 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
                       />
                       <span className="flex-1 text-left truncate">{child.name}</span>
                       {childCount > 0 && (
-                        <span className="text-xs shrink-0">{childCount}</span>
+                        <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-1.5 leading-5 shrink-0">
+                          {childCount}
+                        </span>
                       )}
                       <button
                         onClick={(e) => {
@@ -940,7 +980,9 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
         <Trash2 className="h-4 w-4 shrink-0" />
         <span className="flex-1 text-left">垃圾箱</span>
         {counts.trashed > 0 && (
-          <span className="text-xs shrink-0">{counts.trashed}</span>
+          <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-1.5 leading-5 shrink-0">
+            {counts.trashed}
+          </span>
         )}
       </button>
 
