@@ -286,13 +286,44 @@ function verifyDmgFormatAndContents(dmg) {
 function verifyMacSignature(appDir) {
   for (const [command, commandArgs, label] of [
     ["codesign", ["--verify", "--deep", "--strict", "--verbose=2", appDir], "codesign"],
-    ["spctl", ["--assess", "--type", "execute", "--verbose=2", appDir], "Gatekeeper"],
     ["xcrun", ["stapler", "validate", appDir], "notarization ticket"],
   ]) {
     const result = spawnSync(command, commandArgs, { encoding: "utf8", timeout: 120_000 });
     if (result.status !== 0) fail(`${label} 校验失败：${result.stderr || result.stdout}`);
   }
+  verifyMacGatekeeper(appDir);
   console.log("✓ macOS Developer ID 签名、公证与 stapler ticket 校验通过");
+}
+
+function verifyMacGatekeeper(appDir) {
+  const maxAttempts = 3;
+  const retryDelaysMs = [5_000, 15_000];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = spawnSync(
+      "spctl",
+      ["--assess", "--type", "execute", "--verbose=2", appDir],
+      { encoding: "utf8", timeout: 120_000 }
+    );
+    if (result.status === 0) {
+      if (attempt > 1) console.log(`✓ Gatekeeper 校验在第 ${attempt} 次尝试后通过`);
+      return;
+    }
+
+    const output = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+    const transientSubsystemError = /internal error in code signing subsystem/i.test(output);
+    if (!transientSubsystemError || attempt === maxAttempts) {
+      fail(`Gatekeeper 校验失败（尝试 ${attempt}/${maxAttempts}）：${output || `exit=${result.status}`}`);
+    }
+
+    const delayMs = retryDelaysMs[attempt - 1];
+    console.warn(`⚠ Gatekeeper Code Signing 子系统瞬时异常（尝试 ${attempt}/${maxAttempts}）：${output}`);
+    console.warn(`  ${delayMs / 1_000} 秒后重试；codesign 与公证票据校验已通过`);
+    sleepSync(delayMs);
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function verifyMacMinimumSystemVersion(appDir) {
