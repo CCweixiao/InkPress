@@ -78,14 +78,21 @@ function verifyBundle(base) {
     "node_modules/bytenode/lib/index.js",
     "node_modules/jsdom/package.json",
     "node_modules/@exodus/bytes/fallback/single-byte.encodings.js",
+    "node_modules/ts-morph/package.json",
+    "node_modules/picomatch/lib/picomatch.js",
   ];
   for (const rel of required) requirePath(path.join(base, rel), rel);
   const tracedRoot = path.join(base, ".next", "node_modules");
   if (fs.existsSync(tracedRoot)) {
     for (const entry of fs.readdirSync(tracedRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith("jsdom-")) {
+      const tracedPackage = ["jsdom", "ts-morph"].find((name) =>
+        entry.name.startsWith(`${name}-`)
+      );
+      if (entry.isDirectory() && tracedPackage) {
         const nested = path.join(tracedRoot, entry.name, "node_modules");
-        if (fs.existsSync(nested)) fail(`traced jsdom 仍含深层 node_modules：${path.relative(base, nested)}`);
+        if (fs.existsSync(nested)) {
+          fail(`traced ${tracedPackage} 仍含深层 node_modules：${path.relative(base, nested)}`);
+        }
       }
     }
   }

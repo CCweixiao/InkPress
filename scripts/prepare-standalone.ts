@@ -193,10 +193,10 @@ materializeTracedNextPackageDependencies();
 // NFT 对 @exodus/bytes/fallback/single-byte.encodings.js 等文件的追踪不全，
 // 仅靠 copyRuntimeDeps 的依赖链解析有时无法覆盖到深层嵌套包。
 patchAllTracedPackageGaps();
-// Turbopack 仍会以 jsdom-<hash> 作为外部入口，但其深层 node_modules 在 Windows
-// 安装路径下会超过 NSIS 的传统路径长度限制。jsdom 已在 external 闭包中根级完整保留，
-// 删除 traced 入口的嵌套副本，让 Node 向上解析到 standalone/node_modules。
-flattenTracedJsdomDependencies();
+// Turbopack 会把部分 external 以 <pkg>-<hash> 放到 .next/node_modules。其深层
+// node_modules 在 Windows 安装路径下会超过 NSIS 的传统路径限制。以下包已在 external
+// 闭包中根级完整保留，删除 traced 入口的嵌套副本，让 Node 向上解析到 standalone/node_modules。
+flattenTracedExternalDependencies(["jsdom", "ts-morph"]);
 
 // 重写 server.js 内硬编码的项目绝对路径（outputFileTracingRoot / turbopack.root）。
 // Next.js 构建时把构建机器的项目根写入 nextConfig，运行时 require-hook 用它解析
@@ -1132,13 +1132,18 @@ function patchAllTracedPackageGaps(): void {
   }
 }
 
-/** 让 jsdom 的 traced 入口复用根级 external 依赖闭包，避免 Windows 深层安装路径。 */
-function flattenTracedJsdomDependencies(): void {
+/** 让指定 traced external 的入口复用根级依赖闭包，避免 Windows 深层安装路径。 */
+function flattenTracedExternalDependencies(packageNames: readonly string[]): void {
   const nextNm = path.join(bundle, ".next", "node_modules");
   if (!fs.existsSync(nextNm)) return;
   let flattened = 0;
   for (const entry of fs.readdirSync(nextNm, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith("jsdom-")) continue;
+    if (
+      !entry.isDirectory() ||
+      !packageNames.some((packageName) => entry.name.startsWith(`${packageName}-`))
+    ) {
+      continue;
+    }
     const nestedNodeModules = path.join(nextNm, entry.name, "node_modules");
     if (fs.existsSync(nestedNodeModules)) {
       fs.rmSync(nestedNodeModules, { recursive: true, force: true });
@@ -1146,7 +1151,9 @@ function flattenTracedJsdomDependencies(): void {
     }
   }
   if (flattened > 0) {
-    console.log(`  ✓ 扁平化 ${flattened} 个 traced jsdom 依赖树（使用根级 external 闭包）`);
+    console.log(
+      `  ✓ 扁平化 ${flattened} 个 traced external 依赖树（${packageNames.join("、")} 使用根级闭包）`
+    );
   }
 }
 
@@ -1906,6 +1913,8 @@ function verifyPreparedBundle(): void {
     "node_modules/bytenode/lib/index.js",
     "node_modules/jsdom/package.json",
     "node_modules/@exodus/bytes/fallback/single-byte.encodings.js",
+    "node_modules/ts-morph/package.json",
+    "node_modules/picomatch/lib/picomatch.js",
   ];
   for (const rel of required) {
     if (!fs.existsSync(path.join(bundle, rel))) {
@@ -1914,13 +1923,18 @@ function verifyPreparedBundle(): void {
     }
   }
 
-  const tracedJsdomRoot = path.join(bundle, ".next", "node_modules");
-  if (fs.existsSync(tracedJsdomRoot)) {
-    for (const entry of fs.readdirSync(tracedJsdomRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith("jsdom-")) {
-        const nested = path.join(tracedJsdomRoot, entry.name, "node_modules");
+  const tracedExternalRoot = path.join(bundle, ".next", "node_modules");
+  if (fs.existsSync(tracedExternalRoot)) {
+    for (const entry of fs.readdirSync(tracedExternalRoot, { withFileTypes: true })) {
+      const tracedPackage = ["jsdom", "ts-morph"].find((name) =>
+        entry.name.startsWith(`${name}-`)
+      );
+      if (entry.isDirectory() && tracedPackage) {
+        const nested = path.join(tracedExternalRoot, entry.name, "node_modules");
         if (fs.existsSync(nested)) {
-          console.error(`  ✗ traced jsdom 仍含深层 node_modules：${path.relative(bundle, nested)}`);
+          console.error(
+            `  ✗ traced ${tracedPackage} 仍含深层 node_modules：${path.relative(bundle, nested)}`
+          );
           process.exit(1);
         }
       }

@@ -6,5 +6,6 @@
   "ali-oss",
   "@resvg/resvg-js",
   "@anthropic-ai/claude-agent-sdk",
-  "jsdom"
+  "jsdom",
+  "ts-morph"
 ]
