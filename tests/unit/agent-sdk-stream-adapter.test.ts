@@ -187,7 +187,7 @@ describe("createSdkToUiAdapter task events", () => {
     expect(text).toBe("最终完整答复：较短答复之外还有关键收尾。");
   });
 
-  it("keeps identical text emitted by two distinct assistant messages", () => {
+  it("merges a uuid-less completion frame into its streamed assistant message", () => {
     const parts: Array<Record<string, unknown>> = [];
     const adapter = createSdkToUiAdapter({
       write: (part) => parts.push(part as unknown as Record<string, unknown>),
@@ -209,16 +209,6 @@ describe("createSdkToUiAdapter task events", () => {
     } as unknown as SDKMessage);
     adapter.consume({
       type: "assistant",
-      uuid: "assistant-1",
-      message: {
-        id: "msg-1",
-        content: [{ type: "text", text: "继续处理" }],
-        usage: {},
-      },
-    } as unknown as SDKMessage);
-    adapter.consume({
-      type: "assistant",
-      uuid: "assistant-2",
       message: {
         id: "msg-2",
         content: [{ type: "text", text: "继续处理" }],
@@ -238,7 +228,7 @@ describe("createSdkToUiAdapter task events", () => {
     const deltas = parts
       .filter((part) => part.type === "text-delta")
       .map((part) => String(part.delta ?? ""));
-    expect(deltas).toEqual(["继续处理", "继续处理"]);
+    expect(deltas).toEqual(["继续处理"]);
   });
 
   it("does not replace the main checkpoint with a subagent assistant frame", () => {

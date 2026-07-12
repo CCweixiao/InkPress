@@ -409,9 +409,16 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
       case "assistant": {
         // 兜底：若本次没有任何增量（GLM 等可能只给整段），先记下文本，留给 flush 落出。
         const msg = (m.message as AssistantMessageLike | undefined) ?? {};
+        const streamUuid =
+          typeof m.uuid === "string" && m.uuid ? m.uuid : undefined;
         const assistantUuid =
-          typeof m.uuid === "string" && m.uuid
-            ? m.uuid
+          streamUuid
+            ? streamUuid
+            // 部分兼容端点的 assistant 完成帧没有 uuid，却在此前已经用
+            // stream_event 输出过同一条消息。必须归并到该流式帧，不能改用
+            // message.id 创建新 state，否则 fallback 和 result 会各补一遍文本。
+            : lastAssistantUuid
+              ? lastAssistantUuid
             : typeof msg.id === "string" && msg.id
               ? msg.id
               : "assistant-unknown";

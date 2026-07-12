@@ -69,10 +69,7 @@ import {
   shouldPollRecoveringTurn,
 } from "@/lib/ai/recovery-state";
 import { mergeFinishedMessages } from "@/lib/ai/chat-message-merge";
-import {
-  dedupeAdjacentAssistantTextParts,
-  dedupeConsecutiveAssistantMessages,
-} from "@/lib/ai/chat-message-display";
+import { dedupeAdjacentAssistantTextParts } from "@/lib/ai/chat-message-display";
 import { findAssistantCheckpointBefore } from "@/lib/ai/agent-checkpoint";
 import {
   isArticleProposalPart,
@@ -2338,20 +2335,9 @@ export function WritingAssistant({
     return ids;
   }, [messages, busy, lastAssistantIndex, prefixProposalIds]);
 
-  const visibleMessages = useMemo(
-    () => dedupeConsecutiveAssistantMessages(messages),
-    [messages]
-  );
-  const lastVisibleAssistantIndex = useMemo(() => {
-    for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
-      const index = messages.indexOf(visibleMessages[i]);
-      if (index >= 0 && visibleMessages[i].role === "assistant") return index;
-    }
-    return -1;
-  }, [messages, visibleMessages]);
   const chatTimeline = useMemo(
-    () => buildSnippetReviewTimeline(visibleMessages, snippetReviews),
-    [visibleMessages, snippetReviews]
+    () => buildSnippetReviewTimeline(messages, snippetReviews),
+    [messages, snippetReviews]
   );
 
   return (
@@ -2379,7 +2365,7 @@ export function WritingAssistant({
             加载写作会话…
           </div>
         ) : !hasAssistantTimelineContent({
-            messageCount: visibleMessages.length,
+            messageCount: messages.length,
             proposalCount: proposals.length,
             reviewCount: snippetReviews.length,
           }) ? (
@@ -2417,8 +2403,8 @@ export function WritingAssistant({
                   key={message.id}
                   message={message}
                   messageIndex={idx}
-                  settled={!(busy && idx === lastVisibleAssistantIndex)}
-                  isLastAssistant={idx === lastVisibleAssistantIndex}
+                  settled={!(busy && idx === lastAssistantIndex)}
+                  isLastAssistant={idx === lastAssistantIndex}
                   showUserDivider={idx > 0 && message.role === "user"}
                   targetKind={targetKind}
                   busy={busy}
