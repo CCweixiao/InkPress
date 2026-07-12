@@ -76,12 +76,15 @@ export function WechatPublishPanel({
     { url: string; reason: string }[]
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<Array<{id:string;name:string;isDefault:boolean;status:string}>>([]);
+  const [accountId, setAccountId] = useState("");
+  useEffect(() => { fetch("/api/wechat/accounts").then(r=>r.json()).then(d => { const list=d.accounts??[]; setAccounts(list); setAccountId((list.find((x: {isDefault:boolean})=>x.isDefault)??list[0])?.id??""); }).catch(()=>{}); }, []);
 
   useEffect(() => {
     if (!coverPickerOpen) return;
     let active = true;
     setCoverAssetsLoading(true);
-    fetch("/api/materials?kind=image")
+    fetch(`/api/materials?kind=image${accountId ? `&wechatAccountId=${encodeURIComponent(accountId)}` : ""}`)
       .then((response) => response.json())
       .then((data) => {
         if (active) setCoverAssets(Array.isArray(data.assets) ? data.assets : []);
@@ -95,7 +98,7 @@ export function WechatPublishPanel({
     return () => {
       active = false;
     };
-  }, [coverPickerOpen]);
+  }, [coverPickerOpen, accountId]);
 
   async function handleUploadCover(file: File) {
     setCoverUploading(true);
@@ -155,6 +158,7 @@ export function WechatPublishPanel({
       setLoading(false);
       return;
     }
+    if (!accountId) { setError("请先在设置中添加并选择一个公众号。"); setLoading(false); return; }
     if (cover === "__oss_only__") {
       setError(
         "封面仅存到素材库，缺少微信 media_id，无法推送草稿箱。请在公众号「基本配置 → IP白名单」加入当前出口 IP 后重新上传封面。"
@@ -178,7 +182,7 @@ export function WechatPublishPanel({
       const res = await fetch("/api/wechat/draft", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ articleId, themeId, digest: summary }),
+        body: JSON.stringify({ articleId, themeId, digest: summary, accountId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "推送失败");
@@ -294,6 +298,14 @@ export function WechatPublishPanel({
           <div className="space-y-1.5">
             <Label>文章标题</Label>
             <Input value={title} readOnly className="bg-muted/50" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>发布至公众号</Label>
+            <Select value={accountId} onValueChange={setAccountId}>
+              <SelectTrigger><SelectValue placeholder="选择公众号" /></SelectTrigger>
+              <SelectContent>{accounts.filter(a=>a.status==="active").map(a=><SelectItem key={a.id} value={a.id}>{a.name}{a.isDefault ? "（默认）" : ""}</SelectItem>)}</SelectContent>
+            </Select>
+            {!accounts.length && <p className="text-xs text-amber-600">请先前往设置 → 发布渠道配置 → 微信公众号添加认证。</p>}
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">

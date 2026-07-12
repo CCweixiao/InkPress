@@ -23,10 +23,13 @@ function hashUrl(url: string): string {
  */
 export async function uploadBodyImage(
   sourceUrl: string,
-  fetcher: (url: string) => Promise<ArrayBuffer>
+  fetcher: (url: string) => Promise<ArrayBuffer>,
+  accountId?: string
 ): Promise<string | null> {
   const hash = hashUrl(sourceUrl);
 
+  // 微信正文图 URL 与公众号绑定；多账号发布不得命中历史单账号缓存。
+  if (!accountId) {
   // 一级缓存：Material 表
   const cached = await prisma.material.findUnique({ where: { sourceHash: hash } });
   if (cached?.wxUrl) {
@@ -37,6 +40,7 @@ export async function uploadBodyImage(
   // 二级回退：素材库 Asset 表（已同步过公众号的图片直接复用，避免重复上传）
   const reused = await tryReuseAssetWxUrl(sourceUrl);
   if (reused) return reused;
+  }
 
   // 下载并上传
   const start = Date.now();
@@ -50,12 +54,12 @@ export async function uploadBodyImage(
   const blob = new Blob([wxBuf]);
   const form = new FormData();
   form.append("media", blob, filename);
-  const data = await wxUpload("/media/uploadimg", form);
+  const data = await wxUpload("/media/uploadimg", form, {}, accountId);
   ensureOk(data, "上传正文图片");
   const url = (data as { url?: string }).url;
   if (!url) return null;
 
-  await prisma.material.upsert({
+  if (!accountId) await prisma.material.upsert({
     where: { sourceHash: hash },
     update: { wxUrl: url },
     create: { sourceUrl, sourceHash: hash, wxUrl: url, kind: "body" },
@@ -121,7 +125,7 @@ export async function uploadCoverBuffer(input: {
   buffer: Buffer | ArrayBuffer;
   contentType?: string;
   filename?: string;
-}): Promise<{ mediaId: string; url: string }> {
+}, accountId?: string): Promise<{ mediaId: string; url: string }> {
   const start = Date.now();
   const { buf: wxBuf, contentType, filename } = await ensureWechatCompatibleImage({
     buf: input.buffer,
@@ -131,7 +135,7 @@ export async function uploadCoverBuffer(input: {
   const blob = new Blob([wxBuf], { type: contentType });
   const form = new FormData();
   form.append("media", blob, filename || "cover.png");
-  const data = await wxUpload("/material/add_material", form, { type: "image" });
+  const data = await wxUpload("/material/add_material", form, { type: "image" }, accountId);
   ensureOk(data, "上传封面图");
   const result = data as { media_id?: string; url?: string };
   if (!result.media_id) throw new Error("上传封面图失败：微信未返回 media_id");

@@ -93,7 +93,7 @@ export const SETTINGS_NAV: NavNode[] = [
         kind: "leaf",
         key: "wechat",
         label: "微信公众号",
-        description: "配置微信公众号 AppID、密钥与发布参数。",
+        description: "管理多个公众号的认证信息、默认账号与发布状态。",
         icon: MessageCircle,
       },
     ],

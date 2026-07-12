@@ -18,6 +18,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AssetEditDialog } from "@/components/materials/AssetEditDialog";
+import { ImagePreviewDialog } from "@/components/materials/ImagePreviewDialog";
+import { VideoPreviewDialog } from "@/components/materials/VideoPreviewDialog";
 import {
   UploadDialog,
   type UploadDialogHandle,
@@ -26,6 +28,7 @@ import {
   useClipboardImagePaste,
   pasteShortcutLabel,
 } from "@/components/materials/useClipboardImagePaste";
+import { usePreventFileDragOpen } from "@/components/materials/usePreventFileDragOpen";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { Asset } from "@/types/asset";
 import { parseTags } from "@/lib/asset";
@@ -67,6 +70,8 @@ export function MaterialBrowser({
   // 素材编辑弹窗
   const [editing, setEditing] = useState<Asset | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // 图片/视频预览：点击缩略图放大查看（存 asset 以区分 kind）
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
   const { confirm, dialog } = useConfirm();
 
   /** 粘贴图片：弹窗开→追加；关→用文件打开弹窗（live 模式立即上传）。 */
@@ -88,6 +93,9 @@ export function MaterialBrowser({
     scope: "document",
     onPaste: handlePastedFiles,
   });
+
+  // 阻止浏览器默认文件拖拽行为（拖拽视频时浏览器会直接播放而非触发上传）
+  usePreventFileDragOpen();
 
   const spaceArticles = articles.filter(
     (a) => a.spaceId === selectedSpace
@@ -276,14 +284,28 @@ export function MaterialBrowser({
               <Card key={asset.id} className="overflow-hidden group">
                 <div className="aspect-video bg-muted/40 flex items-center justify-center overflow-hidden">
                   {asset.kind === "image" ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={asset.url}
-                      alt={asset.name}
-                      className="w-full h-full object-cover"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setPreviewAsset(asset)}
+                      className="h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      title="点击预览放大"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={asset.url}
+                        alt={asset.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
                   ) : asset.kind === "video" ? (
-                    <VideoIcon className="h-8 w-8 text-muted-foreground/50" />
+                    <button
+                      type="button"
+                      onClick={() => setPreviewAsset(asset)}
+                      className="flex h-full w-full items-center justify-center text-muted-foreground/50 transition-colors hover:text-muted-foreground hover:bg-accent/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      title="点击播放视频"
+                    >
+                      <VideoIcon className="h-8 w-8" />
+                    </button>
                   ) : (
                     <FileIcon className="h-8 w-8 text-muted-foreground/50" />
                   )}
@@ -368,6 +390,22 @@ export function MaterialBrowser({
         )}
       </div>
 
+      <ImagePreviewDialog
+        url={previewAsset && previewAsset.kind === "image" ? previewAsset.url : null}
+        name={previewAsset?.name}
+        open={previewAsset?.kind === "image"}
+        onOpenChange={(v) => {
+          if (!v) setPreviewAsset(null);
+        }}
+      />
+      <VideoPreviewDialog
+        url={previewAsset && previewAsset.kind === "video" ? previewAsset.url : null}
+        name={previewAsset?.name}
+        open={previewAsset?.kind === "video"}
+        onOpenChange={(v) => {
+          if (!v) setPreviewAsset(null);
+        }}
+      />
       <AssetEditDialog
         asset={editing}
         open={editOpen}

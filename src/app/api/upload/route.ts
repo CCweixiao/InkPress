@@ -43,10 +43,13 @@ export const POST = withApiLog("POST /api/upload", async (req: Request) => {
   const tagsJson = tagsToJson(splitTagInput(tagsRaw));
   // 是否同步到公众号素材库（勾选框）
   const syncToWechat = !!formData.get("syncToWechat");
-  // 第一层：SVG → PNG 开关。默认 ON：未传字段 = true；传 "0"/"false"/"no" = false
+  // 第一层：SVG → PNG 开关。与 syncToWechat 绑定：
+  //   显式传值则尊重；未传时跟随 syncToWechat（同步则转，不同步则保留原始 SVG）
   const rawFlag = formData.get("convertSvgToPng");
   const shouldConvertSvg =
-    rawFlag === null || !["0", "false", "no"].includes(String(rawFlag).toLowerCase());
+    rawFlag === null
+      ? syncToWechat
+      : !["0", "false", "no"].includes(String(rawFlag).toLowerCase());
 
   try {
     // 第一层转换：SVG → PNG（公众号素材库不支持 SVG）

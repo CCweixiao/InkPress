@@ -42,7 +42,9 @@ export async function syncAssetToWechat(params: {
       throw new Error(`下载素材失败：HTTP ${dlRes.status}`);
     }
     const buf = await dlRes.arrayBuffer();
-    // 微信单文件上限约 10MB（图片）/ 200MB（视频），此处统一卡 10MB 避免超大文件卡死
+    // 微信媒体上传接口（uploadimg / add_material）单文件上限：
+    // 图片 10MB、视频 10MB、语音 2MB、缩略图 64KB。统一卡 10MB。
+    // 图片走 uploadimg，视频/文件走 add_material，路径已在下方按 kind 区分。
     if (buf.byteLength > 10 * 1024 * 1024) {
       throw new Error(
         `素材过大（${(buf.byteLength / 1024 / 1024).toFixed(1)}MB），超过 10MB 上限`

@@ -40,6 +40,7 @@ model Article {
   snippetUsages    SnippetUsage[]
   agentChatSession AgentChatSession?
   agentProposals   AgentArticleProposal[]
+  wechatPublishes  WechatArticlePublish[]
 
   @@index([themeId])
   @@index([spaceId])
@@ -427,6 +428,8 @@ model Asset {
   storageObject StorageObject? @relation(fields: [storageObjectId], references: [id], onDelete: SetNull)
   space   Space?   @relation(fields: [spaceId], references: [id])
   article Article? @relation(fields: [articleId], references: [id])
+  wechatBindings AssetWechatBinding[]
+  wechatSyncs    WechatAssetSync[]
 
   @@index([kind])
   @@index([createdAt])
@@ -435,6 +438,68 @@ model Asset {
   @@index([articleId])
   @@index([trashed])
   @@index([wxSyncStatus])
+}
+
+/// 一个授权公众号是一条独立的凭证与发布边界；secret 始终以应用密钥加密后保存。
+model WechatAccount {
+  id          String   @id @default(cuid())
+  name        String
+  appId       String   @unique
+  secret      String
+  tagsJson    String   @default("[]")
+  isDefault   Boolean  @default(false)
+  status      String   @default("active") // active | invalid | disabled
+  lastError   String?
+  lastCheckedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assetBindings AssetWechatBinding[]
+  assetSyncs    WechatAssetSync[]
+  publishes     WechatArticlePublish[]
+
+  @@index([isDefault])
+  @@index([status])
+}
+
+/// 素材的可见/可用范围。没有绑定即为团队通用；有绑定则仅限所列公众号。
+model AssetWechatBinding {
+  assetId   String
+  accountId String
+  createdAt DateTime @default(now())
+  asset     Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  account   WechatAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@id([assetId, accountId])
+  @@index([accountId])
+}
+
+/// 微信媒体 ID/正文 URL 与账号强相关，不能再放在 Asset 的单例字段中。
+model WechatAssetSync {
+  assetId   String
+  accountId String
+  wxMediaId String?
+  wxUrl     String?
+  status    String   @default("pending") // pending | success | failed
+  error     String?
+  syncedAt  DateTime?
+  asset     Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  account   WechatAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@id([assetId, accountId])
+  @@index([accountId, status])
+}
+
+/// 一篇文章在每个公众号有独立草稿 media_id 和状态，支持同文多号发布/分别更新。
+model WechatArticlePublish {
+  articleId String
+  accountId String
+  mediaId   String?
+  status    String @default("draft") // draft | pushed | failed
+  lastError String?
+  pushedAt  DateTime?
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  account   WechatAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@id([articleId, accountId])
+  @@index([accountId, status])
 }
 
 /// 素材块 — 灵感碎片（文字/图文/引用/链接）

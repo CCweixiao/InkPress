@@ -84,7 +84,7 @@ async function initUpload(
     articleId: body.articleId ?? null,
     spaceId: body.spaceId ?? null,
     syncToWechat: !!body.syncToWechat,
-    convertSvgToPng: body.convertSvgToPng !== false,
+    convertSvgToPng: body.convertSvgToPng !== undefined ? !!body.convertSvgToPng : !!body.syncToWechat,
   });
   return { uploadId, chunkSize: CHUNK_SIZE_DEFAULT };
 }
@@ -107,25 +107,25 @@ async function completeUpload(uploadId: string) {
 
   const dir = chunkDir(uploadId);
   const merged = path.join(TMP_ROOT, `${uploadId}.bin`);
-  // 按分片顺序合并
-  const writeHandle = await fs.open(merged, "w");
   try {
-    for (let i = 0; i < meta.total; i++) {
-      const part = await fs.readFile(path.join(dir, `part-${i}`));
-      await writeHandle.writeFile(part);
-    }
-  } finally {
-    await writeHandle.close();
-  }
-
-  // 第一层转换：SVG → PNG（公众号素材库不支持 SVG）
-  let finalPath = merged;
-  let finalContentType = meta.contentType;
-  let finalFilename = meta.fileName;
-  let convertedFromSvg = false;
-  if (meta.convertSvgToPng !== false && isSvg(meta.contentType, meta.fileName)) {
-    const pngPath = `${merged}.png`;
+    // 按分片顺序合并
+    const writeHandle = await fs.open(merged, "w");
     try {
+      for (let i = 0; i < meta.total; i++) {
+        const part = await fs.readFile(path.join(dir, `part-${i}`));
+        await writeHandle.writeFile(part);
+      }
+    } finally {
+      await writeHandle.close();
+    }
+
+    // 第一层转换：SVG → PNG（公众号素材库不支持 SVG）
+    let finalPath = merged;
+    let finalContentType = meta.contentType;
+    let finalFilename = meta.fileName;
+    let convertedFromSvg = false;
+    if (meta.convertSvgToPng !== false && isSvg(meta.contentType, meta.fileName)) {
+      const pngPath = `${merged}.png`;
       const svgBuffer = await fs.readFile(merged);
       const pngBuffer = await convertSvgToPng(svgBuffer);
       await fs.writeFile(pngPath, pngBuffer);
@@ -133,95 +133,87 @@ async function completeUpload(uploadId: string) {
       finalContentType = "image/png";
       finalFilename = finalFilename.replace(/\.svgz?$/i, ".png");
       convertedFromSvg = true;
-    } catch (e) {
-      // 转换失败：清理所有临时文件并抛错
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
-      await fs.rm(merged, { force: true }).catch(() => {});
-      await fs.rm(pngPath, { force: true }).catch(() => {});
-      await fs.rm(metaPath(uploadId), { force: true }).catch(() => {});
-      throw new Error(
-        e instanceof Error ? e.message : "SVG 转 PNG 失败"
-      );
     }
-  }
 
-  const { kind, dir: storageKind } = classifyByContentType(finalContentType);
-  const storageObject = await putFileObject({
-    filePath: finalPath,
-    filename: finalFilename,
-    contentType: finalContentType,
-    kind: storageKind,
-    articleId: meta.articleId ?? null,
-    spaceId: meta.spaceId ?? null,
-    metadata: {
-      ...originalFilenameMetadata(meta.fileName),
-      ...(convertedFromSvg ? { convertedFromSvg: true } : {}),
-    },
-    preferCloud: true,
-  });
-
-  // 落 Asset（双重归属）。名称用自动生成的短 UUID，元数据从会话带入
-  const asset = await prisma.asset.create({
-    data: {
-      name: genAssetName(finalFilename, finalContentType),
-      ossKey: storageObject.key,
-      url: storageObject.url ?? `/api/storage/${storageObject.id}`,
-      kind,
-      size: storageObject.size,
-      contentType: storageObject.contentType,
-      storageObjectId: storageObject.id,
-      metadataJson: storageObject.metadataJson,
-      description: meta.description ?? "",
-      tagsJson: meta.tagsJson ?? "[]",
+    const { kind, dir: storageKind } = classifyByContentType(finalContentType);
+    const storageObject = await putFileObject({
+      filePath: finalPath,
+      filename: finalFilename,
+      contentType: finalContentType,
+      kind: storageKind,
       articleId: meta.articleId ?? null,
       spaceId: meta.spaceId ?? null,
-    },
-  });
-  logMutation("asset", "create", { id: asset.id, kind, chunked: true, syncToWechat: meta.syncToWechat });
-
-  // 同步到公众号素材库（失败不阻塞 OSS 上传，只标记状态）
-  let wxSyncStatus: string | null = null;
-  let wxSyncError: string | null = null;
-  if (meta.syncToWechat) {
-    const result = await syncAssetToWechat({
-      url: asset.url,
-      contentType: asset.contentType,
-      filename: asset.name,
+      metadata: {
+        ...originalFilenameMetadata(meta.fileName),
+        ...(convertedFromSvg ? { convertedFromSvg: true } : {}),
+      },
+      preferCloud: true,
     });
-    if (result.ok) {
-      await prisma.asset.update({
-        where: { id: asset.id },
-        data: {
-          wxUrl: result.wxUrl,
-          wxMediaId: result.wxMediaId,
-          wxSyncStatus: "success",
-          wxSyncError: null,
-          wxSyncedAt: new Date(),
-        },
+
+    // 落 Asset（双重归属）。名称用自动生成的短 UUID，元数据从会话带入
+    const asset = await prisma.asset.create({
+      data: {
+        name: genAssetName(finalFilename, finalContentType),
+        ossKey: storageObject.key,
+        url: storageObject.url ?? `/api/storage/${storageObject.id}`,
+        kind,
+        size: storageObject.size,
+        contentType: storageObject.contentType,
+        storageObjectId: storageObject.id,
+        metadataJson: storageObject.metadataJson,
+        description: meta.description ?? "",
+        tagsJson: meta.tagsJson ?? "[]",
+        articleId: meta.articleId ?? null,
+        spaceId: meta.spaceId ?? null,
+      },
+    });
+    logMutation("asset", "create", { id: asset.id, kind, chunked: true, syncToWechat: meta.syncToWechat });
+
+    // 同步到公众号素材库（失败不阻塞 OSS 上传，只标记状态）
+    let wxSyncStatus: string | null = null;
+    let wxSyncError: string | null = null;
+    if (meta.syncToWechat) {
+      const result = await syncAssetToWechat({
+        url: asset.url,
+        contentType: asset.contentType,
+        filename: asset.name,
       });
-      wxSyncStatus = "success";
-    } else {
-      await prisma.asset.update({
-        where: { id: asset.id },
-        data: {
-          wxSyncStatus: "failed",
-          wxSyncError: result.reason,
-          wxSyncedAt: new Date(),
-        },
-      });
-      wxSyncStatus = "failed";
-      wxSyncError = result.reason;
-      log.warn({ id: asset.id, reason: result.reason }, "分片上传同步公众号失败");
+      if (result.ok) {
+        await prisma.asset.update({
+          where: { id: asset.id },
+          data: {
+            wxUrl: result.wxUrl,
+            wxMediaId: result.wxMediaId,
+            wxSyncStatus: "success",
+            wxSyncError: null,
+            wxSyncedAt: new Date(),
+          },
+        });
+        wxSyncStatus = "success";
+      } else {
+        await prisma.asset.update({
+          where: { id: asset.id },
+          data: {
+            wxSyncStatus: "failed",
+            wxSyncError: result.reason,
+            wxSyncedAt: new Date(),
+          },
+        });
+        wxSyncStatus = "failed";
+        wxSyncError = result.reason;
+        log.warn({ id: asset.id, reason: result.reason }, "分片上传同步公众号失败");
+      }
     }
+
+    return { asset: { ...asset, wxSyncStatus, wxSyncError } };
+  } finally {
+    // 无论成功 / 失败，都清理临时分片与合并文件，避免 storage/tmp 残留堆积。
+    // 失败时（OSS 抛错 / DB 写失败）也必须清理，否则一个文件会留下 N 个 part 临时文件。
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(merged, { force: true }).catch(() => {});
+    await fs.rm(`${merged}.png`, { force: true }).catch(() => {});
+    await fs.rm(metaPath(uploadId), { force: true }).catch(() => {});
   }
-
-  // 清理临时文件
-  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
-  await fs.rm(merged, { force: true }).catch(() => {});
-  await fs.rm(`${merged}.png`, { force: true }).catch(() => {});
-  await fs.rm(metaPath(uploadId), { force: true }).catch(() => {});
-
-  return { asset: { ...asset, wxSyncStatus, wxSyncError } };
 }
 
 export const POST = withApiLog("POST /api/upload/chunk", async (req: NextRequest) => {

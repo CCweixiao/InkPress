@@ -87,6 +87,7 @@ export async function ensureDataHome(): Promise<void> {
     await runClaudeAgentMigration().catch((e) => {
       log.error({ err: e }, "迁移 claude-agent 配置失败（开发模式）");
     });
+    await migrateWechatAccounts().catch((e) => log.error({ err: e }, "迁移公众号账号失败（开发模式）"));
     return;
   }
 
@@ -128,6 +129,7 @@ export async function ensureDataHome(): Promise<void> {
 
   // 2. 版本化迁移（幂等，每次启动补齐未执行版本）
   await runMigrations(resolvedDb.path, migrationsDir());
+  await migrateWechatAccounts().catch((e) => log.error({ err: e }, "迁移公众号账号失败"));
 
   // 3. seed 内置主题（幂等，已存在则更新）
   await seedBuiltInThemes().catch((e) => {
@@ -143,6 +145,11 @@ export async function ensureDataHome(): Promise<void> {
   await runClaudeAgentMigration().catch((e) => {
     log.error({ err: e }, "迁移 claude-agent 配置失败");
   });
+}
+
+async function migrateWechatAccounts() {
+  const { migrateLegacyWechatAccount } = await import("@/lib/wechat/accounts");
+  await migrateLegacyWechatAccount();
 }
 
 /** 动态加载并执行 claude-agent → inkpress.llm 迁移（幂等）。 */

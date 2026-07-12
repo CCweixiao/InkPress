@@ -6,6 +6,7 @@ import { uploadBodyImage } from "@/lib/wechat/material";
 import { addDraft, updateDraft } from "@/lib/wechat/draft";
 import { readContentAt } from "@/lib/content-store";
 import { readStorageObjectBuffer } from "@/lib/storage";
+import { uploadCoverBuffer } from "@/lib/wechat/material";
 import { moduleLogger } from "@/lib/logger";
 import { withApiLog } from "@/lib/api-log";
 import { requireLicenseForApi } from "@/lib/license/guard";
@@ -17,6 +18,7 @@ const schema = z.object({
   themeId: z.string().nullable().optional(),
   digest: z.string().max(200).optional(),
   author: z.string().optional(),
+  accountId: z.string().min(1),
 });
 
 /**
@@ -35,7 +37,9 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { articleId, digest, author } = parsed.data;
+  const { articleId, digest, author, accountId } = parsed.data;
+  const account = await prisma.wechatAccount.findUnique({ where: { id: accountId } });
+  if (!account || account.status !== "active") return NextResponse.json({ error: "目标公众号不可用，请在设置中检查。" }, { status: 400 });
 
   // 1. 取文章 + 主题
   const article = await prisma.article.findUnique({ where: { id: articleId } });
@@ -108,7 +112,7 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
         codeTheme: theme.codeTheme,
         primaryColor: theme.primaryColor ?? "#3f51b5",
       },
-      { uploadImage: (url) => uploadBodyImage(url, fetcher) }
+      { uploadImage: (url) => uploadBodyImage(url, fetcher, accountId) }
     );
     if (failedImages.length > 0) {
       log.warn(
@@ -118,7 +122,22 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
     }
 
     // 3. 封面
-    const thumbMediaId = article.coverMediaId ?? "";
+    let thumbMediaId = article.coverMediaId ?? "";
+    // 封面 media_id 也与公众号绑定。素材库封面在首次向某个账号发布时按该账号上传。
+    if (article.coverAssetId) {
+      const coverAsset = await prisma.asset.findUnique({ where: { id: article.coverAssetId } });
+      if (coverAsset) {
+        let buffer: Buffer;
+        if (coverAsset.storageObjectId) {
+          buffer = await readStorageObjectBuffer(coverAsset.storageObjectId);
+        } else if (/^https?:\/\//.test(coverAsset.url)) {
+          const response = await fetch(coverAsset.url);
+          if (!response.ok) throw new Error("下载封面素材失败。");
+          buffer = Buffer.from(await response.arrayBuffer());
+        } else throw new Error("封面素材无法读取。");
+        thumbMediaId = (await uploadCoverBuffer({ buffer, contentType: coverAsset.contentType, filename: coverAsset.name }, accountId)).mediaId;
+      }
+    }
     if (!thumbMediaId) {
       // 无封面时使用一张占位：从正文第一张图取，否则跳过封面（公众号要求必须有封面）
       return NextResponse.json(
@@ -140,10 +159,12 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
       digest: finalDigest,
     };
 
-    const existedMediaId = article.wxMediaId;
+    const previous = await prisma.wechatArticlePublish.findUnique({ where: { articleId_accountId: { articleId, accountId } } });
+    const existedMediaId = previous?.mediaId;
     if (existedMediaId) {
       // 重复发布 = 更新已有草稿（单图文 index 恒为 0）
-      await updateDraft(existedMediaId, 0, draftArticle);
+      await updateDraft(existedMediaId, 0, draftArticle, accountId);
+      await prisma.wechatArticlePublish.upsert({ where: { articleId_accountId: { articleId, accountId } }, create: { articleId, accountId, mediaId: existedMediaId, status: "pushed", pushedAt: new Date() }, update: { status: "pushed", lastError: null, pushedAt: new Date() } });
       await prisma.article.update({
         where: { id: articleId },
         data: { status: "pushed", themeId: theme.id },
@@ -157,7 +178,8 @@ export const POST = withApiLog("POST /api/wechat/draft", async (req: NextRequest
     }
 
     // 首次发布 = 新增草稿
-    const mediaId = await addDraft(draftArticle);
+    const mediaId = await addDraft(draftArticle, accountId);
+    await prisma.wechatArticlePublish.upsert({ where: { articleId_accountId: { articleId, accountId } }, create: { articleId, accountId, mediaId, status: "pushed", pushedAt: new Date() }, update: { mediaId, status: "pushed", lastError: null, pushedAt: new Date() } });
     await prisma.article.update({
       where: { id: articleId },
       data: { wxMediaId: mediaId, status: "pushed", themeId: theme.id },

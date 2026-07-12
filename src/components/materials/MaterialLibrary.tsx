@@ -21,6 +21,8 @@ import {
   UploadDialog,
   type UploadDialogHandle,
 } from "@/components/materials/UploadDialog";
+import { ImagePreviewDialog } from "@/components/materials/ImagePreviewDialog";
+import { VideoPreviewDialog } from "@/components/materials/VideoPreviewDialog";
 import {
   useClipboardImagePaste,
   pasteShortcutLabel,
@@ -74,6 +76,8 @@ export function MaterialLibrary({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadInitial, setUploadInitial] = useState<File[] | null>(null);
   const dialogRef = useRef<UploadDialogHandle>(null);
+  // 预览：点击图片/视频缩略图放大查看（存 asset 以区分 kind）
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
 
   /** 粘贴图片：弹窗开→追加；关→用文件打开弹窗（live 模式立即上传）。 */
   const handlePastedFiles = useCallback(
@@ -235,14 +239,28 @@ export function MaterialLibrary({
             <Card key={asset.id} className="overflow-hidden group">
               <div className="aspect-video bg-muted/40 flex items-center justify-center overflow-hidden">
                 {asset.kind === "image" ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={asset.url}
-                    alt={asset.name}
-                    className="w-full h-full object-cover"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setPreviewAsset(asset)}
+                    className="h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    title="点击预览放大"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={asset.url}
+                      alt={asset.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </button>
                 ) : asset.kind === "video" ? (
-                  <VideoIcon className="h-10 w-10 text-muted-foreground/50" />
+                  <button
+                    type="button"
+                    onClick={() => setPreviewAsset(asset)}
+                    className="flex h-full w-full items-center justify-center text-muted-foreground/50 transition-colors hover:text-muted-foreground hover:bg-accent/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    title="点击播放视频"
+                  >
+                    <VideoIcon className="h-10 w-10" />
+                  </button>
                 ) : (
                   <FileIcon className="h-10 w-10 text-muted-foreground/50" />
                 )}
@@ -332,6 +350,22 @@ export function MaterialLibrary({
         }}
         onAllDone={() => {
           void refresh(filter);
+        }}
+      />
+      <ImagePreviewDialog
+        url={previewAsset && previewAsset.kind === "image" ? previewAsset.url : null}
+        name={previewAsset?.name}
+        open={previewAsset?.kind === "image"}
+        onOpenChange={(v) => {
+          if (!v) setPreviewAsset(null);
+        }}
+      />
+      <VideoPreviewDialog
+        url={previewAsset && previewAsset.kind === "video" ? previewAsset.url : null}
+        name={previewAsset?.name}
+        open={previewAsset?.kind === "video"}
+        onOpenChange={(v) => {
+          if (!v) setPreviewAsset(null);
         }}
       />
     </div>

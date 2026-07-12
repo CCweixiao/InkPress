@@ -14,6 +14,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { AssetEditDialog } from "@/components/materials/AssetEditDialog";
+import { ImagePreviewDialog } from "@/components/materials/ImagePreviewDialog";
+import { VideoPreviewDialog } from "@/components/materials/VideoPreviewDialog";
 import {
   UploadDialog,
   type UploadDialogHandle,
@@ -22,6 +24,7 @@ import {
   useClipboardImagePaste,
   pasteShortcutLabel,
 } from "@/components/materials/useClipboardImagePaste";
+import { usePreventFileDragOpen } from "@/components/materials/usePreventFileDragOpen";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { Asset } from "@/types/asset";
 import { parseTags } from "@/lib/asset";
@@ -53,6 +56,8 @@ export function ArticleMaterialsPanel({
   // 素材编辑弹窗
   const [editing, setEditing] = useState<Asset | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // 图片/视频预览：点击缩略图放大查看（存 asset 以区分 kind）
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
   const { confirm, dialog } = useConfirm();
   /** 面板根：element-scope 粘贴监听目标（需 tabIndex 才能在该区域聚焦时收到 paste）。 */
   const panelRef = useRef<HTMLDivElement>(null);
@@ -76,6 +81,9 @@ export function ArticleMaterialsPanel({
     scope: "element",
     onPaste: handlePastedFiles,
   });
+
+  // 阻止浏览器默认文件拖拽行为（拖拽视频时浏览器会直接播放而非触发上传）
+  usePreventFileDragOpen();
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/materials?articleId=${articleId}`);
@@ -195,14 +203,28 @@ export function ArticleMaterialsPanel({
                 <div className="flex items-center gap-2">
                   <div className="shrink-0">
                     {a.kind === "image" ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={a.url}
-                        alt={a.name}
-                        className="h-8 w-8 rounded object-cover"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => setPreviewAsset(a)}
+                        className="rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+                        title="点击预览放大"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={a.url}
+                          alt={a.name}
+                          className="h-8 w-8 rounded object-cover"
+                        />
+                      </button>
                     ) : a.kind === "video" ? (
-                      <VideoIcon className="h-5 w-5 text-muted-foreground" />
+                      <button
+                        type="button"
+                        onClick={() => setPreviewAsset(a)}
+                        className="rounded text-muted-foreground transition-colors hover:text-primary focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+                        title="点击播放视频"
+                      >
+                        <VideoIcon className="h-5 w-5" />
+                      </button>
                     ) : (
                       <FileIcon className="h-5 w-5 text-muted-foreground" />
                     )}
@@ -292,6 +314,22 @@ export function ArticleMaterialsPanel({
         onOpenChange={setEditOpen}
         onSaved={(updated) => {
           setAssets((cur) => cur.map((a) => (a.id === updated.id ? updated : a)));
+        }}
+      />
+      <ImagePreviewDialog
+        url={previewAsset && previewAsset.kind === "image" ? previewAsset.url : null}
+        name={previewAsset?.name}
+        open={previewAsset?.kind === "image"}
+        onOpenChange={(v) => {
+          if (!v) setPreviewAsset(null);
+        }}
+      />
+      <VideoPreviewDialog
+        url={previewAsset && previewAsset.kind === "video" ? previewAsset.url : null}
+        name={previewAsset?.name}
+        open={previewAsset?.kind === "video"}
+        onOpenChange={(v) => {
+          if (!v) setPreviewAsset(null);
         }}
       />
       {dialog}

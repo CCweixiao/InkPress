@@ -19,9 +19,9 @@ export type DraftArticle = {
  * 返回 media_id（即草稿箱 id，群发/发布后从草稿箱移除，也可在后台草稿箱查看）
  * 仅推送到草稿箱；正式发布由用户在公众号后台手动操作（按需求决策）。
  */
-export async function addDraft(article: DraftArticle): Promise<string> {
+export async function addDraft(article: DraftArticle, accountId?: string): Promise<string> {
   const start = Date.now();
-  const data = await wxJson("/draft/add", { articles: [article] });
+  const data = await wxJson("/draft/add", { articles: [article] }, { accountId });
   ensureOk(data, "新增草稿");
   const mediaId = (data as { media_id?: string }).media_id;
   if (!mediaId) throw new Error("新增草稿失败：未返回 media_id");
@@ -40,14 +40,14 @@ export async function addDraft(article: DraftArticle): Promise<string> {
 export async function updateDraft(
   mediaId: string,
   index: number,
-  article: DraftArticle
+  article: DraftArticle, accountId?: string
 ): Promise<void> {
   const start = Date.now();
   const data = await wxJson("/draft/update", {
     media_id: mediaId,
     index,
     articles: article,
-  });
+  }, { accountId });
   ensureOk(data, "更新草稿");
   log.info(
     { mediaId, index, title: article.title, durationMs: Date.now() - start },

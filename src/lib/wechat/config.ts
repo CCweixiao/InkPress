@@ -1,6 +1,7 @@
 import { parseJsonObjectOrArrayConfig } from "@/lib/system-config";
 import { prisma } from "@/lib/db";
 import { decryptConfigValueForUse } from "@/lib/config-secrets";
+import { decryptSecret } from "@/lib/crypto/secret-store";
 
 export const WECHAT_CONFIG_KEY = "inkpress.wechat";
 
@@ -33,6 +34,14 @@ export async function getWechatConfig(): Promise<WechatConfig> {
   return parseWechatConfig(
     decryptConfigValueForUse(WECHAT_CONFIG_KEY, item.value) ?? item.value
   );
+}
+
+/** 账号凭证优先来自多账号表；未传账号时仅保留旧版全局配置兼容。 */
+export async function getWechatAccountConfig(accountId?: string): Promise<WechatConfig> {
+  if (!accountId) return getWechatConfig();
+  const account = await prisma.wechatAccount.findUnique({ where: { id: accountId } });
+  if (!account || account.status !== "active") throw new Error("公众号不存在或不可用，请在设置中检查授权状态。");
+  return { appId: account.appId, secret: decryptSecret(account.secret) };
 }
 
 /** 微信是否已配置（不抛错，用于状态展示） */

@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, Loader2, Upload, X, RefreshCw } from "lucide-react";
+import { Check, Loader2, Upload, X, RefreshCw, Users, Globe } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,7 @@ import {
   pasteShortcutLabel,
   useProactiveClipboardRead,
 } from "@/components/materials/useClipboardImagePaste";
+import { usePreventFileDragOpen } from "@/components/materials/usePreventFileDragOpen";
 import { ImagePreviewDialog } from "@/components/materials/ImagePreviewDialog";
 
 type UploadTask = {
@@ -78,7 +79,7 @@ export type UploadDialogProps = {
   spaceId?: string | null;
   /** 拖拽 / 粘贴时预填的文件；null 表示点击进入（需在弹窗内选择） */
   initialFiles: File[] | null;
-  onUploaded?: (asset: Asset) => void;
+  onUploaded?: (asset: Asset | null) => void;
   onAllDone?: () => void;
 };
 
@@ -106,7 +107,8 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [syncToWechat, setSyncToWechat] = useState(false);
-  const [convertSvgToPng, setConvertSvgToPng] = useState(true);
+  const [wechatAccounts, setWechatAccounts] = useState<Array<{id:string;name:string}>>([]);
+  const [wechatAccountIds, setWechatAccountIds] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   /** true=拖拽 / 粘贴进入，弹窗打开即上传；false=点击进入，先填表单再传 */
   const liveMode = initialFiles !== null;
@@ -122,6 +124,12 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
   /** 图片预览：点击缩略图放大查看（存 url + 文件名）。 */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState<string | undefined>(undefined);
+  /** 拖拽文件到弹窗时的视觉高亮 */
+  const [dialogDragOver, setDialogDragOver] = useState(false);
+  useEffect(() => { if (open) fetch("/api/wechat/accounts").then(r=>r.json()).then(d=>setWechatAccounts(d.accounts??[])).catch(()=>{}); }, [open]);
+
+  // 弹窗打开时阻止浏览器默认文件拖拽行为，并支持拖拽文件到弹窗上传
+  usePreventFileDragOpen(open);
 
   // 弹窗打开 / 关闭时重置状态
   useEffect(() => {
@@ -129,7 +137,6 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
       setDescription("");
       setTags("");
       setSyncToWechat(false);
-      setConvertSvgToPng(true);
       setUploading(false);
       setFinalizing(false);
       if (initialFiles && initialFiles.length > 0) {
@@ -156,8 +163,8 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
         if (tags.trim()) fd.append("tags", tags.trim());
       }
       if (syncToWechat) fd.append("syncToWechat", "1");
-      // 服务端默认 ON，只有显式关闭时才传 "0"，减少数据量
-      if (!convertSvgToPng) fd.append("convertSvgToPng", "0");
+      // SVG→PNG 与同步公众号绑定：同步时转换，不同步时保留 SVG（发布链路再转）
+      fd.append("convertSvgToPng", syncToWechat ? "1" : "0");
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -174,7 +181,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
             : undefined,
       };
     },
-    [articleId, spaceId, liveMode, description, tags, syncToWechat, convertSvgToPng]
+    [articleId, spaceId, liveMode, description, tags, syncToWechat]
   );
 
   // ---- 分片上传单个文件（含断点续传 + 重试）----
@@ -198,7 +205,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
             articleId,
             spaceId: spaceId ?? null,
             syncToWechat,
-            convertSvgToPng,
+            convertSvgToPng: syncToWechat,
           }),
         }
       );
@@ -226,7 +233,8 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
         );
       }
       const completeRes = await fetch(
-        `/api/upload/chunk?action=complete&uploadId=${uploadId}`
+        `/api/upload/chunk?action=complete&uploadId=${uploadId}`,
+        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }
       );
       if (!completeRes.ok) {
         const d = await completeRes.json().catch(() => ({}));
@@ -243,7 +251,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
             : undefined,
       };
     },
-    [articleId, spaceId, liveMode, description, tags, syncToWechat, convertSvgToPng]
+    [articleId, spaceId, liveMode, description, tags, syncToWechat]
   );
 
   const uploadOne = useCallback(
@@ -260,10 +268,19 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
         // 上传成功后取回完整 asset 通知外层
         let asset: Asset | null = null;
         if (assetId) {
-          const res = await fetch(`/api/materials?articleId=${articleId}`);
-          const data = await res.json();
-          asset =
-            (data.assets as Asset[])?.find((a) => a.id === assetId) ?? null;
+          if (wechatAccountIds.length) {
+            await fetch(`/api/materials/${assetId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ wechatAccountIds }) });
+          }
+          // 用单条 GET 取回完整 asset（不依赖 articleId 过滤，避免空间级 / 未分类场景查不到）
+          try {
+            const res = await fetch(`/api/materials/${assetId}`);
+            if (res.ok) {
+              const data = await res.json();
+              asset = (data.asset as Asset) ?? null;
+            }
+          } catch {
+            /* 查不到不影响上传成功状态 */
+          }
         }
         setTasks((cur) =>
           cur.map((t) =>
@@ -279,7 +296,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
               : t
           )
         );
-        if (asset) onUploaded?.(asset);
+        if (assetId) onUploaded?.(asset);
       } catch (e) {
         setTasks((cur) =>
           cur.map((t) =>
@@ -297,7 +314,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
         if (inFlightRef.current === 0) setUploading(false);
       }
     },
-    [uploadChunked, uploadDirect, articleId, onUploaded]
+    [uploadChunked, uploadDirect, onUploaded, wechatAccountIds]
   );
 
   /** 启动一批文件的上传（串行，避免并发竞争）。uploading 由 uploadOne 的 in-flight 计数维护。 */
@@ -383,8 +400,10 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
     );
     (async () => {
       for (const t of toUpload) await uploadOne(t);
+      // 点击模式下全部传完 → 通知外层刷新列表
+      onAllDone?.();
     })();
-  }, [tasks, uploading, uploadOne]);
+  }, [tasks, uploading, uploadOne, onAllDone]);
 
   // 缩略图 object URL：跟随 tasks 增删同步，避免泄漏（image 任务才创建）。
   useEffect(() => {
@@ -547,7 +566,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
     }
     setFinalizing(true);
     try {
-      if (desc || tagArr.length) {
+      if (desc || tagArr.length || wechatAccountIds.length) {
         await Promise.all(
           doneIds.map((id) =>
             fetch(`/api/materials/${id}`, {
@@ -556,6 +575,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
               body: JSON.stringify({
                 description: desc || undefined,
                 tags: tagArr.length ? tagArr : undefined,
+                wechatAccountIds,
               }),
             })
           )
@@ -578,18 +598,82 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-w-lg">
+      <DialogContent
+        className={cn("max-w-lg", dialogDragOver && "ring-2 ring-primary/50")}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDialogDragOver(true);
+        }}
+        onDragLeave={() => setDialogDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDialogDragOver(false);
+          if (e.dataTransfer.files.length) {
+            addFiles(Array.from(e.dataTransfer.files));
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>
             {liveMode ? "上传素材" : "选择并上传素材"}
           </DialogTitle>
-          <DialogDescription>
+        <DialogDescription>
             名称自动生成（短 UUID）。
             {liveMode
               ? "正在上传，可同时填写描述 / 标签，完成后补写到本批素材。"
               : "选择文件并填写描述 / 标签，点击确认上传。≤5MB 直传，更大自动分片续传。"}
           </DialogDescription>
         </DialogHeader>
+
+        {/* 素材可见范围 */}
+        <div className="space-y-2">
+          <Label className="text-xs">素材可见范围</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {/* 团队通用（无绑定） */}
+            <button
+              type="button"
+              onClick={() => setWechatAccountIds([])}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                wechatAccountIds.length === 0
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:bg-accent/50"
+              )}
+            >
+              <Globe className="h-3 w-3" />
+              团队通用
+            </button>
+            {wechatAccounts.map((a) => {
+              const active = wechatAccountIds.includes(a.id);
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() =>
+                    setWechatAccountIds((cur) =>
+                      active ? cur.filter((id) => id !== a.id) : [...cur, a.id]
+                    )
+                  }
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                    active
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-accent/50"
+                  )}
+                >
+                  <Users className="h-3 w-3" />
+                  {a.name}
+                  {active && <Check className="h-3 w-3" />}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {wechatAccountIds.length === 0
+              ? "当前：所有公众号发布时均可使用"
+              : `当前：仅限选中的 ${wechatAccountIds.length} 个公众号`}
+          </p>
+        </div>
 
         {/* 点击模式：选择文件区 */}
         {!liveMode && (
@@ -755,7 +839,7 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
                 )}
                 {t.status === "done" && t.wxSyncStatus === "failed" && (
                   <div className="mt-1 flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-amber-700 truncate">
+                    <p className="text-[11px] text-amber-700 truncate flex-1 min-w-0">
                       ⚠ 公众号同步失败：{t.wxSyncError}
                     </p>
                     <button
@@ -773,37 +857,37 @@ export const UploadDialog = forwardRef<UploadDialogHandle, UploadDialogProps>(
           </div>
         )}
 
-        {/* 同步到公众号素材库（勾选框） */}
-        <label className="flex items-start gap-2 rounded-md border border-border p-2.5 cursor-pointer hover:bg-accent/40 transition-colors">
-          <input
-            type="checkbox"
-            checked={syncToWechat}
-            onChange={(e) => setSyncToWechat(e.target.checked)}
-            className="mt-0.5 h-3.5 w-3.5 shrink-0"
-          />
-          <div className="space-y-0.5">
-            <div className="text-xs font-medium">同步到公众号素材库</div>
-            <div className="text-[11px] text-muted-foreground leading-relaxed">
-              图片走 media/uploadimg（正文图 URL），视频/文件走永久素材。需已在「设置 → 微信公众号」配置 appId 与 secret；未配置或失败时素材仍入库，标记失败后可重试。
+        {/* 同步到公众号素材库（勾选框） + SVG 自动转 PNG（随同步自动激活） */}
+        <div className={cn(
+          "rounded-md border p-2.5 transition-colors",
+          syncToWechat ? "border-primary/40 bg-primary/[0.04]" : "border-border"
+        )}>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={syncToWechat}
+              onChange={(e) => setSyncToWechat(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0"
+            />
+            <div className="space-y-0.5">
+              <div className="text-xs font-medium">同步到公众号素材库</div>
+              <div className="text-[11px] text-muted-foreground leading-relaxed">
+                图片走 media/uploadimg（正文图 URL），视频/文件走永久素材。需已在「设置 → 微信公众号」配置 appId 与 secret；未配置或失败时素材仍入库，标记失败后可重试。
+              </div>
             </div>
-          </div>
-        </label>
-
-        {/* SVG 自动转 PNG（公众号素材库不支持 SVG，默认开启） */}
-        <label className="flex items-start gap-2 rounded-md border border-border p-2.5 cursor-pointer hover:bg-accent/40 transition-colors">
-          <input
-            type="checkbox"
-            checked={convertSvgToPng}
-            onChange={(e) => setConvertSvgToPng(e.target.checked)}
-            className="mt-0.5 h-3.5 w-3.5 shrink-0"
-          />
-          <div className="space-y-0.5">
-            <div className="text-xs font-medium">SVG 自动转 PNG</div>
-            <div className="text-[11px] text-muted-foreground leading-relaxed">
-              公众号素材库不支持 SVG，开启后上传时会自动转为 PNG 再存储。建议保持开启。Mermaid 图表也会走同样链路。
+          </label>
+          {syncToWechat && (
+            <div className="ml-5 mt-1.5 flex items-center gap-1.5 text-[11px] text-primary/80">
+              <Check className="h-3 w-3" />
+              SVG 将自动转为 PNG 再上传（公众号不支持 SVG）
             </div>
-          </div>
-        </label>
+          )}
+        </div>
+        {!syncToWechat && (
+          <p className="-mt-1 text-[11px] text-muted-foreground/70">
+            未同步公众号时保留原始 SVG；发布文章时会在上传前自动转换。
+          </p>
+        )}
 
         {/* 描述 / 标签（两种模式共用） */}
         <div className="space-y-2">

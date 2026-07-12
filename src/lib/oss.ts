@@ -202,9 +202,11 @@ export async function deleteFromOss(key: string) {
 }
 
 /**
- * 从本地文件分片上传到 OSS（断点续传：基于 ali-oss 的 checkpoint）。
- * 用于分片上传路由：客户端把分片汇总到本地临时文件后，调用此方法整体上传。
- * partSize 默认 1MB；progress 回调用于可选的进度上报。
+ * 从本地文件上传到 OSS。
+ * 调用方已在前端做分片续传，这里服务端拿到合并后的本地文件后整体上传。
+ * 不用 ali-oss 的 multipartUpload：其在 Node 22 undici 下抛
+ * RequestContentLengthMismatchError（body 长度与 Content-Length 不匹配）。
+ * 改用 put（buffer）路径，与 uploadBufferToOss 一致；MAX_FILE_SIZE 100MB 可整体入内存。
  */
 export async function multipartUploadFileToOss(
   localPath: string,
@@ -217,34 +219,31 @@ export async function multipartUploadFileToOss(
   const objectKey = objectKeyFor(filename, dir);
   const client = createClient(config);
   const start = Date.now();
-  // ali-oss multipartUpload：服务端断点续传（若同 key+file 的上传中断，可续传）
+  const { default: fs } = await import("node:fs/promises");
+  const buffer = await fs.readFile(localPath);
+  onProgress?.(0.5);
   try {
-    await client.multipartUpload(objectKey, localPath, {
-      partSize: 1024 * 1024, // 1MB / part
+    await client.put(objectKey, buffer, {
       headers: {
         "Content-Type": contentType || "application/octet-stream",
         "Content-Disposition": `inline; filename="${safeFilename(filename)}"`,
       },
-      progress: (p: number) => {
-        onProgress?.(p);
-        return Promise.resolve();
-      },
     });
   } catch (err) {
-    log.error({ key: objectKey, filename, err }, "OSS 分片上传失败");
+    log.error({ key: objectKey, filename, err }, "OSS 上传失败");
     throw err;
   }
-  const stat = await import("node:fs").then((fs) => fs.promises.stat(localPath));
   const durationMs = Date.now() - start;
   log.info(
-    { key: objectKey, size: stat.size, durationMs },
-    "OSS 分片上传完成"
+    { key: objectKey, size: buffer.byteLength, durationMs },
+    "OSS 上传完成（buffer）"
   );
+  onProgress?.(1);
   return {
     key: objectKey,
     url: publicUrl(config, objectKey),
     name: filename,
-    size: stat.size,
+    size: buffer.byteLength,
     contentType: contentType || "application/octet-stream",
   };
 }

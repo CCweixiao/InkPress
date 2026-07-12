@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
   const kind = req.nextUrl.searchParams.get("kind") || undefined;
   const spaceIdRaw = req.nextUrl.searchParams.get("spaceId");
   const articleId = req.nextUrl.searchParams.get("articleId") || undefined;
+  const wechatAccountId = req.nextUrl.searchParams.get("wechatAccountId") || undefined;
   const includeTrashed =
     req.nextUrl.searchParams.get("trashed") === "1" ? undefined : false;
 
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
       ...(kind ? { kind } : {}),
       ...(articleId ? { articleId } : {}),
       ...(spaceIdFilter !== undefined ? { spaceId: spaceIdFilter } : {}),
+      ...(wechatAccountId ? { OR: [{ wechatBindings: { none: {} } }, { wechatBindings: { some: { accountId: wechatAccountId } } }] } : {}),
     },
     orderBy: { createdAt: "desc" },
   });

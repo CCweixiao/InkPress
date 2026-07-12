@@ -12,6 +12,7 @@ import { LogsViewer } from "./LogsViewer";
 import { UsageDashboard } from "./UsageDashboard";
 import { ThemeManager, type ThemeItem } from "@/components/themes/ThemeManager";
 import { LicensePanel } from "@/components/license/LicensePanel";
+import { WechatAccountsManager } from "./WechatAccountsManager";
 import {
   SETTINGS_NAV,
   findNavNode,
@@ -26,7 +27,7 @@ function isConfigTab(key: SettingsKey): key is ConfigTab {
     key === "agent" ||
     key === "web" ||
     key === "storage" ||
-    key === "wechat"
+    false
   );
 }
 
@@ -154,6 +155,9 @@ export function SettingsShell({ themes }: { themes: ThemeItem[] }) {
         </div>
         <div className={activeKey === "license" ? "block" : "hidden"}>
           <LicensePanel />
+        </div>
+        <div className={activeKey === "wechat" ? "block" : "hidden"}>
+          <WechatAccountsManager />
         </div>
         <div className={isConfigTab(activeKey) ? "block" : "hidden"}>
           <SystemConfigManager activeTab={isConfigTab(activeKey) ? activeKey : "agent"} />
