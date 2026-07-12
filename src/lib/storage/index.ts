@@ -210,7 +210,14 @@ export async function readStorageObjectBuffer(id: string) {
   const object = await prisma.storageObject.findUnique({ where: { id } });
   if (!object) throw new Error("存储对象不存在。");
   if (object.provider !== "local") {
-    throw new Error("当前仅支持直接读取本地存储对象；云存储请使用对象 URL。");
+    if (!object.url || !/^https?:\/\//i.test(object.url)) {
+      throw new Error("云存储对象缺少可读取的对象 URL。");
+    }
+    const response = await fetch(object.url, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) {
+      throw new Error(`下载云存储对象失败：HTTP ${response.status}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
   }
   const { absolute } = assertLocalObjectPath(object.localPath ?? object.key);
   return fs.readFile(absolute);
