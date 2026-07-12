@@ -189,6 +189,10 @@ hoistMissingTopLevel();
 // 若只把依赖提升到顶层，遇到同名多版本包（如 jsdom 需要 lru-cache@11，
 // 顶层另有 lru-cache@5）会解析到错误版本。这里为 traced 包物化局部依赖闭包。
 materializeTracedNextPackageDependencies();
+// 兜底：递归扫描所有 traced 包（含深层嵌套），从 .pnpm/ 源补齐 NFT 遗漏的文件。
+// NFT 对 @exodus/bytes/fallback/single-byte.encodings.js 等文件的追踪不全，
+// 仅靠 copyRuntimeDeps 的依赖链解析有时无法覆盖到深层嵌套包。
+patchAllTracedPackageGaps();
 
 // 重写 server.js 内硬编码的项目绝对路径（outputFileTracingRoot / turbopack.root）。
 // Next.js 构建时把构建机器的项目根写入 nextConfig，运行时 require-hook 用它解析
@@ -1019,6 +1023,99 @@ function materializeTracedNextPackageDependencies(): void {
     console.log(
       `  ✓ 补齐 .next traced 包局部依赖：${tracedPackages} 个 traced 包，复制 ${copiedPackages} 个依赖包`
     );
+  }
+}
+
+/**
+ * 兜底：递归扫描 .next/node_modules/ 下所有包目录（包括深层嵌套的
+ * jsdom/node_modules/html-encoding-sniffer/node_modules/@exodus/bytes 等），
+ * 从 .pnpm/ 源目录 mergeDir 补齐 NFT 遗漏的文件。
+ *
+ * NFT 对部分包（如 @exodus/bytes）只追踪了 single-byte.js 但漏掉了
+ * single-byte.encodings.js（静态 ESM import 却没被 trace 到）。
+ * materializeTracedNextPackageDependencies 的 copyRuntimeDeps 依赖依赖链
+ * 解析，深层嵌套包可能被 seen 集合跳过。本函数直接在文件系统层面
+ * 按包名+版本从 .pnpm/ 定位源目录，对每个包 mergeDir 补缺。
+ */
+function patchAllTracedPackageGaps(): void {
+  const nextNm = path.join(bundle, ".next", "node_modules");
+  if (!fs.existsSync(nextNm)) return;
+
+  const pnpmDir = path.join(root, "node_modules", ".pnpm");
+  const sourceCache = new Map<string, string>();
+
+  const findSourceInPnpm = (name: string): string | null => {
+    if (sourceCache.has(name)) {
+      const cached = sourceCache.get(name)!;
+      return cached || null;
+    }
+    try {
+      const entries = fs.readdirSync(pnpmDir, { withFileTypes: true });
+      const escapedName = name.replace("/", "+");
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        if (e.name.startsWith(escapedName + "@") || e.name === escapedName) {
+          const pkgDir = path.join(pnpmDir, e.name, "node_modules", name);
+          if (fs.existsSync(path.join(pkgDir, "package.json"))) {
+            sourceCache.set(name, pkgDir);
+            return pkgDir;
+          }
+        }
+      }
+    } catch {
+      /* .pnpm/ not readable */
+    }
+    sourceCache.set(name, "");
+    return null;
+  };
+
+  let patchedFiles = 0;
+
+  const walkAndPatch = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      let isDir = e.isDirectory();
+      if (!isDir && e.isSymbolicLink()) {
+        try {
+          isDir = fs.statSync(full).isDirectory();
+        } catch {
+          continue;
+        }
+      }
+      if (!isDir) continue;
+
+      const pjPath = path.join(full, "package.json");
+      if (fs.existsSync(pjPath)) {
+        try {
+          const pj = JSON.parse(fs.readFileSync(pjPath, "utf8"));
+          if (typeof pj.name === "string") {
+            const srcDir = findSourceInPnpm(pj.name);
+            if (srcDir) {
+              const before = countFiles(full);
+              mergeDir(srcDir, full);
+              const after = countFiles(full);
+              if (after > before) patchedFiles += after - before;
+            }
+          }
+        } catch {
+          /* package.json parse error */
+        }
+      }
+
+      walkAndPatch(full);
+    }
+  };
+
+  walkAndPatch(nextNm);
+
+  if (patchedFiles > 0) {
+    console.log(`  ✓ 兜底补齐 traced 包缺失文件：${patchedFiles} 个`);
   }
 }
 
