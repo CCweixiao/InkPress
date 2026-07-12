@@ -96,10 +96,58 @@ export async function GET(req: NextRequest) {
     }
     if (parentId !== null && parentId !== undefined) {
       where.parentId = parentId === "null" ? null : parentId;
-    } else {
+    } else if (!tagId) {
       where.parentId = null;
     }
     if (priority) where.priority = parseInt(priority, 10);
+  }
+
+  // 标签视图使用扁平查询：不加载任务树，避免大量任务时产生重复数据和深层 include。
+  if (tagId && !trashedFlag) {
+    // 命中标签的可能是任意层级子任务。先回溯至根任务，再以根任务的清单/分组
+    // 组织完整任务树，避免子任务缺少 sectionId 时显示为“未分组”。
+    const tagMatches = await prisma.task.findMany({
+      where,
+      select: {
+        id: true,
+        parentId: true,
+        parent: { select: { id: true, parentId: true, parent: { select: { id: true } } } },
+      },
+    });
+    const rootIds = [...new Set(tagMatches.map((task) => task.parent?.parent?.id ?? task.parent?.id ?? task.id))];
+    const taggedTasks = await prisma.task.findMany({
+      where: { id: { in: rootIds }, trashed: false },
+      orderBy: [{ updatedAt: "desc" }, { sortOrder: "asc" }],
+      include: {
+        tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
+        list: { select: { id: true, name: true, color: true, folderId: true, folder: { select: { id: true, name: true } } } },
+        section: { select: { id: true, name: true, color: true } },
+        children: {
+          where: { trashed: false },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+          include: {
+            tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
+            children: {
+              where: { trashed: false },
+              orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+              include: { tags: { include: { tag: { select: { id: true, name: true, color: true } } } } },
+            },
+          },
+        },
+      },
+    });
+    return NextResponse.json(
+      { tasks: taggedTasks.map((task) => ({
+        ...task,
+        tags: task.tags.map((taskTag) => taskTag.tag),
+        children: task.children.map((child) => ({
+          ...child,
+          tags: child.tags.map((taskTag) => taskTag.tag),
+          children: child.children.map((grandchild) => ({ ...grandchild, tags: grandchild.tags.map((taskTag) => taskTag.tag) })),
+        })),
+      })) },
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+    );
   }
 
   const tasks = await prisma.task.findMany({
@@ -116,6 +164,9 @@ export async function GET(req: NextRequest) {
           children: {
             orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
             where: { trashed: false },
+            include: {
+              tags: { include: { tag: { select: { id: true, name: true, color: true } } } },
+            },
           },
         },
       },
@@ -128,7 +179,11 @@ export async function GET(req: NextRequest) {
   const flat = tasks.map((t) => ({
     ...t,
     tags: t.tags.map((tt) => tt.tag),
-    children: t.children?.map((c) => ({ ...c, tags: c.tags?.map((tt) => tt.tag) ?? [] })),
+    children: t.children?.map((c) => ({
+      ...c,
+      tags: c.tags?.map((tt) => tt.tag) ?? [],
+      children: c.children?.map((child) => ({ ...child, tags: child.tags?.map((tt) => tt.tag) ?? [] })),
+    })),
   }));
 
   const result = smartView
@@ -168,12 +223,18 @@ export async function POST(req: NextRequest) {
 
     // 任务树统一限制为三级：根任务（第一级）→ 子任务 → 下级任务。
     // 这样看板和列表等不同入口不会创建无法完整展示的更深层级。
+    let inheritedPriority: number | undefined;
+    let inheritedTagIds: string[] | undefined;
     if (parentId) {
       const depthError = await validateParentDepth(parentId);
       if (depthError) return NextResponse.json({ error: depthError }, { status: 400 });
       const parent = await prisma.task.findUnique({ where: { id: parentId }, select: { listId: true, trashed: true } });
       if (!parent || parent.trashed) return NextResponse.json({ error: "父任务不存在" }, { status: 400 });
       if (parent.listId !== resolvedListId) return NextResponse.json({ error: "子任务必须属于与父任务相同的清单" }, { status: 400 });
+
+      const rootTask = await findRootTask(parentId);
+      inheritedPriority = rootTask.priority;
+      inheritedTagIds = rootTask.tags.map((taskTag) => taskTag.tagId);
     }
 
     // 获取同级最大 sortOrder
@@ -187,15 +248,15 @@ export async function POST(req: NextRequest) {
         title,
         content: content ?? "",
         status: status ?? "todo",
-        priority: priority ?? 0,
+        priority: inheritedPriority ?? priority ?? 0,
         dueDate: dueDate ? new Date(dueDate) : null,
         parentId: parentId ?? null,
         listId: resolvedListId,
         sectionId: sectionId ?? null,
         sortOrder: sortOrder ?? (maxSort._max.sortOrder ?? 0) + 1,
         tagsJson: tagsJson ?? "[]",
-        tags: tagIds?.length
-          ? { create: tagIds.map((tagId) => ({ tagId })) }
+        tags: (inheritedTagIds ?? tagIds)?.length
+          ? { create: (inheritedTagIds ?? tagIds ?? []).map((tagId) => ({ tagId })) }
           : undefined,
       },
       include: { children: true, tags: { include: { tag: { select: { id: true, name: true, color: true } } } } },
@@ -223,4 +284,18 @@ async function validateParentDepth(parentId: string, movingTaskId?: string): Pro
     currentId = current.parentId;
   }
   return null;
+}
+
+/** 返回任务树的最顶级任务，用于让子任务继承统一的优先级和标签。 */
+async function findRootTask(taskId: string) {
+  let currentId = taskId;
+  while (true) {
+    const task = await prisma.task.findUnique({
+      where: { id: currentId },
+      select: { id: true, parentId: true, priority: true, tags: { select: { tagId: true } } },
+    });
+    if (!task) throw new Error("父任务不存在");
+    if (!task.parentId) return task;
+    currentId = task.parentId;
+  }
 }

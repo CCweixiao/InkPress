@@ -8,9 +8,6 @@ import {
   AlertTriangle,
   X,
   Smile,
-  List,
-  LayoutGrid,
-  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -33,7 +30,7 @@ interface TaskListDialogProps {
   folders?: { id: string; name: string }[];
   onSaved: () => void;
   // 编辑模式（可选）
-  list?: { id: string; name: string; color: string; folderId: string | null; viewMode?: "list" | "kanban" | "calendar"; groupMode?: "status" | "week" | "custom" } | null;
+  list?: { id: string; name: string; color: string; folderId: string | null } | null;
 }
 
 export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onSaved, list }: TaskListDialogProps) {
@@ -44,8 +41,6 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "kanban" | "calendar">("list");
-  const [groupMode, setGroupMode] = useState<"status" | "week" | "custom">("status");
 
   useEffect(() => {
     if (open) {
@@ -56,8 +51,6 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
       setConfirmDelete(false);
       setShowEmojiPicker(false);
       setSaving(false);
-      setViewMode(list?.viewMode ?? "list");
-      setGroupMode(list?.groupMode === "custom" ? "custom" : "status");
     }
   }, [open, list, folderId]);
 
@@ -79,14 +72,14 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
         const res = await fetch(`/api/tasks/lists/${list.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim(), color, folderId: selectedFolderId, viewMode, groupMode }),
+          body: JSON.stringify({ name: name.trim(), color, folderId: selectedFolderId }),
         });
         if (res.ok) setListEmoji(list.id, emoji);
       } else {
         const res = await fetch("/api/tasks/lists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim(), color, folderId: selectedFolderId, viewMode, groupMode }),
+          body: JSON.stringify({ name: name.trim(), color, folderId: selectedFolderId }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -99,7 +92,7 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
     } finally {
       setSaving(false);
     }
-  }, [name, saving, list, color, selectedFolderId, emoji, viewMode, groupMode, onSaved, onOpenChange]);
+  }, [name, saving, list, color, selectedFolderId, emoji, onSaved, onOpenChange]);
 
   const handleDelete = async () => {
     if (!list) return;
@@ -249,27 +242,6 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
             </div>
 
             {/* 所属文件夹 */}
-            <div>
-              <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2"><span className="w-1 h-1 rounded-full bg-primary" />默认视图</label>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  { value: "list" as const, label: "列表", icon: List },
-                  { value: "kanban" as const, label: "看板", icon: LayoutGrid },
-                  { value: "calendar" as const, label: "日历", icon: CalendarDays },
-                ]).map(({ value, label, icon: Icon }) => (
-                  <button key={value} onClick={() => setViewMode(value)} className={cn("flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-xs transition-all", viewMode === value ? "border-primary bg-primary/5 text-primary shadow-sm" : "border-border text-muted-foreground hover:bg-accent")}>
-                    <Icon className="h-3.5 w-3.5" />{label}
-                  </button>
-                ))}
-              </div>
-              {viewMode === "kanban" && (
-                <select value={groupMode} onChange={(e) => setGroupMode(e.target.value as typeof groupMode)} className="mt-2 h-8 w-full rounded-lg bg-muted px-3 text-xs outline-none">
-                  <option value="status">按状态分组</option><option value="custom">自定义横向分组</option>
-                </select>
-              )}
-            </div>
-
-            {/* 所属文件夹 */}
             {folders.length > 0 && (
               <div>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-1.5">
@@ -349,7 +321,7 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
                 </span>
               </div>
 
-              {/* 当前视图实时预览 */}
+              {/* 看板预览 */}
               <div
                 className="rounded-xl p-3 mt-3 transition-all"
                 style={{
@@ -363,22 +335,12 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
                     <p className="text-xs font-semibold truncate" style={{ color }}>
                       {previewName}
                     </p>
-                    <p className="text-[9px] text-muted-foreground">{viewMode === "list" ? "列表视图" : viewMode === "kanban" ? "看板视图" : "日历视图"}</p>
+                    <p className="text-[9px] text-muted-foreground">看板视图</p>
                   </div>
                 </div>
-                {viewMode === "list" && (
-                  <div className="space-y-2">
-                    {["100%", "76%", "55%"].map((width, index) => <div key={width} className="flex items-center gap-2 rounded-md bg-background/70 px-2 py-1.5"><span className="h-2.5 w-2.5 rounded-full border" style={{ borderColor: color, backgroundColor: index === 2 ? color : "transparent" }} /><span className="h-1.5 rounded-full" style={{ width, backgroundColor: color + (index === 2 ? "45" : "2b") }} /></div>)}
-                  </div>
-                )}
-                {viewMode === "kanban" && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {[0, 1].map((column) => <div key={column} className="rounded-lg bg-background/65 p-1.5"><div className="mb-1.5 flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: column === 0 ? color : color + "70" }} /><span className="h-1 w-8 rounded-full" style={{ backgroundColor: color + "30" }} /></div>{Array.from({ length: column === 0 ? 2 : 1 }).map((_, card) => <div key={card} className="mb-1.5 rounded border bg-background p-1.5" style={{ borderColor: color + "25" }}><div className="h-1.5 w-full rounded-full" style={{ backgroundColor: color + "38" }} /><div className="mt-1 h-1 w-1/2 rounded-full bg-muted" /></div>)}</div>)}
-                  </div>
-                )}
-                {viewMode === "calendar" && (
-                  <div className="rounded-lg bg-background/70 p-2"><div className="mb-2 flex items-center justify-between"><span className="text-[9px] font-medium">本月</span><CalendarDays className="h-3 w-3" style={{ color }} /></div><div className="grid grid-cols-7 gap-1">{Array.from({ length: 28 }).map((_, day) => <span key={day} className={cn("flex aspect-square items-center justify-center rounded-sm text-[6px] text-muted-foreground", [4, 12, 20].includes(day) && "text-white")} style={[4, 12, 20].includes(day) ? { backgroundColor: color } : undefined}>{day + 1}</span>)}</div></div>
-                )}
+                <div className="grid grid-cols-2 gap-2">
+                  {[0, 1].map((column) => <div key={column} className="rounded-lg bg-background/65 p-1.5"><div className="mb-1.5 flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: column === 0 ? color : color + "70" }} /><span className="h-1 w-8 rounded-full" style={{ backgroundColor: color + "30" }} /></div>{Array.from({ length: column === 0 ? 2 : 1 }).map((_, card) => <div key={card} className="mb-1.5 rounded border bg-background p-1.5" style={{ borderColor: color + "25" }}><div className="h-1.5 w-full rounded-full" style={{ backgroundColor: color + "38" }} /><div className="mt-1 h-1 w-1/2 rounded-full bg-muted" /></div>)}</div>)}
+                </div>
               </div>
             </div>
           </div>

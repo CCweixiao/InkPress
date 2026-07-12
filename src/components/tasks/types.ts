@@ -20,6 +20,7 @@ export interface Task {
   parentId: string | null;
   listId: string;
   sectionId?: string | null;
+  section?: { id: string; name: string; color: string } | null;
   list?: { id: string; name: string; color: string; folderId: string | null; folder?: { id: string; name: string } | null };
   sortOrder: number;
   tagsJson: string; // 保留只读兼容
@@ -49,7 +50,6 @@ export const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }>
   archived: { label: "已归档", color: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500" },
 };
 
-export type ViewMode = "list" | "kanban" | "calendar";
 export type TaskGroupMode = "status" | "week" | "custom";
 
 export interface TaskSectionInfo {

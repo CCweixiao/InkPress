@@ -3,15 +3,17 @@
 import { useState, useRef, useEffect } from "react";
 import { Plus, Flag } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import type { TaskPriority } from "./types";
 import { PRIORITY_CONFIG } from "./types";
 
 interface QuickAddInputProps {
-  onAdd: (title: string, priority: TaskPriority, dueDate: string | null) => void;
+  onAdd: (title: string, priority: TaskPriority, dueDate: string | null) => boolean | void | Promise<boolean | void>;
   onCancel?: () => void;
   compact?: boolean;
   placeholder?: string;
   autoFocus?: boolean;
+  enablePriority?: boolean;
 }
 
 /** 解析自然语言中的日期 */
@@ -67,13 +69,14 @@ function parsePriority(text: string): { cleanText: string; priority: TaskPriorit
   return { cleanText, priority };
 }
 
-export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus }: QuickAddInputProps) {
+export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus, enablePriority = true }: QuickAddInputProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [activePriorityIndex, setActivePriorityIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const hashIndex = value.lastIndexOf("#");
+  const hashIndex = enablePriority ? value.lastIndexOf("#") : -1;
   const hashQuery = hashIndex >= 0 && !/\s/.test(value.slice(hashIndex + 1))
     ? value.slice(hashIndex + 1).toLowerCase()
     : null;
@@ -91,15 +94,25 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
     }
   }, [autoFocus]);
 
-  const handleSubmit = () => {
-    if (!value.trim()) return;
+  const handleSubmit = async () => {
+    if (!value.trim() || saving) return;
 
     const { cleanText: afterDate, date } = parseNaturalDate(value);
-    const { cleanText: finalTitle, priority } = parsePriority(afterDate);
+    const { cleanText: finalTitle, priority } = enablePriority
+      ? parsePriority(afterDate)
+      : { cleanText: afterDate, priority: 0 as TaskPriority };
 
     if (finalTitle.trim()) {
-      onAdd(finalTitle.trim(), priority, date);
-      setValue("");
+      setSaving(true);
+      try {
+        const created = await onAdd(finalTitle.trim(), priority, date);
+        // 失败时保留已输入内容，用户可以修改后重试。
+        if (created !== false) setValue("");
+      } catch {
+        // 网络或接口异常时保留输入内容，便于用户重试。
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -112,6 +125,9 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // 看板卡片本身支持键盘拖拽（Enter 可激活）。输入任务时必须隔离事件，
+    // 否则会错误触发拖拽浮层并改变任务排序。
+    e.stopPropagation();
     if (priorityMenuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
       setActivePriorityIndex((index) => e.key === "ArrowDown"
@@ -126,7 +142,7 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      void handleSubmit();
     }
     if (e.key === "Escape") {
       setValue("");
@@ -135,7 +151,9 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
   };
 
   return (
-    <div
+    <Popover open={priorityMenuOpen}>
+      <PopoverAnchor asChild>
+        <div
       className={cn(
         "relative flex items-center gap-2 rounded-lg border transition-all duration-200",
         focused
@@ -143,29 +161,40 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
           : "border-border",
         compact ? "px-2 py-1.5" : "px-3 py-2.5"
       )}
-    >
-      <Plus className={cn("shrink-0 text-muted-foreground", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
-      <input
-        ref={inputRef}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        maxLength={50}
-        placeholder={placeholder ?? "添加任务... (支持 #高优先级 明天 等自然语言)"}
-        className={cn(
-          "flex-1 bg-transparent border-none outline-none placeholder:text-muted-foreground/60",
-          compact ? "text-sm" : "text-sm"
-        )}
-      />
-      {value && (
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Enter</kbd>
+      onPointerDown={(event) => event.stopPropagation()}
+        >
+          <Plus className={cn("shrink-0 text-muted-foreground", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            maxLength={50}
+            disabled={saving}
+            placeholder={placeholder ?? "添加任务... (支持 #高优先级 明天 等自然语言)"}
+            className={cn(
+              "flex-1 bg-transparent border-none outline-none placeholder:text-muted-foreground/60",
+              compact ? "text-sm" : "text-sm"
+            )}
+          />
+          {value && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Enter</kbd>
+            </div>
+          )}
         </div>
-      )}
+      </PopoverAnchor>
       {priorityMenuOpen && (
-        <div className="absolute left-0 top-[calc(100%+8px)] z-[80] w-64 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-2xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:ring-white/10">
+        <PopoverContent
+          align="start"
+          side="bottom"
+          sideOffset={8}
+          collisionPadding={12}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          className="z-[80] max-h-64 w-64 overflow-y-auto overscroll-contain rounded-xl border-slate-200 bg-white p-2 text-slate-950 shadow-2xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:ring-white/10"
+        >
           <div className="px-2 pb-1.5 pt-0.5 text-[11px] font-semibold tracking-wide text-slate-500 dark:text-slate-400">设置优先级</div>
           {priorityOptions.map((priority, index) => {
             const config = PRIORITY_CONFIG[priority];
@@ -184,8 +213,8 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
               </button>
             );
           })}
-        </div>
+        </PopoverContent>
       )}
-    </div>
+    </Popover>
   );
 }

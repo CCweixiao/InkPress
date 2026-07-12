@@ -51,6 +51,29 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     const data: Record<string, unknown> = {};
     const { title, content, status, priority, dueDate, parentId, listId, sectionId, sortOrder, tagsJson, isCollapsed, tagIds } =
       parsed.data;
+    if (listId === null) return NextResponse.json({ error: "任务必须归属一个清单" }, { status: 400 });
+    const destinationListId = listId ?? undefined;
+
+    if (sectionId !== undefined) {
+      const targetListId = destinationListId ?? (await prisma.task.findUnique({ where: { id }, select: { listId: true } }))?.listId;
+      if (!targetListId) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
+      if (sectionId === null) {
+        const list = await prisma.taskList.findUnique({ where: { id: targetListId }, select: { ungroupedVisible: true, ungroupedName: true } });
+        if (!list?.ungroupedVisible) {
+          return NextResponse.json({ error: "该清单未启用默认分组，不能归入该分组" }, { status: 400 });
+        }
+      } else {
+        const section = await prisma.taskSection.findFirst({ where: { id: sectionId, listId: targetListId }, select: { id: true } });
+        if (!section) return NextResponse.json({ error: "分组不属于目标清单" }, { status: 400 });
+      }
+    }
+
+    if (priority !== undefined || tagIds !== undefined || tagsJson !== undefined || listId !== undefined || sectionId !== undefined) {
+      const targetTask = await prisma.task.findUnique({ where: { id }, select: { parentId: true } });
+      if (targetTask?.parentId) {
+        return NextResponse.json({ error: "子任务继承最父级任务的优先级、标签和归属，不能单独修改" }, { status: 400 });
+      }
+    }
 
     if (title !== undefined) data.title = title;
     if (content !== undefined) data.content = content;
@@ -83,6 +106,45 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         if (tagIds.length > 0) {
           await tx.taskTag.createMany({
             data: tagIds.map((tagId) => ({ taskId: id, tagId })),
+          });
+        }
+      }
+      // 顶级任务的优先级和标签是整棵任务树的统一元数据，改动后同步到后两级子任务。
+      if (priority !== undefined || tagIds !== undefined) {
+        const children = await tx.task.findMany({ where: { parentId: id }, select: { id: true } });
+        const childIds = children.map((child) => child.id);
+        const grandchildren = childIds.length
+          ? await tx.task.findMany({ where: { parentId: { in: childIds } }, select: { id: true } })
+          : [];
+        const descendantIds = [...childIds, ...grandchildren.map((child) => child.id)];
+
+        if (descendantIds.length > 0 && priority !== undefined) {
+          await tx.task.updateMany({ where: { id: { in: descendantIds } }, data: { priority } });
+        }
+        if (descendantIds.length > 0 && tagIds !== undefined) {
+          await tx.taskTag.deleteMany({ where: { taskId: { in: descendantIds } } });
+          if (tagIds.length > 0) {
+            await tx.taskTag.createMany({
+              data: descendantIds.flatMap((taskId) => tagIds.map((tagId) => ({ taskId, tagId }))),
+            });
+          }
+        }
+      }
+      // 顶级任务调整清单或自定义分组时，后代同步迁移，保持整棵任务树归属一致。
+      if (destinationListId !== undefined || sectionId !== undefined) {
+        const children = await tx.task.findMany({ where: { parentId: id }, select: { id: true } });
+        const childIds = children.map((child) => child.id);
+        const grandchildren = childIds.length
+          ? await tx.task.findMany({ where: { parentId: { in: childIds } }, select: { id: true } })
+          : [];
+        const descendantIds = [...childIds, ...grandchildren.map((child) => child.id)];
+        if (descendantIds.length > 0) {
+          await tx.task.updateMany({
+            where: { id: { in: descendantIds } },
+            data: {
+              ...(destinationListId !== undefined ? { listId: destinationListId } : {}),
+              ...(sectionId !== undefined ? { sectionId } : {}),
+            },
           });
         }
       }

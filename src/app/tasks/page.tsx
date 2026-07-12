@@ -6,6 +6,7 @@ import { ArrowLeft, CheckSquare, Menu, ListPlus, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TaskSidebar, type SelectedKey } from "@/components/tasks/TaskSidebar";
+import { CalendarPageView } from "@/components/tasks/CalendarPageView";
 
 /** 计算默认选中的清单：第一个文件夹的第一个清单优先，否则第一个独立清单。 */
 function pickFirstList(
@@ -60,11 +61,12 @@ export default function TasksPage() {
     setHighlightTaskId(taskId);
   };
 
-  // 选中态映射：list → listId；folder → folderId；tag → tagId；trash → view=trash
+  // 选中态映射：list → listId；folder → folderId；tag → tagId；trash → view=trash；calendar → 独立
   const listId = selected.type === "list" ? selected.id : undefined;
   const folderId = selected.type === "folder" ? selected.id : undefined;
   const tagId = selected.type === "tag" ? selected.id : undefined;
   const view: "main" | "trash" = selected.type === "trash" ? "trash" : "main";
+  const isCalendar = selected.type === "calendar";
 
   // 侧边栏树变更后同步 hasAnyList + 空态自动选中 + 通知 TaskPanel 重载清单配置
   const handleTreeChanged = useCallback(async () => {
@@ -77,7 +79,7 @@ export default function TasksPage() {
       const firstId = pickFirstList(folders, standaloneLists);
       setHasAnyList(firstId !== null);
       // 当前没有选中具体清单时，自动切到第一个
-      if (firstId && selected.type !== "list" && selected.type !== "folder" && selected.type !== "tag") {
+      if (firstId && selected.type !== "list" && selected.type !== "folder" && selected.type !== "tag" && selected.type !== "calendar") {
         setSelected({ type: "list", id: firstId });
       }
     } catch {
@@ -153,7 +155,9 @@ export default function TasksPage() {
 
         {/* Main */}
         <main className="flex-1 min-w-0 overflow-hidden bg-background">
-          {hasAnyList === false ? (
+          {isCalendar ? (
+            <CalendarPageView />
+          ) : hasAnyList === false ? (
             <EmptyTasksState onCreateList={() => setCreateListSignal((n) => n + 1)} />
           ) : hasAnyList === null ? (
             <div className="h-full flex items-center justify-center">

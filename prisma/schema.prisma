@@ -595,7 +595,7 @@ model TaskList {
   folderId  String?
   sortOrder Int      @default(0)
   viewMode  String   @default("list") // list | kanban | calendar
-  groupMode String   @default("status") // status | week | custom
+  groupMode String   @default("custom") // status | week | custom
   ungroupedName String @default("未分组")
   ungroupedVisible Boolean @default(true)
   createdAt DateTime @default(now())

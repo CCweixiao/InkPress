@@ -30,6 +30,8 @@ import {
   Plus,
   Pencil,
   GripVertical,
+  CalendarDays,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TaskFolderDialog } from "./TaskFolderDialog";
@@ -42,6 +44,7 @@ export type SelectedKey =
   | { type: "folder"; id: string }
   | { type: "list"; id: string }
   | { type: "tag"; id: string }
+  | { type: "calendar" }
   | { type: "trash" };
 
 interface TaskListInfo {
@@ -49,7 +52,6 @@ interface TaskListInfo {
   name: string;
   color: string;
   folderId: string | null;
-  viewMode?: "list" | "kanban" | "calendar";
   groupMode?: "status" | "week" | "custom";
 }
 interface TaskFolderInfo {
@@ -69,6 +71,13 @@ type Counts = {
   byList: Record<string, number>;
   byTag: Record<string, number>;
   trashed: number;
+};
+
+type SearchEntry = {
+  key: string;
+  type: "folder" | "list" | "tag" | "task";
+  id: string;
+  listId?: string;
 };
 
 interface TaskSidebarProps {
@@ -313,6 +322,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [taskResults, setTaskResults] = useState<Array<{ id: string; title: string; list?: { id: string; name: string } }>>([]);
   const [searching, setSearching] = useState(false);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
   const [listEmojis, setListEmojis] = useState<Record<string, string>>({});
 
   // 订阅清单图标变更（localStorage 持久化，跨组件同步）
@@ -351,6 +361,13 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
   useEffect(() => {
     load();
   }, [load, refreshKey]);
+
+  // 任务创建、完成、删除或恢复后即时刷新各清单与标签的计数。
+  useEffect(() => {
+    const handleTasksChanged = () => { void load(); };
+    window.addEventListener("tasks:changed", handleTasksChanged);
+    return () => window.removeEventListener("tasks:changed", handleTasksChanged);
+  }, [load]);
 
   // 外部请求打开「新建清单」对话框
   useEffect(() => {
@@ -440,6 +457,8 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
   };
 
   const parentTagOptions = tags.filter((t) => t.parentId === null);
+  const collectionList = useMemo(() => standaloneLists.find((list) => list.name === "收集箱") ?? null, [standaloneLists]);
+  const regularStandaloneLists = useMemo(() => standaloneLists.filter((list) => list.id !== collectionList?.id), [standaloneLists, collectionList?.id]);
 
   const searchResults = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase();
@@ -455,10 +474,36 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
     return { folders: matchedFolders, lists: matchedLists, tags: matchedTags };
   }, [debouncedQuery, folders, standaloneLists, tags]);
 
+  const searchEntries = useMemo<SearchEntry[]>(() => [
+    ...searchResults.folders.map((folder) => ({ key: `f-${folder.id}`, type: "folder" as const, id: folder.id })),
+    ...searchResults.lists.map((list) => ({ key: `l-${list.id}`, type: "list" as const, id: list.id })),
+    ...searchResults.tags.map((tag) => ({ key: `t-${tag.id}`, type: "tag" as const, id: tag.id })),
+    ...taskResults.filter((task) => task.list?.id).map((task) => ({ key: `task-${task.id}`, type: "task" as const, id: task.id, listId: task.list!.id })),
+  ], [searchResults, taskResults]);
+
+  useEffect(() => {
+    setSearchActiveIndex(0);
+  }, [debouncedQuery, searchEntries.length]);
+
+  useEffect(() => {
+    if (!debouncedQuery.trim()) return;
+    document.querySelector(`[data-search-index="${searchActiveIndex}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [debouncedQuery, searchActiveIndex]);
+
   const clearSearch = () => {
     setSearchQuery("");
     setDebouncedQuery("");
   };
+
+  const selectSearchEntry = (entry: SearchEntry) => {
+    if (entry.type === "folder") onSelect({ type: "folder", id: entry.id });
+    if (entry.type === "list") onSelect({ type: "list", id: entry.id });
+    if (entry.type === "tag") onSelect({ type: "tag", id: entry.id });
+    if (entry.type === "task" && entry.listId && onSelectTask) onSelectTask(entry.id, entry.listId);
+    clearSearch();
+  };
+
+  const isSearchActive = (key: string) => searchEntries[searchActiveIndex]?.key === key;
 
   const toggleTagCollapsed = (id: string) => {
     setCollapsedTagIds((prev) => {
@@ -528,10 +573,12 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
 
       // --- Try standalone lists group ---
       setStandaloneLists((prevStandalone) => {
-        const oldIdx = prevStandalone.findIndex((l) => l.id === activeId);
-        const newIdx = prevStandalone.findIndex((l) => l.id === overId);
+        const collection = prevStandalone.find((list) => list.name === "收集箱");
+        const regularLists = prevStandalone.filter((list) => list.id !== collection?.id);
+        const oldIdx = regularLists.findIndex((l) => l.id === activeId);
+        const newIdx = regularLists.findIndex((l) => l.id === overId);
         if (oldIdx >= 0 && newIdx >= 0) {
-          const reordered = arrayMove(prevStandalone, oldIdx, newIdx);
+          const reordered = arrayMove(regularLists, oldIdx, newIdx);
           const payload = reordered.map((l, i) => ({
             id: l.id,
             sortOrder: i,
@@ -541,7 +588,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items: payload }),
           }).catch((err) => console.error("list reorder failed:", err));
-          return reordered;
+          return collection ? [...reordered, collection] : reordered;
         }
         return prevStandalone; // not in this group — fall through
       });
@@ -589,6 +636,16 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") clearSearch();
+              if ((e.key === "ArrowDown" || e.key === "ArrowUp") && searchEntries.length > 0) {
+                e.preventDefault();
+                setSearchActiveIndex((index) => e.key === "ArrowDown"
+                  ? (index + 1) % searchEntries.length
+                  : (index - 1 + searchEntries.length) % searchEntries.length);
+              }
+              if (e.key === "Enter" && searchEntries.length > 0) {
+                e.preventDefault();
+                selectSearchEntry(searchEntries[searchActiveIndex] ?? searchEntries[0]);
+              }
             }}
             placeholder="搜索文件夹/标签/任务..."
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground min-w-0"
@@ -606,7 +663,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
 
         {/* 下拉浮层 */}
         {debouncedQuery.trim() && (
-          <div className="absolute top-full left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-popover border border-border rounded-md shadow-md z-50">
+          <div className="absolute top-full left-0 right-0 z-[60] mt-1 max-h-80 overflow-y-auto rounded-md border border-border bg-background shadow-xl ring-1 ring-black/5 dark:ring-white/10">
             {searchResults.folders.length === 0 &&
             searchResults.lists.length === 0 &&
             searchResults.tags.length === 0 &&
@@ -622,11 +679,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
                     {searchResults.folders.map((f) => (
                       <button
                         key={`f-${f.id}`}
-                        onClick={() => {
-                          onSelect({ type: "folder", id: f.id });
-                          clearSearch();
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                        data-search-index={searchEntries.findIndex((entry) => entry.key === `f-${f.id}`)}
+                        onMouseEnter={() => setSearchActiveIndex(searchEntries.findIndex((entry) => entry.key === `f-${f.id}`))}
+                        onClick={() => selectSearchEntry({ key: `f-${f.id}`, type: "folder", id: f.id })}
+                        className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm", isSearchActive(`f-${f.id}`) ? "bg-accent" : "hover:bg-accent")}
                       >
                         <FolderOpen className="h-3.5 w-3.5 shrink-0" />
                         <span className="flex-1 truncate">{f.name}</span>
@@ -635,11 +691,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
                     {searchResults.lists.map((l) => (
                       <button
                         key={`l-${l.id}`}
-                        onClick={() => {
-                          onSelect({ type: "list", id: l.id });
-                          clearSearch();
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                        data-search-index={searchEntries.findIndex((entry) => entry.key === `l-${l.id}`)}
+                        onMouseEnter={() => setSearchActiveIndex(searchEntries.findIndex((entry) => entry.key === `l-${l.id}`))}
+                        onClick={() => selectSearchEntry({ key: `l-${l.id}`, type: "list", id: l.id })}
+                        className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm", isSearchActive(`l-${l.id}`) ? "bg-accent" : "hover:bg-accent")}
                       >
                         <span
                           className="h-2 w-2 rounded-full shrink-0"
@@ -656,11 +711,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
                     {searchResults.tags.map((t) => (
                       <button
                         key={`t-${t.id}`}
-                        onClick={() => {
-                          onSelect({ type: "tag", id: t.id });
-                          clearSearch();
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                        data-search-index={searchEntries.findIndex((entry) => entry.key === `t-${t.id}`)}
+                        onMouseEnter={() => setSearchActiveIndex(searchEntries.findIndex((entry) => entry.key === `t-${t.id}`))}
+                        onClick={() => selectSearchEntry({ key: `t-${t.id}`, type: "tag", id: t.id })}
+                        className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm", isSearchActive(`t-${t.id}`) ? "bg-accent" : "hover:bg-accent")}
                       >
                         <TagIcon
                           className="h-3.5 w-3.5 shrink-0"
@@ -677,13 +731,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
                     {taskResults.map((t) => (
                       <button
                         key={`task-${t.id}`}
-                        onClick={() => {
-                          if (t.list?.id && onSelectTask) {
-                            onSelectTask(t.id, t.list.id);
-                            clearSearch();
-                          }
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-accent text-left"
+                        data-search-index={searchEntries.findIndex((entry) => entry.key === `task-${t.id}`)}
+                        onMouseEnter={() => setSearchActiveIndex(searchEntries.findIndex((entry) => entry.key === `task-${t.id}`))}
+                        onClick={() => t.list?.id && selectSearchEntry({ key: `task-${t.id}`, type: "task", id: t.id, listId: t.list.id })}
+                        className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm", isSearchActive(`task-${t.id}`) ? "bg-accent" : "hover:bg-accent")}
                         disabled={!t.list?.id || !onSelectTask}
                       >
                         <span className="w-3.5 h-3.5 border border-current rounded shrink-0" />
@@ -704,7 +755,22 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
       </div>
 
       {/* 可滚动中间区域 */}
-      <div className="flex-1 overflow-y-auto min-h-0 -mx-1 px-1">
+      <div className="mt-3 flex-1 overflow-y-auto min-h-0 -mx-1 px-1">
+      {collectionList && (
+        <button
+          onClick={() => onSelect({ type: "list", id: collectionList.id })}
+          className={cn(
+            "mb-2 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors",
+            selected.type === "list" && selected.id === collectionList.id
+              ? "bg-primary/10 text-primary font-medium"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground"
+          )}
+        >
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400"><Inbox className="h-3.5 w-3.5" /></span>
+          <span className="flex-1 text-left">收集箱</span>
+          {(counts.byList[collectionList.id] ?? 0) > 0 && <span className="rounded-full bg-muted px-1.5 text-[10px] leading-5 text-muted-foreground">{counts.byList[collectionList.id]}</span>}
+        </button>
+      )}
       <div className="h-px bg-border my-1" />
 
       <div className="flex items-center justify-between px-2">
@@ -759,10 +825,10 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
         {/* 顶层独立清单 */}
         <SortableContext
           id="standalone-lists"
-          items={standaloneLists.map((l) => l.id)}
+          items={regularStandaloneLists.map((l) => l.id)}
           strategy={verticalListSortingStrategy}
         >
-          {standaloneLists.map((list) => (
+          {regularStandaloneLists.map((list) => (
             <SortableListRow
               key={list.id}
               list={list}
@@ -976,6 +1042,19 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, crea
       })}</div>}
 
       <div className="h-px bg-border my-1" />
+
+      <button
+        onClick={() => onSelect({ type: "calendar" })}
+        className={cn(
+          "flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm transition-colors",
+          selected.type === "calendar"
+            ? "bg-accent text-accent-foreground font-medium"
+            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+        )}
+      >
+        <CalendarDays className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-left">任务日历</span>
+      </button>
 
       <button
         onClick={() => onSelect({ type: "trash" })}

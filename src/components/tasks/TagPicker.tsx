@@ -8,14 +8,22 @@ import type { TaskTagInfo } from "./types";
 
 interface TagPickerProps {
   selectedIds: string[];
-  onChange: (ids: string[]) => void;
+  onChange: (ids: string[]) => boolean | void | Promise<boolean | void>;
   /** 最多可选标签数，默认 5 */
   max?: number;
+  disabled?: boolean;
 }
 
-export function TagPicker({ selectedIds, onChange, max = 5 }: TagPickerProps) {
+export function TagPicker({ selectedIds, onChange, max = 5, disabled = false }: TagPickerProps) {
   const [tags, setTags] = useState<TaskTagInfo[]>([]);
   const [open, setOpen] = useState(false);
+  const [pendingIds, setPendingIds] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const activeIds = pendingIds ?? selectedIds;
+
+  useEffect(() => {
+    setPendingIds(null);
+  }, [selectedIds]);
 
   useEffect(() => {
     if (open) {
@@ -26,19 +34,29 @@ export function TagPicker({ selectedIds, onChange, max = 5 }: TagPickerProps) {
     }
   }, [open]);
 
-  const toggle = (id: string) => {
-    if (selectedIds.includes(id)) {
-      onChange(selectedIds.filter((t) => t !== id));
-    } else {
-      if (selectedIds.length >= max) return;
-      onChange([...selectedIds, id]);
+  const toggle = async (id: string) => {
+    if (saving || disabled) return;
+    const nextIds = activeIds.includes(id)
+      ? activeIds.filter((tagId) => tagId !== id)
+      : activeIds.length < max ? [...activeIds, id] : null;
+    if (!nextIds) return;
+
+    setPendingIds(nextIds);
+    setSaving(true);
+    try {
+      const updated = await onChange(nextIds);
+      if (updated === false) setPendingIds(null);
+    } catch {
+      setPendingIds(null);
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button className="p-1 text-muted-foreground hover:text-foreground rounded" title="标签">
+        <button disabled={disabled} className="rounded p-1 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" title={disabled ? "子任务继承父任务标签" : "标签"}>
           <TagIcon className="h-3.5 w-3.5" />
         </button>
       </PopoverTrigger>
@@ -51,17 +69,17 @@ export function TagPicker({ selectedIds, onChange, max = 5 }: TagPickerProps) {
           <>
             <div className="flex items-center justify-between px-2 py-1.5 text-[10px] text-muted-foreground border-b border-border mb-1">
               <span>选择标签</span>
-              <span className={cn("tabular-nums", selectedIds.length >= max && "text-orange-500 font-medium")}>
-                {selectedIds.length}/{max}
+              <span className={cn("tabular-nums", activeIds.length >= max && "text-orange-500 font-medium")}>
+                {activeIds.length}/{max}
               </span>
             </div>
             {tags.map((tag) => {
-              const checked = selectedIds.includes(tag.id);
-              const disabled = !checked && selectedIds.length >= max;
+              const checked = activeIds.includes(tag.id);
+              const disabled = saving || (!checked && activeIds.length >= max);
               return (
                 <button
                   key={tag.id}
-                  onClick={() => toggle(tag.id)}
+                  onClick={() => void toggle(tag.id)}
                   disabled={disabled}
                   className={cn(
                     "flex items-center gap-2 w-full px-2 py-1.5 rounded-sm text-sm hover:bg-accent text-left transition-colors",

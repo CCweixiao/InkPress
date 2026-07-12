@@ -3,9 +3,16 @@ import { computeExpiresAt } from "@/lib/tasks/trash-lifecycle";
 
 /** 默认清单 ID（固定值，migration seed 中使用同一常量）。 */
 export const DEFAULT_LIST_ID = "cl_default_list_seed_fixed";
+export const RECOVERY_LIST_NAME = "收集箱";
+const LEGACY_RECOVERY_LIST_NAME = "已恢复任务";
 
 /** 全树：folders（含嵌套 lists）+ standaloneLists（folderId=null 的清单），按 sortOrder 排序。 */
 export async function listFoldersWithLists() {
+  // 兼容旧版本已创建的恢复清单：加载侧边栏时立即更名，无需等待下一次删除操作。
+  await prisma.taskList.updateMany({
+    where: { name: LEGACY_RECOVERY_LIST_NAME, folderId: null },
+    data: { name: RECOVERY_LIST_NAME },
+  });
   const [folders, standaloneLists] = await Promise.all([
     prisma.taskFolder.findMany({
       orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
@@ -38,7 +45,10 @@ export async function setFolderCollapsed(id: string, collapsed: boolean) {
   return prisma.taskFolder.update({ where: { id }, data: { collapsed } });
 }
 
-/** 删 folder：其下 list 提升为顶层（folderId=null），再删 folder。 */
+/**
+ * 删除文件夹时不删除其中的清单；清单提升为顶层，任务及其恢复归属保持不变。
+ * 这使得被删除任务在文件夹消失后仍可回到原清单。
+ */
 export async function deleteFolder(id: string): Promise<void> {
   await prisma.$transaction([
     prisma.taskList.updateMany({ where: { folderId: id }, data: { folderId: null } }),
@@ -53,7 +63,7 @@ export async function reorderFolders(items: { id: string; sortOrder: number }[])
   );
 }
 
-export async function createList({ name, color, folderId, viewMode, groupMode }: { name: string; color?: string; folderId?: string | null; viewMode?: string; groupMode?: string }) {
+export async function createList({ name, color, folderId }: { name: string; color?: string; folderId?: string | null }) {
   const maxSort = await prisma.taskList.aggregate({ _max: { sortOrder: true } });
   return prisma.taskList.create({
     data: {
@@ -61,8 +71,8 @@ export async function createList({ name, color, folderId, viewMode, groupMode }:
       color: color ?? "#6b7280",
       folderId: folderId ?? null,
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
-      viewMode: viewMode ?? "list",
-      groupMode: groupMode ?? "status",
+      viewMode: "kanban",
+      groupMode: "custom",
     },
   });
 }
@@ -74,27 +84,44 @@ export async function updateList(
   return prisma.taskList.update({ where: { id }, data: patch });
 }
 
-/** 删 list：其下 task 重指到另一清单 + 软删进垃圾箱，再删 list。
- *  因为 listId NOT NULL + onDelete: Restrict，必须先把 task 挪走才能删 list。
- *  若删除的是最后一个清单（无其他清单可挪），则硬删其下所有 task。 */
-export async function deleteList(id: string): Promise<void> {
-  const fallback = await prisma.taskList.findFirst({
-    where: { id: { not: id } },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
-    select: { id: true },
+/** 返回顶层“收集箱”清单；删除清单后的任务在恢复时统一回到这里。 */
+async function ensureRecoveryList(excludeId?: string) {
+  const existing = await prisma.taskList.findFirst({
+    where: { name: { in: [RECOVERY_LIST_NAME, LEGACY_RECOVERY_LIST_NAME] }, folderId: null, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
+  if (existing) {
+    return existing.name === RECOVERY_LIST_NAME
+      ? existing
+      : prisma.taskList.update({ where: { id: existing.id }, data: { name: RECOVERY_LIST_NAME } });
+  }
+
+  const maxSort = await prisma.taskList.aggregate({ _max: { sortOrder: true } });
+  return prisma.taskList.create({
+    data: {
+      name: RECOVERY_LIST_NAME,
+      color: "#64748b",
+      folderId: null,
+      sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
+      viewMode: "kanban",
+      groupMode: "status",
+    },
+  });
+}
+
+/**
+ * 删除清单：任务全部软删除并迁入“收集箱”清单；不再硬删最后一个清单的任务。
+ * 由于原清单已不存在，恢复时落到该顶层清单，避免恢复到随机清单。
+ */
+export async function deleteList(id: string): Promise<void> {
+  const recoveryList = await ensureRecoveryList(id);
   const now = new Date();
   const expiresAt = computeExpiresAt(now);
   await prisma.$transaction(async (tx) => {
-    if (fallback) {
-      await tx.task.updateMany({
-        where: { listId: id },
-        data: { listId: fallback.id, trashed: true, trashedAt: now, expiresAt },
-      });
-    } else {
-      // 最后一个清单：无处可挪，硬删其下 task
-      await tx.task.deleteMany({ where: { listId: id } });
-    }
+    await tx.task.updateMany({
+      where: { listId: id },
+      data: { listId: recoveryList.id, sectionId: null, trashed: true, trashedAt: now, expiresAt },
+    });
     await tx.taskList.delete({ where: { id } });
   });
 }

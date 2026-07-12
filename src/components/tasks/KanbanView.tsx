@@ -55,12 +55,15 @@ interface KanbanViewProps {
   onDelete: (id: string) => void;
   onReorder: (items: { id: string; sortOrder: number; sectionId?: string | null; status?: string }[]) => Promise<boolean>;
   onOpenTask: (task: Task) => void;
+  selectedTaskId?: string | null;
+  fixedGroupMode?: TaskGroupMode;
   listId?: string;
   initialGroupMode?: TaskGroupMode;
   onGroupModeChange?: (mode: TaskGroupMode) => void;
   onTasksChanged?: () => Promise<void>;
   onSectionsChanged?: () => Promise<void> | void;
   onCreateTaskInSection?: (sectionId: string | null, title: string, priority?: TaskPriority, dueDate?: string | null) => Promise<boolean>;
+  onCreateTask?: (title: string, priority: TaskPriority, dueDate: string | null, status: TaskStatus) => Promise<boolean>;
   onCreateSubtask?: (parent: Task, title: string) => Promise<boolean>;
 }
 
@@ -112,10 +115,11 @@ type KanbanCardProps = {
   onUpdate?: (id: string, data: Partial<Task>) => void;
   onOpen?: (task: Task) => void;
   onCreateSubtask?: (parent: Task, title: string) => Promise<boolean>;
+  selectedTaskId?: string | null;
 };
 
 /** 看板中的子任务树。根任务为卡片，后两级使用滴答式紧凑行展示。 */
-function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }: KanbanCardProps) {
+function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask, selectedTaskId }: KanbanCardProps) {
   const isDone = task.status === "done" || task.status === "archived";
   const isOverdue =
     task.dueDate && !isDone && new Date(task.dueDate) < new Date(new Date().toDateString());
@@ -124,6 +128,7 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
 
   const totalChildren = task.children?.length ?? 0;
   const completedChildren = task.children?.filter((c) => c.status === "done" || c.status === "archived").length ?? 0;
+  const isCompactTask = totalChildren === 0 && !task.dueDate && !(task.tags && task.tags.length > 0);
   const [addingChildFor, setAddingChildFor] = useState<string | null>(null);
 
   const TaskTree = ({ item, depth }: { item: Task; depth: number }) => {
@@ -131,6 +136,7 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
     const children = item.children ?? [];
     const hasChildren = children.length > 0;
     const canAddChild = depth < 2;
+    const isSelected = item.id === selectedTaskId;
 
     const createNestedChild = async (title: string) => {
       const ok = await onCreateSubtask?.(item, title);
@@ -142,13 +148,16 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
       <div className={cn(depth > 0 && "relative") }>
         <div
           className={cn(
-            "group/subtask flex min-w-0 items-start gap-2 py-1.5",
-            depth === 0 ? "mb-1.5" : "rounded-md px-1 hover:bg-muted/65",
+            "group/subtask flex min-w-0 items-start gap-1.5 py-1.5 transition-colors",
+            depth === 0
+              ? cn("rounded-md px-0.5", isCompactTask ? "py-1" : "mb-1")
+              : "rounded-md px-0.5 hover:bg-muted/65",
+            isSelected && "bg-slate-100/70 ring-1 ring-slate-200/70 dark:bg-slate-800/55 dark:ring-slate-700/70",
             itemDone && "opacity-60"
           )}
-          style={depth > 0 ? { marginLeft: `${(depth - 1) * 18}px` } : undefined}
+          style={depth > 0 ? { marginLeft: depth === 2 ? "-2px" : "0px" } : undefined}
         >
-          {depth > 0 && <span className="mt-2 h-px w-2 shrink-0 bg-border" />}
+          {depth > 0 && <span className="mt-2 h-px w-1.5 shrink-0 bg-border" />}
           {hasChildren ? (
             <button
               type="button"
@@ -159,15 +168,15 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
             >
               {item.isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
-          ) : (
+          ) : depth > 0 ? (
             <span className="w-3.5 shrink-0" />
-          )}
+          ) : null}
           <button
             type="button"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => { event.stopPropagation(); onToggleStatus?.(item.id, item.status); }}
             className={cn(
-              "mt-0.5 flex h-[17px] w-[17px] shrink-0 items-center justify-center rounded-md border-2 transition-all",
+              "mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border-2 transition-all",
               itemDone ? "border-emerald-500 bg-emerald-500 text-white" : "border-muted-foreground/45 hover:border-primary"
             )}
             title={itemDone ? "标记为待办" : "标记为完成"}
@@ -176,11 +185,12 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
           </button>
           <button
             type="button"
-            onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => { event.stopPropagation(); onOpen?.(item); }}
-            className={cn("min-w-0 flex-1 text-left text-[13px] leading-5", itemDone && "text-muted-foreground line-through")}
+            className={cn("flex min-w-0 flex-1 cursor-grab items-start gap-1.5 text-left text-[13px] leading-5 active:cursor-grabbing", itemDone && "text-muted-foreground line-through")}
           >
             <span className="line-clamp-2">{item.title}</span>
+            {item.content.trim() && <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-label="包含任务详情" />}
+            <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/45 opacity-0 transition-opacity group-hover/subtask:opacity-100" aria-hidden="true" />
           </button>
           {canAddChild && onCreateSubtask && (
             <button
@@ -195,13 +205,13 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
           )}
         </div>
         {hasChildren && !item.isCollapsed && (
-          <div className="ml-5 border-l border-border/80 pl-1.5">
+          <div className="ml-3 border-l border-border/80 pl-1">
             {children.map((child) => <TaskTree key={child.id} item={child} depth={depth + 1} />)}
           </div>
         )}
         {addingChildFor === item.id && (
-          <div className="ml-7 mt-1">
-            <QuickAddInput compact autoFocus placeholder={depth === 0 ? "添加子任务..." : "添加下级任务..."} onAdd={createNestedChild} onCancel={() => setAddingChildFor(null)} />
+          <div className="ml-6 mt-1">
+            <QuickAddInput compact autoFocus enablePriority={false} placeholder={depth === 0 ? "添加子任务..." : "添加下级任务..."} onAdd={createNestedChild} onCancel={() => setAddingChildFor(null)} />
           </div>
         )}
       </div>
@@ -211,17 +221,20 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
   return (
     <div
       className={cn(
-        "relative bg-background border border-border rounded-xl p-3",
-        "hover:shadow-md hover:border-border/80 transition-all duration-150 overflow-hidden",
+        "relative w-fit max-w-full bg-background border border-border rounded-xl",
+        isCompactTask ? "px-3 py-2" : "px-2.5 py-3",
+        "hover:shadow-md hover:border-border/80 transition-all duration-150 overflow-visible",
+        addingChildFor && "z-30",
         isDone && "opacity-60"
       )}
     >
       <div className="flex items-start gap-1.5">
-        <div className="min-w-0 flex-1" onDoubleClick={() => onOpen?.(task)}>
+        <div className="min-w-0 flex-1">
           <TaskTree item={task} depth={0} />
         </div>
         {task.priority > 0 && (
-          <span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md", priorityConfig.color)} title={`优先级：${priorityConfig.label}`} style={{ backgroundColor: listColor ? listColor + "14" : undefined }}>
+          <span className={cn("mt-0.5 flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium", priorityConfig.color)} title={`优先级：${priorityConfig.label}`} style={{ backgroundColor: listColor ? listColor + "14" : undefined }}>
+            <span>{priorityConfig.label}</span>
             <Flag className="h-3.5 w-3.5 fill-current" />
           </span>
         )}
@@ -229,7 +242,7 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
 
       {/* Meta info */}
       {(task.dueDate || (task.tags && task.tags.length > 0) || totalChildren > 0 || task.content) && (
-        <div className="flex items-center gap-1.5 flex-wrap pl-7 pt-1">
+        <div className="flex flex-wrap items-center gap-1.5 pl-6 pt-1">
           {task.dueDate && (
             <span
               className={cn(
@@ -273,7 +286,6 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
               </span>
             </div>
           )}
-          {task.content && <span title="包含任务详情"><FileText className="h-3.5 w-3.5 text-muted-foreground/70" /></span>}
         </div>
       )}
     </div>
@@ -281,7 +293,7 @@ function KanbanCard({ task, onToggleStatus, onUpdate, onOpen, onCreateSubtask }:
 }
 
 // ===== 可拖拽卡片 =====
-function SortableKanbanCard({ task, onOpen, onToggleStatus, onUpdate, onCreateSubtask }: { task: Task; onOpen: (task: Task) => void; onToggleStatus: (id: string, status: TaskStatus) => void; onUpdate: (id: string, data: Partial<Task>) => void; onCreateSubtask?: (parent: Task, title: string) => Promise<boolean> }) {
+function SortableKanbanCard({ task, onOpen, onToggleStatus, onUpdate, onCreateSubtask, selectedTaskId }: { task: Task; onOpen: (task: Task) => void; onToggleStatus: (id: string, status: TaskStatus) => void; onUpdate: (id: string, data: Partial<Task>) => void; onCreateSubtask?: (parent: Task, title: string) => Promise<boolean>; selectedTaskId?: string | null }) {
   const {
     attributes,
     listeners,
@@ -305,12 +317,11 @@ function SortableKanbanCard({ task, onOpen, onToggleStatus, onUpdate, onCreateSu
       {...attributes}
       {...listeners}
       className={cn(
-        "group/drag relative rounded-xl cursor-grab active:cursor-grabbing touch-none select-none",
+        "group/drag relative w-fit max-w-full rounded-xl cursor-grab active:cursor-grabbing touch-none select-none",
         isDragging && "shadow-2xl ring-2 ring-primary/40 z-50"
       )}
-      onDoubleClick={() => onOpen(task)}
     >
-      <KanbanCard task={task} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onOpen={onOpen} onCreateSubtask={onCreateSubtask} />
+      <KanbanCard task={task} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onOpen={onOpen} onCreateSubtask={onCreateSubtask} selectedTaskId={selectedTaskId} />
     </div>
   );
 }
@@ -329,15 +340,16 @@ function InlineSectionAdd({ placeholder, onAdd, onCancel }: {
 }
 
 // ===== 空列占位（同时作为 droppable） =====
-function DroppableColumn({ id, children }: { id: string; children: React.ReactNode }) {
+function DroppableColumn({ id, children, className }: { id: string; children: React.ReactNode; className?: string }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        "space-y-2 p-2 rounded-xl min-h-[180px] transition-colors",
+        "min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain rounded-xl p-2 transition-colors",
         "bg-muted/40 border border-dashed border-border/50",
-        isOver && "bg-primary/5 border-primary/40"
+        isOver && "bg-primary/5 border-primary/40",
+        className
       )}
     >
       {children}
@@ -346,12 +358,13 @@ function DroppableColumn({ id, children }: { id: string; children: React.ReactNo
 }
 
 // ===== 主组件 =====
-export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenTask, listId, initialGroupMode = "status", onGroupModeChange, onTasksChanged, onSectionsChanged, onCreateTaskInSection, onCreateSubtask }: KanbanViewProps) {
+export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenTask, selectedTaskId, fixedGroupMode, listId, initialGroupMode = "custom", onGroupModeChange, onTasksChanged, onSectionsChanged, onCreateTaskInSection, onCreateTask, onCreateSubtask }: KanbanViewProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState<GroupMode>(initialGroupMode);
   const [sections, setSections] = useState<TaskSectionInfo[]>([]);
   const [addingSection, setAddingSection] = useState(false);
   const [addingTaskInSection, setAddingTaskInSection] = useState<string | null>(null);
+  const [addingTaskInStatus, setAddingTaskInStatus] = useState<TaskStatus | null>(null);
   const [sectionName, setSectionName] = useState("");
   const [menuSectionId, setMenuSectionId] = useState<string | null>(null);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -385,17 +398,20 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
   }, [listId]);
 
   useEffect(() => { setGroupMode(initialGroupMode); }, [initialGroupMode]);
+  useEffect(() => { if (fixedGroupMode) setGroupMode(fixedGroupMode); }, [fixedGroupMode]);
   useEffect(() => { void loadSections(); }, [loadSections]);
 
   // 自定义模式下的显示列：真实分组 + 虚拟未分组列，按 ungroupedPos 插入
   const displayColumns = useMemo(() => {
-    if (!ungroupedVisible) return sections;
+    const hasUngroupedTasks = tasks.some((task) => !task.sectionId);
+    // 未创建分组时保留默认“未分组”列；已有分组后，仅在确有未分组任务时展示。
+    if (!ungroupedVisible || (sections.length > 0 && !hasUngroupedTasks)) return sections;
     const ungroupedCol: TaskSectionInfo = { id: "unsectioned", name: ungroupedName, color: "#94a3b8", sortOrder: 999, listId: listId ?? "" };
     const pos = Math.min(ungroupedPos, sections.length);
     const result = [...sections];
     result.splice(pos, 0, ungroupedCol);
     return result;
-  }, [sections, ungroupedVisible, ungroupedName, ungroupedPos, listId]);
+  }, [sections, tasks, ungroupedVisible, ungroupedName, ungroupedPos, listId]);
 
   const selectGroupMode = (mode: GroupMode) => {
     setGroupMode(mode);
@@ -637,17 +653,19 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
+      autoScroll={false}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveId(null)}
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
     >
-      <div className="space-y-3">
-        {/* 分组切换控件 */}
-        <div className="flex items-center gap-2">
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        {/* 收集箱固定按状态展示，不显示切换控件。 */}
+        {!fixedGroupMode && <div className="flex items-center gap-2">
           <div className="flex items-center bg-muted rounded-lg p-0.5">
             {([
-              { mode: "status" as const, label: "按状态" },
               ...(listId ? [{ mode: "custom" as const, label: "自定义" }] : []),
+              { mode: "status" as const, label: "按状态" },
             ]).map((opt) => (
               <button
                 key={opt.mode}
@@ -663,33 +681,63 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
         {/* 列容器 */}
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        <div
+          className="flex min-h-0 flex-1 gap-4 overflow-x-auto overscroll-x-contain pb-4"
+          onWheel={(event) => {
+            // 鼠标位于任意分组上时，Shift+滚轮或触控板横向手势均可滚动看板；
+            // 普通滚轮继续交给分组内部的纵向任务列表。
+            const delta = Math.abs(event.deltaX) > 0 ? event.deltaX : event.shiftKey ? event.deltaY : 0;
+            if (!delta) return;
+            event.currentTarget.scrollLeft += delta;
+            event.preventDefault();
+          }}
+        >
           {groupMode === "status"
             ? // ===== 按状态分组 =====
               STATUS_COLUMNS.map(({ status, icon: Icon, label, accent }) => {
                 const columnTasks = tasksByStatus(status);
                 return (
-                  <div key={status} className="flex-1 min-w-[260px] max-w-[350px]">
+                  <div key={status} className="flex min-h-0 min-w-[260px] max-w-[350px] flex-1 flex-col">
                     {/* 列头 */}
-                    <div className="flex items-center gap-2 mb-2.5 px-2">
+                    <div className="mb-2.5 flex shrink-0 items-center gap-2 px-2">
                       <Icon className={cn("h-4 w-4", accent)} />
                       <h3 className="text-sm font-medium">{label}</h3>
                       <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full tabular-nums">
                         {columnTasks.length}
                       </span>
+                      {status === "todo" && onCreateTask && (
+                        <button
+                          onClick={() => setAddingTaskInStatus("todo")}
+                          className="ml-auto rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                          title="添加待办任务"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                     <SortableContext id={status} items={columnTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
                       <DroppableColumn id={status}>
                         {columnTasks.map((task) => (
-                          <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onCreateSubtask={onCreateSubtask} />
+                          <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onCreateSubtask={onCreateSubtask} selectedTaskId={selectedTaskId} />
                         ))}
                         {columnTasks.length === 0 && (
                           <div className="text-center py-6 text-muted-foreground/50 text-xs">
                             拖拽任务到这里
                           </div>
+                        )}
+                        {addingTaskInStatus === status && (
+                          <InlineSectionAdd
+                            placeholder="添加待办任务..."
+                            onAdd={async (title, priority, dueDate) => {
+                              const ok = await onCreateTask?.(title, priority, dueDate, status) ?? false;
+                              if (ok) setAddingTaskInStatus(null);
+                              return ok;
+                            }}
+                            onCancel={() => setAddingTaskInStatus(null)}
+                          />
                         )}
                       </DroppableColumn>
                     </SortableContext>
@@ -703,11 +751,11 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
                   return (
                     <div
                       key={section.id}
-                      className={cn("w-[300px] shrink-0 transition-opacity", draggedSectionId === section.id && "opacity-45")}
+                      className={cn("flex min-h-0 w-[300px] shrink-0 flex-col transition-opacity", draggedSectionId === section.id && "opacity-45")}
                       onDragOver={(event) => { if (draggedSectionId) event.preventDefault(); }}
                       onDrop={() => void reorderSections(section.id)}
                     >
-                      <div className="mb-2.5 flex items-center gap-2 px-1">
+                      <div className="mb-2.5 flex shrink-0 items-center gap-2 px-1">
                         <button
                           draggable
                           onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", section.id); setDraggedSectionId(section.id); }}
@@ -742,7 +790,7 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
                       </div>
                       <SortableContext id={section.id} items={columnTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
                         <DroppableColumn id={section.id}>
-                          {columnTasks.map((task) => <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onCreateSubtask={onCreateSubtask} />)}
+                          {columnTasks.map((task) => <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onCreateSubtask={onCreateSubtask} selectedTaskId={selectedTaskId} />)}
                           {addingTaskInSection === section.id && (
                             <InlineSectionAdd
                               placeholder="添加任务到此分组..."
@@ -778,7 +826,7 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
                     </div>
                     <div className="space-y-2 p-2 rounded-xl min-h-[180px] bg-red-50/50 dark:bg-red-950/20 border border-dashed border-red-200/50 dark:border-red-900/40">
                       {overdueTasks.map((task) => (
-                        <KanbanCard key={task.id} task={task} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onOpen={onOpenTask} onCreateSubtask={onCreateSubtask} />
+                        <KanbanCard key={task.id} task={task} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onOpen={onOpenTask} onCreateSubtask={onCreateSubtask} selectedTaskId={selectedTaskId} />
                       ))}
                     </div>
                   </div>
@@ -810,7 +858,7 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
                       <SortableContext id={col.key} items={columnTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
                         <DroppableColumn id={col.key}>
                           {columnTasks.map((task) => (
-                            <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onCreateSubtask={onCreateSubtask} />
+                            <SortableKanbanCard key={task.id} task={task} onOpen={onOpenTask} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onCreateSubtask={onCreateSubtask} selectedTaskId={selectedTaskId} />
                           ))}
                           {columnTasks.length === 0 && (
                             <div className="text-center py-6 text-muted-foreground/50 text-xs">
@@ -835,7 +883,7 @@ export function KanbanView({ tasks, onToggleStatus, onUpdate, onReorder, onOpenT
                     </div>
                     <div className="space-y-2 p-2 rounded-xl min-h-[180px] bg-muted/30 border border-dashed border-border/50">
                       {noDateTasks.map((task) => (
-                        <KanbanCard key={task.id} task={task} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onOpen={onOpenTask} onCreateSubtask={onCreateSubtask} />
+                        <KanbanCard key={task.id} task={task} onToggleStatus={onToggleStatus} onUpdate={onUpdate} onOpen={onOpenTask} onCreateSubtask={onCreateSubtask} selectedTaskId={selectedTaskId} />
                       ))}
                     </div>
                   </div>

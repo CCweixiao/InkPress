@@ -11,7 +11,6 @@ const patchSchema = z.object({
   color: z.string().optional(),
   folderId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
-  viewMode: z.enum(["list", "kanban", "calendar"]).optional(),
   groupMode: z.enum(["status", "week", "custom"]).optional(),
   ungroupedName: z.string().min(1).max(80).optional(),
   ungroupedVisible: z.boolean().optional(),

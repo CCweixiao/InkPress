@@ -14,6 +14,10 @@ export function useTasks(initialFilters?: {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const notifyTasksChanged = () => {
+    window.dispatchEvent(new Event("tasks:changed"));
+  };
+
   const fetchTasks = useCallback(async () => {
     const params = new URLSearchParams();
     if (initialFilters?.status) params.set("status", initialFilters.status);
@@ -22,7 +26,7 @@ export function useTasks(initialFilters?: {
     if (initialFilters?.tagId) params.set("tagId", initialFilters.tagId);
     if (initialFilters?.smartView) params.set("smartView", initialFilters.smartView);
     if (initialFilters?.trashed) params.set("trashed", "true");
-    if (!initialFilters?.trashed) params.set("parentId", "null"); // 顶层任务（主视图）
+    if (!initialFilters?.trashed && !initialFilters?.tagId) params.set("parentId", "null"); // 标签视图需要返回所有命中的任务
 
     const res = await fetch(`/api/tasks?${params.toString()}`);
     if (res.ok) {
@@ -44,6 +48,7 @@ export function useTasks(initialFilters?: {
       parentId?: string | null;
       listId?: string | null;
       sectionId?: string | null;
+      status?: TaskStatus;
       tagIds?: string[];
     }) => {
       const res = await fetch("/api/tasks", {
@@ -53,6 +58,7 @@ export function useTasks(initialFilters?: {
       });
       if (res.ok) {
         await fetchTasks();
+        notifyTasksChanged();
         return true;
       }
       return false;
@@ -64,7 +70,7 @@ export function useTasks(initialFilters?: {
     async (
       id: string,
       data: Partial<
-        Pick<Task, "title" | "content" | "status" | "priority" | "dueDate" | "sortOrder" | "tagsJson" | "isCollapsed" | "parentId" | "sectionId"> & { tagIds?: string[] }
+        Pick<Task, "title" | "content" | "status" | "priority" | "dueDate" | "sortOrder" | "tagsJson" | "isCollapsed" | "parentId" | "listId" | "sectionId"> & { tagIds?: string[] }
       >
     ) => {
       const res = await fetch(`/api/tasks/${id}`, {
@@ -74,6 +80,7 @@ export function useTasks(initialFilters?: {
       });
       if (res.ok) {
         await fetchTasks();
+        notifyTasksChanged();
         return true;
       }
       return false;
@@ -86,6 +93,7 @@ export function useTasks(initialFilters?: {
       const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
       if (res.ok) {
         await fetchTasks();
+        notifyTasksChanged();
         return true;
       }
       return false;
@@ -98,6 +106,7 @@ export function useTasks(initialFilters?: {
       const res = await fetch(`/api/tasks/${id}/restore`, { method: "POST" });
       if (res.ok) {
         await fetchTasks();
+        notifyTasksChanged();
         return true;
       }
       return false;
@@ -110,12 +119,23 @@ export function useTasks(initialFilters?: {
       const res = await fetch(`/api/tasks/${id}/purge`, { method: "DELETE" });
       if (res.ok) {
         await fetchTasks();
+        notifyTasksChanged();
         return true;
       }
       return false;
     },
     [fetchTasks]
   );
+
+  const clearTrash = useCallback(async () => {
+    const res = await fetch("/api/tasks/trash", { method: "DELETE" });
+    if (res.ok) {
+      await fetchTasks();
+      notifyTasksChanged();
+      return true;
+    }
+    return false;
+  }, [fetchTasks]);
 
   const reorderTasks = useCallback(
     async (items: { id: string; sortOrder: number; parentId?: string | null; sectionId?: string | null; status?: string }[]) => {
@@ -126,6 +146,7 @@ export function useTasks(initialFilters?: {
       });
       if (res.ok) {
         await fetchTasks();
+        notifyTasksChanged();
         return true;
       }
       return false;
@@ -149,6 +170,7 @@ export function useTasks(initialFilters?: {
     deleteTask,
     restoreTask,
     purgeTask,
+    clearTrash,
     reorderTasks,
     toggleStatus,
     refetch: fetchTasks,
