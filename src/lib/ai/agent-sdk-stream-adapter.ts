@@ -130,6 +130,9 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   let reasoningId: string | null = null;
   let finalResultText = "";
   let receivedResult = false;
+  // 应用层只允许在尚未收到任何 assistant 帧时重试。之后可能已有工具调用，
+  // 重建 query 会重放副作用（例如写文章/创建提案）。
+  let sawAssistantActivity = false;
   let lastAssistantUuid: string | null = null;
   const assistantTextByUuid = new Map<
     string,
@@ -337,6 +340,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
   }
 
   function handleStreamEvent(ev: StreamEvent, messageUuid: string) {
+    sawAssistantActivity = true;
     switchAssistant(messageUuid);
     const index = ev.index ?? -1;
     switch (ev.type) {
@@ -426,6 +430,7 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
           typeof m.parent_tool_use_id === "string" && m.parent_tool_use_id
         );
         if (isMainAssistant) {
+          sawAssistantActivity = true;
           switchAssistant(assistantUuid);
           result.assistantMessageUuid = assistantUuid;
         }
@@ -866,5 +871,12 @@ export function createSdkToUiAdapter(writer: UIStreamWriterLike) {
     return receivedResult;
   }
 
-  return { result, consume, flush, getSummary, hasResult };
+  return {
+    result,
+    consume,
+    flush,
+    getSummary,
+    hasResult,
+    hasAssistantActivity: () => sawAssistantActivity,
+  };
 }

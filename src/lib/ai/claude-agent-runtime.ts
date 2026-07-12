@@ -55,6 +55,8 @@ type RunOnceResult = {
   outcome: RunClaudeAgentOutcome;
   error?: Error;
   errorKind?: RunOnceErrorKind;
+  /** 尚未收到 assistant 帧，重试不会重放工具副作用。 */
+  safeToRetry: boolean;
 };
 
 /** 用最终 status/source 收口 summary（last*Tokens 快显用 input/output 派生）。 */
@@ -200,6 +202,36 @@ function terminalStreamError(input: {
   return error;
 }
 
+/** 仅识别瞬时传输/网关故障；鉴权、配额和 429 永不做整轮重试。 */
+function isRetryableTransportError(error: Error): boolean {
+  if (isAbortError(error)) return false;
+  const text = [error.name, error.message, String((error as { code?: unknown }).code ?? "")]
+    .join(" ")
+    .toLowerCase();
+  if (
+    /\b(400|401|403|404|409|422|429)\b|auth|api.?key|permission|forbidden|quota|billing|rate.?limit/.test(
+      text
+    )
+  ) {
+    return false;
+  }
+  return /network|fetch failed|connection (?:error|reset|refused)|socket|econnreset|econnrefused|enotfound|eai_again|etimedout|ehostunreach|\b50[0234]\b|gateway|temporarily unavailable|overloaded/.test(
+    text
+  );
+}
+
+function retryDelayMs(): number {
+  const configured = Number(process.env.INKPRESS_NETWORK_RETRY_WAIT_MS);
+  if (Number.isFinite(configured) && configured >= 0) return Math.min(configured, 10_000);
+  return 800;
+}
+
+async function waitForRetry(signal: AbortSignal | undefined, delayMs: number): Promise<boolean> {
+  if (signal?.aborted) return false;
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  return !signal?.aborted;
+}
+
 /**
  * 单轮运行：构造 options + 跑 SDK query 流 + 适配进 UIMessage。
  *
@@ -274,6 +306,7 @@ async function runOnce(
               }
         ),
         errorKind: aborted ? "abort" : "throw",
+        safeToRetry: !adapter.hasAssistantActivity(),
       };
     }
   } catch (err) {
@@ -289,6 +322,7 @@ async function runOnce(
       },
       error,
       errorKind: isAbortError(error) ? "abort" : "throw",
+      safeToRetry: !adapter.hasAssistantActivity(),
     };
   }
 
@@ -306,6 +340,7 @@ async function runOnce(
       },
       error: new Error(result.errorMessage || "Claude Agent 运行出错。"),
       errorKind: "result-error",
+      safeToRetry: !adapter.hasAssistantActivity(),
     };
   }
   return {
@@ -317,15 +352,16 @@ async function runOnce(
       runtimeMetadata: result.runtimeMetadata,
       mirrorHealthy: result.mirrorHealthy,
     },
+    safeToRetry: !adapter.hasAssistantActivity(),
   };
 }
 
 /**
- * 运行 Claude Agent Runtime（单次 SDK query）。
+ * 运行 Claude Agent Runtime。
  *
  * - 用最近一条 user 消息作为单轮 prompt（多轮记忆由 Claude Agent SDK session/resume 承载）。
- * - 不做应用层整轮 retry：SDK 自身的 api_retry 可安全重试单次 API 调用；应用层重建
- *   query 会 replay 工具副作用，故 rate-limit/result-error 直接上抛。
+ * - SDK 自身的 api_retry 可安全重试单次 API 调用。对未产生 assistant 帧的瞬时网络故障，
+ *   额外允许一次应用层 retry；一旦有输出/工具活动则绝不重放，避免副作用重复。
  * - SDK 自身的轮内重试（api_retry）由 adapter 透传为 `data-agent-retry {level:"sdk"}`。
  * - 成功 → 返回 outcome（usage + usageSummary）；失败/中止 → throw error（携带 usageSummary，
  *   route catch 时持久化失败轮次用量，避免「失败不消耗」的误解）。
@@ -339,7 +375,36 @@ export async function runClaudeAgentRuntime(
     throw new Error("没有可发送的用户消息。");
   }
 
-  const { outcome, error, errorKind } = await runOnce(input, writer, prompt);
+  let attempt = await runOnce(input, writer, prompt);
+  if (
+    attempt.error &&
+    attempt.safeToRetry &&
+    isRetryableTransportError(attempt.error) &&
+    await waitForRetry(input.abortSignal, retryDelayMs())
+  ) {
+    writer.write({
+      type: "data-agent-retry",
+      id: crypto.randomUUID(),
+      data: {
+        level: "turn",
+        attempt: 1,
+        maxRetries: 1,
+        delayMs: retryDelayMs(),
+        error: attempt.error.message,
+      },
+    } as never);
+    attempt = await runOnce(
+      {
+        ...input,
+        // 若 SDK 在传输失败前已建会话，优先 resume 该会话，避免服务端重复接收用户输入。
+        claudeAgentSessionId: attempt.outcome.sessionId ?? input.claudeAgentSessionId,
+      },
+      writer,
+      prompt
+    );
+  }
+
+  const { outcome, error, errorKind } = attempt;
   const hadSdkResult = outcome.usageSummary?.source === "sdk-result";
 
   if (!error) {

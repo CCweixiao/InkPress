@@ -137,4 +137,67 @@ describe("runClaudeAgentRuntime rate-limit handling", () => {
 
     expect(query).toHaveBeenCalledTimes(1);
   });
+
+  it("无 assistant 活动的网络错误退避后重试一次", async () => {
+    vi.stubEnv("INKPRESS_NETWORK_RETRY_WAIT_MS", "0");
+    const query = vi
+      .fn()
+      .mockImplementationOnce(async function* () {
+        throw new TypeError("fetch failed");
+      })
+      .mockReturnValueOnce(streamOf(resultMessage({ result: "已恢复", usage: {} })));
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
+    vi.doMock("@/lib/ai/claude-agent-options", () => ({
+      buildClaudeAgentOptions: vi.fn().mockResolvedValue({}),
+    }));
+    const { runClaudeAgentRuntime } = await import(
+      "../../src/lib/ai/claude-agent-runtime"
+    );
+    const writes: unknown[] = [];
+
+    await expect(
+      runClaudeAgentRuntime(
+        {
+          target: { kind: "article", id: "article-1", title: "Article", markdown: "Body" },
+          sessionId: "session-1",
+          messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "hello" }] } as UIMessage],
+        },
+        { write: (part) => writes.push(part) as never }
+      )
+    ).resolves.toMatchObject({});
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(writes).toContainEqual(expect.objectContaining({ type: "data-agent-retry" }));
+  });
+
+  it("已有 assistant 输出后网络错误不重放整轮", async () => {
+    vi.stubEnv("INKPRESS_NETWORK_RETRY_WAIT_MS", "0");
+    const query = vi.fn(async function* () {
+      yield {
+        type: "stream_event",
+        uuid: "assistant-1",
+        event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "开始" } },
+      };
+      throw new TypeError("fetch failed");
+    });
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
+    vi.doMock("@/lib/ai/claude-agent-options", () => ({
+      buildClaudeAgentOptions: vi.fn().mockResolvedValue({}),
+    }));
+    const { runClaudeAgentRuntime } = await import(
+      "../../src/lib/ai/claude-agent-runtime"
+    );
+
+    await expect(
+      runClaudeAgentRuntime(
+        {
+          target: { kind: "article", id: "article-1", title: "Article", markdown: "Body" },
+          sessionId: "session-1",
+          messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "hello" }] } as UIMessage],
+        },
+        { write: vi.fn() }
+      )
+    ).rejects.toThrow(/fetch failed/);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
 });
