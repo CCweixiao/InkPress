@@ -110,6 +110,7 @@ function verifyBundle(base) {
   verifyPlatformPackageSet(base);
   verifyPlatformPackageVersions(base);
   verifyResourceMirror(base);
+  verifyTracedJSDomRuntime(base);
 
   const badRoots = [".env", "dist", "storage", "dev.database", "graphify-out", "inkpress-service"];
   for (const rel of badRoots) {
@@ -137,6 +138,39 @@ function verifyBundle(base) {
   }
   for (const file of nativeBindings) verifyNativeArch(file);
   console.log(`✓ bundle 校验通过：${formatSize(sizeOf(base))}，${nativeBindings.length} 个原生绑定，arch=${arch}`);
+}
+
+/**
+ * Next Turbopack 会让 jsdom 从带 hash 的 traced 目录加载深层 ESM 依赖。
+ * 该路径曾在 Windows 安装包中被遗漏，必须同时校验 standalone 与 win-unpacked 成品。
+ */
+function verifyTracedJSDomRuntime(base) {
+  const tracedRoot = path.join(base, ".next", "node_modules");
+  if (!fs.existsSync(tracedRoot)) return;
+  const jsdomDirs = [];
+  walk(tracedRoot, (file, entry) => {
+    if (!entry.isDirectory()) return;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(file, "package.json"), "utf8"));
+      if (pkg.name === "jsdom") jsdomDirs.push(file);
+    } catch {
+      // 非包目录。
+    }
+  });
+  for (const jsdomDir of jsdomDirs) {
+    const bytesDir = path.join(
+      jsdomDir,
+      "node_modules",
+      "html-encoding-sniffer",
+      "node_modules",
+      "@exodus",
+      "bytes",
+      "fallback"
+    );
+    for (const file of ["single-byte.js", "single-byte.encodings.js"]) {
+      requirePath(path.join(bytesDir, file), path.relative(base, path.join(bytesDir, file)));
+    }
+  }
 }
 
 function verifyArtifact() {

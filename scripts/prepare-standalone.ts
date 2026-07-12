@@ -1145,42 +1145,71 @@ function ensureCriticalTracedRuntimeFiles(): void {
 
   const projectPnpm = path.join(root, "node_modules", ".pnpm");
   const requiredFiles = ["fallback/single-byte.js", "fallback/single-byte.encodings.js"];
-  const tracedBytesDirs: string[] = [];
+  const findPackageDirs = (packageName: string): string[] => {
+    const result: string[] = [];
+    const visited = new Set<string>();
 
-  const walk = (dir: string) => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const full = path.join(dir, entry.name);
-      const packageJson = path.join(full, "package.json");
+    const walk = (dir: string) => {
       try {
-        const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8"));
-        if (pkg.name === "@exodus/bytes" && typeof pkg.version === "string") {
-          tracedBytesDirs.push(full);
-        }
+        const real = fs.realpathSync(dir);
+        if (visited.has(real)) return;
+        visited.add(real);
       } catch {
-        // 非包目录，继续向下查找深层 node_modules。
+        return;
       }
-      walk(full);
-    }
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        let isDirectory = entry.isDirectory();
+        // Windows NFT 输出中的依赖经常是 junction；Dirent 不会把它标成目录。
+        if (!isDirectory && entry.isSymbolicLink()) {
+          try {
+            isDirectory = fs.statSync(full).isDirectory();
+          } catch {
+            continue;
+          }
+        }
+        if (!isDirectory) continue;
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(full, "package.json"), "utf8"));
+          if (pkg.name === packageName) result.push(full);
+        } catch {
+          // 非包目录，继续向下查找深层 node_modules。
+        }
+        walk(full);
+      }
+    };
+    walk(nextNm);
+    return result;
   };
-  walk(nextNm);
 
-  for (const tracedDir of tracedBytesDirs) {
-    const pkg = JSON.parse(fs.readFileSync(path.join(tracedDir, "package.json"), "utf8"));
+  const sourceFor = (version?: string): string => {
     const escapedName = "@exodus+bytes";
     const sourceEntry = fs.readdirSync(projectPnpm, { withFileTypes: true }).find(
-      (entry) => entry.isDirectory() && entry.name.startsWith(`${escapedName}@${pkg.version}`)
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name.startsWith(version ? `${escapedName}@${version}` : `${escapedName}@`)
     );
     if (!sourceEntry) {
-      throw new Error(`找不到 @exodus/bytes@${pkg.version} 的 pnpm 源目录`);
+      throw new Error(`找不到 @exodus/bytes${version ? `@${version}` : ""} 的 pnpm 源目录`);
     }
-    const sourceDir = path.join(projectPnpm, sourceEntry.name, "node_modules", "@exodus", "bytes");
+    return path.join(projectPnpm, sourceEntry.name, "node_modules", "@exodus", "bytes");
+  };
+
+  const patchBytesDir = (tracedDir: string) => {
+    let version: string | undefined;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(tracedDir, "package.json"), "utf8"));
+      if (typeof pkg.version === "string") version = pkg.version;
+    } catch {
+      // 目标目录可能被 NFT 仅部分创建；回退到唯一已安装版本。
+    }
+    const sourceDir = sourceFor(version);
     for (const rel of requiredFiles) {
       const source = path.join(sourceDir, rel);
       const destination = path.join(tracedDir, rel);
@@ -1194,10 +1223,31 @@ function ensureCriticalTracedRuntimeFiles(): void {
         throw new Error(`运行时依赖补齐失败：${destination}`);
       }
     }
+  };
+
+  // 补齐所有可遍历的 traced @exodus/bytes 包。
+  const tracedBytesDirs = findPackageDirs("@exodus/bytes");
+  for (const tracedDir of tracedBytesDirs) patchBytesDir(tracedDir);
+
+  // 关键：即使 html-encoding-sniffer / @exodus 以 junction 形式嵌套在 jsdom 中，
+  // 也按 Turbopack 的实际运行时解析路径强制补齐，而不依赖通用遍历是否命中。
+  const tracedJsdomDirs = findPackageDirs("jsdom");
+  for (const jsdomDir of tracedJsdomDirs) {
+    const bytesDir = path.join(
+      jsdomDir,
+      "node_modules",
+      "html-encoding-sniffer",
+      "node_modules",
+      "@exodus",
+      "bytes"
+    );
+    patchBytesDir(bytesDir);
   }
 
-  if (tracedBytesDirs.length > 0) {
-    console.log(`  ✓ 验证并补齐 ${tracedBytesDirs.length} 个 traced @exodus/bytes ESM 依赖`);
+  if (tracedBytesDirs.length > 0 || tracedJsdomDirs.length > 0) {
+    console.log(
+      `  ✓ 验证并补齐 ${tracedBytesDirs.length} 个 traced @exodus/bytes、${tracedJsdomDirs.length} 个 jsdom 嵌套 ESM 依赖`
+    );
   }
 }
 
