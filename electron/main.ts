@@ -1,5 +1,4 @@
 import { app, BrowserWindow, shell } from "electron";
-import { autoUpdater } from "electron-updater";
 import { spawn, ChildProcess } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
@@ -20,6 +19,7 @@ import { SPLASH_LOGO_DATA_URL } from "./splash-logo";
  */
 
 const PREFERRED_PORT = 17391;
+type AutoUpdater = typeof import("electron-updater").autoUpdater;
 
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -28,6 +28,7 @@ let isQuitting = false;
 let splash: BrowserWindow | null = null;
 let downloadedUpdateVersion: string | null = null;
 let updateCheckTimer: NodeJS.Timeout | null = null;
+let autoUpdater: AutoUpdater | null = null;
 const isPackageSmokeTest = process.env.INKPRESS_PACKAGE_SMOKE_TEST === "1";
 
 /** OSS 静态更新源。支持用环境变量切换私有镜像 / 测试环境。 */
@@ -63,33 +64,44 @@ function updaterPlatform(): "darwin-arm64" | "darwin-x64" | "win32-x64" | null {
  * 已安装客户端的原地更新：后台下载，用户正常退出时才替换应用。
  * 首次安装仍然使用 DMG / NSIS 安装包；开发和打包 smoke 均不发起网络更新。
  */
-function setupAutoUpdater() {
+async function setupAutoUpdater(): Promise<void> {
   const platform = updaterPlatform();
   if (!app.isPackaged || isPackageSmokeTest || !platform) return;
 
-  autoUpdater.autoDownload = true;
+  // electron-updater 仅在真实已安装客户端按需加载。避免它的顶层初始化影响
+  // 安装包 smoke 或因平台/依赖异常阻塞 Electron 主进程启动。
+  let updater: AutoUpdater;
+  try {
+    ({ autoUpdater: updater } = await import("electron-updater"));
+  } catch (error) {
+    console.warn("[updater] 加载更新器失败，已跳过本次更新检查：", error);
+    return;
+  }
+  if (isQuitting) return;
+  autoUpdater = updater;
+  updater.autoDownload = true;
   // 退出链路会先关闭 Next 子进程，再显式 quitAndInstall，避免编辑服务遗留。
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.autoRunAppAfterInstall = true;
-  autoUpdater.setFeedURL({
+  updater.autoInstallOnAppQuit = false;
+  updater.autoRunAppAfterInstall = true;
+  updater.setFeedURL({
     provider: "generic",
     url: `${UPDATE_BASE_URL}/releases/latest/${platform}`,
   });
 
-  autoUpdater.on("error", (error) => {
+  updater.on("error", (error) => {
     // 更新服务不可达、旧版本无元数据等均不影响正常启动。
     console.warn("[updater] 更新检查失败：", error.message);
   });
-  autoUpdater.on("update-available", (info) => {
+  updater.on("update-available", (info) => {
     console.log(`[updater] 发现 v${info.version}，开始后台下载`);
   });
-  autoUpdater.on("update-downloaded", (info) => {
+  updater.on("update-downloaded", (info) => {
     downloadedUpdateVersion = info.version;
     console.log(`[updater] v${info.version} 已下载，将在退出 InkPress 后静默安装`);
   });
 
   const check = () => {
-    if (!isQuitting) void autoUpdater.checkForUpdates().catch(() => undefined);
+    if (!isQuitting) void updater.checkForUpdates().catch(() => undefined);
   };
   setTimeout(check, 30_000);
   updateCheckTimer = setInterval(check, UPDATE_RECHECK_MS);
@@ -539,7 +551,7 @@ async function bootstrap() {
     }
     await createWindow(serverPort);
     closeSplash();
-    setupAutoUpdater();
+    void setupAutoUpdater();
   } catch (e) {
     console.error("[electron] 启动失败：", e);
     // 失败时清理 server 子进程，避免孤儿进程占用端口
@@ -603,7 +615,7 @@ app.on("before-quit", (e) => {
   void killServer().then(() => {
     if (updateCheckTimer) clearInterval(updateCheckTimer);
     // 更新包已完整校验下载后才进入这里；true 让 NSIS 更新也不展示安装向导。
-    if (downloadedUpdateVersion) autoUpdater.quitAndInstall(true, true);
+    if (downloadedUpdateVersion && autoUpdater) autoUpdater.quitAndInstall(true, true);
     else app.quit();
   });
 });
