@@ -14,12 +14,13 @@ import {
 } from "lucide-react";
 import { GlobalSearch } from "@/components/common/GlobalSearch";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { APP_VERSION } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/tasks", label: "任务", icon: CheckSquare },
-  { href: "/materials", label: "素材", icon: FolderOpen },
   { href: "/snippets", label: "灵感", icon: Sparkles },
+  { href: "/materials", label: "素材", icon: FolderOpen },
   { href: "/skills", label: "技能仓库", icon: Boxes },
   { href: "/recycle", label: "回收站", icon: Trash2 },
   { href: "/settings", label: "设置", icon: Settings },
@@ -122,10 +123,13 @@ export function WorkspaceHeader() {
               target="_blank"
               rel="noopener noreferrer"
               aria-label="文档手册"
-              title="文档手册"
-              className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-600 transition-colors hover:bg-white hover:text-primary hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:text-slate-300 dark:hover:bg-white/[0.08]"
+              title={`文档手册 · v${APP_VERSION}`}
+              className="group flex h-8 items-center gap-1.5 rounded-xl px-2 text-slate-600 transition-colors hover:bg-white hover:text-primary hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:text-slate-300 dark:hover:bg-white/[0.08]"
             >
               <BookOpen className="h-4 w-4" />
+              <span className="rounded-md bg-slate-200/75 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-slate-500 transition-colors group-hover:bg-blue-50 group-hover:text-primary dark:bg-white/[0.09] dark:text-slate-400 dark:group-hover:bg-blue-400/15 dark:group-hover:text-blue-300">
+                v{APP_VERSION}
+              </span>
             </a>
           </div>
         </div>

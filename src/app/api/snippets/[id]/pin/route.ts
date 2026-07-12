@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { serializeSnippet, withTagsInclude } from "@/lib/snippets/tag-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,8 @@ export async function POST(
   const snippet = await prisma.snippet.update({
     where: { id },
     data: { pinned: !existing.pinned },
+    include: withTagsInclude,
+    omit: { embedding: true, tagsJson: true },
   });
-  return NextResponse.json({ snippet });
+  return NextResponse.json({ snippet: serializeSnippet(snippet) });
 }

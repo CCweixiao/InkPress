@@ -62,7 +62,8 @@ export function SnippetCard({
   const [editing, setEditing] = useState(false);
   const [refetching, setRefetching] = useState(false);
   const [refetchMsg, setRefetchMsg] = useState<string | null>(null);
-  const tags: string[] = snippet.tags;
+  // 兼容旧接口或缓存中缺失 tags 的对象；正常路径由接口序列化后始终返回数组。
+  const tags: string[] = snippet.tags ?? [];
   const firstMarkdownImage =
     snippet.kind === "text" ? getFirstMarkdownImage(snippet.content) : null;
   const markdownImage =
@@ -115,10 +116,10 @@ export function SnippetCard({
     <>
     <Card
       className={cn(
-        "group relative flex h-[22rem] flex-col overflow-hidden p-4 transition-all break-inside-avoid",
+        "group relative flex break-inside-avoid flex-col overflow-hidden rounded-xl border-border/70 bg-card p-4 shadow-sm transition-all duration-200",
         selectMode
           ? "cursor-pointer hover:ring-2 hover:ring-primary/40"
-          : "hover:shadow-md cursor-default",
+          : "cursor-default hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-lg",
         snippet.pinned && "ring-1 ring-primary/30",
         selected && "ring-2 ring-primary"
       )}
@@ -197,7 +198,7 @@ export function SnippetCard({
           <img
             src={snippet.imageUrl}
             alt={snippet.title}
-            className="h-44 w-full object-cover"
+            className="max-h-52 w-full object-cover"
           />
         </div>
       )}
@@ -230,7 +231,7 @@ export function SnippetCard({
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).style.display = "none";
               }}
-              className="w-full h-32 object-cover rounded-md mb-2 bg-muted"
+              className="h-32 w-full rounded-md bg-muted object-cover mb-2"
             />
           )}
           <div className="flex items-center gap-1.5 mb-1">
@@ -265,20 +266,22 @@ export function SnippetCard({
                 src={markdownImage.src}
                 alt={markdownImage.alt}
                 loading="lazy"
-                className="h-44 w-full object-cover"
+                className="max-h-52 w-full object-cover"
               />
             </div>
           )}
           {markdownText && (
-            <Markdown className="snippet-card-markdown text-sm text-foreground/90">
-              {markdownText}
-            </Markdown>
+            <div className="max-h-56 overflow-hidden [mask-image:linear-gradient(to_bottom,black_82%,transparent)]">
+              <Markdown className="snippet-card-markdown text-sm leading-6 text-foreground/90">
+                {markdownText}
+              </Markdown>
+            </div>
           )}
         </>
       )}
 
       {/* 底部：标签 + 时间 */}
-      <div className="mt-auto flex items-center gap-2 border-t border-border/50 pt-2 text-xs text-muted-foreground">
+      <div className="mt-3 flex items-center gap-2 border-t border-border/50 pt-2.5 text-xs text-muted-foreground">
         {tags.length > 0 && (
           <span className="flex flex-wrap gap-1">
             {tags.slice(0, 3).map((t) => {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pencil, Trash2, ChevronRight, FolderOpen, Plus, ChevronDown } from "lucide-react";
+import { Pencil, Trash2, ChevronRight, FolderOpen, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ArticleCard, type ArticleListItem } from "@/components/articles/ArticleCard";
 import { NewArticleButton } from "@/components/articles/NewArticleButton";
@@ -12,8 +12,8 @@ import { SpaceDialog, type SpaceForm } from "./SpaceDialog";
 import type { ViewMode } from "@/components/common/ViewToggle";
 import { cn } from "@/lib/utils";
 
-/** 首页每空间默认显示文章数，「显示更多」每次递增量 */
-const HOME_PAGE_SIZE = 8;
+/** 首页每空间默认展示数；更多内容在空间详情页统一管理。 */
+const HOME_PAGE_SIZE = 4;
 
 export type SpaceItem = {
   id: string;
@@ -46,7 +46,7 @@ export function SpaceSection({
 }) {
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
-  // 首页懒加载：默认显示 HOME_PAGE_SIZE 篇，「显示更多」每次 +HOME_PAGE_SIZE
+  // 首页默认收起，避免空间和文章很多时形成无限长列表。
   const [limit, setLimit] = useState(HOME_PAGE_SIZE);
   const tags = parseTags(space.tagsJson);
 
@@ -70,7 +70,7 @@ export function SpaceSection({
   };
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-3 border-t border-border/60 pt-6 first:border-t-0 first:pt-0">
       <div className="flex items-start justify-between gap-3">
         <Link
           href={`/spaces/${space.id}`}
@@ -86,7 +86,6 @@ export function SpaceSection({
           </span>
         </Link>
         <div className="flex items-center gap-1 shrink-0">
-          {/* 新建文章：归属到当前空间（位于编辑按钮前） */}
           <NewArticleButton spaceId={space.id} variant="ghost" size="sm" />
           {/* 从 ZIP 导入文章到当前空间 */}
           <ImportArticleButton spaceId={space.id} variant="ghost" size="sm" />
@@ -141,7 +140,7 @@ export function SpaceSection({
       )}
 
       {articles.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
           空间内暂无文章
         </div>
       ) : (
@@ -159,15 +158,16 @@ export function SpaceSection({
         </div>
         {/* 显示更多：剩余文章数 > 0 时展示 */}
         {articles.length > limit && (
-          <div className="flex justify-center pt-2">
+          <div className="flex items-center justify-center gap-2 pt-1">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              onClick={() => setLimit((l) => l + HOME_PAGE_SIZE)}
+              onClick={() => setLimit((l) => Math.min(articles.length, l + HOME_PAGE_SIZE))}
             >
               <ChevronDown className="h-4 w-4" />
-              显示更多（剩余 {articles.length - limit} 篇）
+              展开更多（还有 {articles.length - limit} 篇）
             </Button>
+            <Link href={`/spaces/${space.id}`} className="text-xs text-primary hover:underline">查看空间全部文章</Link>
           </div>
         )}
         </>

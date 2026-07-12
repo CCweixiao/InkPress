@@ -29,11 +29,13 @@ export function NewArticleButton({
   label = "新建文章",
   variant = "default",
   size = "default",
+  iconOnly = false,
 }: {
   spaceId?: string;
   label?: string;
   variant?: "default" | "outline" | "ghost" | "secondary";
   size?: "default" | "sm" | "lg" | "icon";
+  iconOnly?: boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -67,9 +69,15 @@ export function NewArticleButton({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant={variant} size={size} disabled={loading}>
+        <Button
+          variant={variant}
+          size={iconOnly ? "icon" : size}
+          disabled={loading}
+          title={iconOnly ? label : undefined}
+          aria-label={iconOnly ? label : undefined}
+        >
           <Plus className="h-4 w-4" />
-          {label}
+          {!iconOnly && label}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72" align="start">

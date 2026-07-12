@@ -380,9 +380,7 @@ export function EditorWorkspace({
         className={`${
           previewCollapsed && aiMode === "chat"
             ? "flex-[2] min-w-0"
-            : aiMode === "chat"
-            ? "w-[400px] shrink-0"
-            : "w-72 shrink-0"
+            : "w-[400px] shrink-0"
         } border-r border-border bg-muted/30 flex flex-col transition-[width] duration-200`}
       >
         <div className="p-4 border-b border-border">

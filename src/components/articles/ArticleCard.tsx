@@ -74,12 +74,12 @@ export function ArticleCard({
         className="block h-full"
         title={hoverText}
       >
-        <Card className="h-full hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group flex flex-row items-center overflow-hidden">
+        <Card className="h-full rounded-xl border-border/70 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40 transition-all duration-200 cursor-pointer group flex flex-row items-center overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={cover}
             alt=""
-            className="w-28 h-20 object-cover shrink-0 bg-muted"
+            className="h-20 w-24 shrink-0 bg-muted object-cover sm:w-32"
           />
           <div className="flex-1 min-w-0 p-3">
             <div className="flex items-center gap-2">
@@ -120,7 +120,7 @@ export function ArticleCard({
       className="block h-full"
       title={hoverText}
     >
-      <Card className="h-full hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group overflow-hidden flex flex-col">
+        <Card className="h-full rounded-xl border-border/70 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40 transition-all duration-200 cursor-pointer group overflow-hidden flex flex-col">
         <div className="aspect-video bg-muted/40 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

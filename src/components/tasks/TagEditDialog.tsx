@@ -121,7 +121,13 @@ export function TagEditDialog({
         <DialogHeader>
           <DialogTitle>{tag ? "编辑标签" : "新建标签"}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 py-2">
+        <form
+          className="space-y-4 py-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!saving) void handleSave();
+          }}
+        >
           <div className="space-y-2">
             <Label htmlFor="tag-name">名称</Label>
             <Input
@@ -167,20 +173,20 @@ export function TagEditDialog({
             </Select>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-        </div>
-        <DialogFooter className="gap-2">
-          {tag && (
-            <Button variant="destructive" onClick={handleDelete} disabled={saving} className="mr-auto">
-              删除
+          <DialogFooter className="gap-2">
+            {tag && (
+              <Button type="button" variant="destructive" onClick={handleDelete} disabled={saving} className="mr-auto">
+                删除
+              </Button>
+            )}
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+              取消
             </Button>
-          )}
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            取消
-          </Button>
-          <Button onClick={handleSave} disabled={saving || !name.trim()}>
-            保存
-          </Button>
-        </DialogFooter>
+            <Button type="submit" disabled={saving || !name.trim()}>
+              保存
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

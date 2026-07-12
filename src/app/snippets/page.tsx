@@ -12,11 +12,12 @@ import { getTagColors } from "@/lib/snippets/tag-color-store";
 export const dynamic = "force-dynamic";
 
 export default async function SnippetsPage() {
-  const [snippets, tagCounts, tagColors, totalCount] = await Promise.all([
+  const [snippetPage, tagCounts, tagColors, totalCount] = await Promise.all([
     prisma.snippet.findMany({
       where: { trashed: false },
-      orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
-      take: 40,
+      // 灵感页以时间为主线，最新记录始终排在最前面。
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 11,
       include: withTagsInclude,
       omit: { embedding: true, tagsJson: true }, // 不把 KB 级向量/废弃 tagsJson 灌给前端
     }),
@@ -24,6 +25,9 @@ export default async function SnippetsPage() {
     getTagColors(),
     prisma.snippet.count({ where: { trashed: false } }),
   ]);
+
+  const hasMore = snippetPage.length > 10;
+  const snippets = hasMore ? snippetPage.slice(0, 10) : snippetPage;
 
   // 合并标签计数与颜色（计数已由 countTagsByUsage 在 DB 侧算好）
   const tagsWithColor = tagCounts.map((t) => ({
@@ -55,6 +59,7 @@ export default async function SnippetsPage() {
           initialSnippets={JSON.parse(JSON.stringify(snippets.map(serializeSnippet)))}
           tags={tagsWithColor}
           totalCount={totalCount}
+          initialNextCursor={hasMore ? snippets.at(-1)?.id ?? null : null}
         />
       </main>
     </div>

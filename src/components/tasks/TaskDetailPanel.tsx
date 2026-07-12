@@ -24,6 +24,7 @@ export function TaskDetailPanel({ task, onClose, onUpdate, onDelete }: {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
   const [locationFolders, setLocationFolders] = useState<LocationFolder[]>([]);
   const [standaloneLists, setStandaloneLists] = useState<LocationList[]>([]);
   const [locationFolderId, setLocationFolderId] = useState<string | null>(task.list?.folderId ?? null);
@@ -33,7 +34,6 @@ export function TaskDetailPanel({ task, onClose, onUpdate, onDelete }: {
   const [virtualUngroupedName, setVirtualUngroupedName] = useState<string | null>(null);
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const isSubtask = Boolean(task.parentId);
-  const [, setTick] = useState(0); // 每秒刷新「n秒前」
   const dirty = title !== task.title || content !== (task.content ?? "");
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,7 +47,15 @@ export function TaskDetailPanel({ task, onClose, onUpdate, onDelete }: {
     setLocationListId(task.listId);
     setLocationSectionId(task.sectionId ?? null);
     setSaved(false);
-  }, [task.id, task.priority]);
+  }, [
+    task.id,
+    task.title,
+    task.content,
+    task.priority,
+    task.listId,
+    task.sectionId,
+    task.list?.folderId,
+  ]);
 
   useEffect(() => {
     fetch("/api/tasks/folders")
@@ -110,6 +118,7 @@ export function TaskDetailPanel({ task, onClose, onUpdate, onDelete }: {
     }
     setSaved(true);
     setLastSavedAt(Date.now());
+    setNow(Date.now());
     if (savedHintTimer.current) clearTimeout(savedHintTimer.current);
     savedHintTimer.current = setTimeout(() => setSaved(false), 1600);
   };
@@ -187,7 +196,7 @@ export function TaskDetailPanel({ task, onClose, onUpdate, onDelete }: {
           clearInterval(id);
           return;
         }
-        setTick((t) => t + 1);
+        setNow(Date.now());
       }, interval);
     };
     start(1000);
@@ -196,7 +205,7 @@ export function TaskDetailPanel({ task, onClose, onUpdate, onDelete }: {
 
   const elapsedText = (() => {
     if (lastSavedAt === null) return null;
-    const secs = Math.floor((Date.now() - lastSavedAt) / 1000);
+    const secs = Math.floor((now - lastSavedAt) / 1000);
     if (secs < 1) return "刚刚保存";
     if (secs < 60) return `${secs}秒前保存`;
     const mins = Math.floor(secs / 60);

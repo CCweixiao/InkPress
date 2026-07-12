@@ -10,9 +10,6 @@ import { SpaceDialog } from "./SpaceDialog";
 import { ArticleCard, type ArticleListItem } from "@/components/articles/ArticleCard";
 import { ImportArticleButton } from "@/components/articles/ImportArticleButton";
 
-/** 首页未分类区块默认显示数，「显示更多」递增量 */
-const UNCLASSIFIED_PAGE_SIZE = 8;
-
 /**
  * 首页主体（客户端）：视图切换 + 新建空间 + 空间分区 + 未分类文章。
  * 数据由服务端组件传入。
@@ -29,14 +26,18 @@ export function HomeView({
   const router = useRouter();
   const [view, setView] = useViewMode(initialViewMode);
   const [createOpen, setCreateOpen] = useState(false);
-  // 未分类区块懒加载
-  const [unclassifiedLimit, setUnclassifiedLimit] = useState(UNCLASSIFIED_PAGE_SIZE);
+  const [unclassifiedLimit, setUnclassifiedLimit] = useState(4);
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-start">
         <div>
-          <h1 className="text-2xl font-bold">我的文章</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight">我的文章</h1>
+            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+              {spaces.reduce((count, item) => count + item.articles.length, 0) + unclassified.length} 篇
+            </span>
+          </div>
           <p className="text-sm text-muted-foreground mt-1">
             按空间分类管理文章 · AI 生成、实时预览、一键推送公众号草稿箱
           </p>
@@ -58,6 +59,7 @@ export function HomeView({
         </div>
       ) : (
         <>
+          <div className="space-y-7">
           {spaces.map(({ space, articles }) => (
             <SpaceSection
               key={space.id}
@@ -90,21 +92,16 @@ export function HomeView({
                 ))}
               </div>
               {unclassified.length > unclassifiedLimit && (
-                <div className="flex justify-center pt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setUnclassifiedLimit((l) => l + UNCLASSIFIED_PAGE_SIZE)
-                    }
-                  >
+                <div className="flex justify-center pt-1">
+                  <Button variant="ghost" size="sm" onClick={() => setUnclassifiedLimit((limit) => limit + 4)}>
                     <ChevronDown className="h-4 w-4" />
-                    显示更多（剩余 {unclassified.length - unclassifiedLimit} 篇）
+                    展开更多（还有 {unclassified.length - unclassifiedLimit} 篇）
                   </Button>
                 </div>
               )}
             </section>
           )}
+          </div>
         </>
       )}
 

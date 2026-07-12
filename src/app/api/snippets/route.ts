@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const tag = sp.get("tag") || undefined;
   const q = sp.get("q") || undefined;
   const cursor = sp.get("cursor") || undefined;
-  const limit = Math.min(Number(sp.get("limit") || 20), 100);
+  const limit = Math.min(Number(sp.get("limit") || 10), 100);
   const trashed = sp.get("trashed") === "1";
 
   const where: Record<string, unknown> = { trashed };
@@ -45,7 +45,8 @@ export async function GET(req: NextRequest) {
 
   const snippets = await prisma.snippet.findMany({
     where,
-    orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+    // 与灵感页时间线一致：按创建时间倒序，并以 id 保证同秒创建时顺序稳定。
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     include: withTagsInclude,
     omit: { embedding: true, tagsJson: true }, // 不把 KB 级向量/废弃 tagsJson 灌给前端

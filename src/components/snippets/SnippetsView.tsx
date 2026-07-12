@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Pin, Trash2, Hash, Plus, Search } from "lucide-react";
 import { SnippetList } from "./SnippetList";
@@ -26,6 +26,7 @@ interface SnippetsViewProps {
   initialSnippets: SnippetItem[];
   tags: TagEntry[];
   totalCount: number;
+  initialNextCursor: string | null;
 }
 
 function sortByCount(a: TagEntry, b: TagEntry): number {
@@ -36,11 +37,14 @@ export function SnippetsView({
   initialSnippets,
   tags: initialTags,
   totalCount,
+  initialNextCursor,
 }: SnippetsViewProps) {
   const router = useRouter();
   const [snippets, setSnippets] = useState<SnippetItem[]>(initialSnippets);
   const [tags, setTags] = useState<TagEntry[]>(initialTags);
   const [total, setTotal] = useState(totalCount);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SnippetItem[] | null>(null);
@@ -60,7 +64,8 @@ export function SnippetsView({
     setSnippets(initialSnippets);
     setTags(initialTags);
     setTotal(totalCount);
-  }, [initialSnippets, initialTags, totalCount]);
+    setNextCursor(initialNextCursor);
+  }, [initialSnippets, initialTags, totalCount, initialNextCursor]);
 
   useEffect(() => {
     const onCreated = (event: Event) => {
@@ -160,6 +165,10 @@ export function SnippetsView({
 
     // 乐观落地 + 退出选择
     setSnippets(nextSnippets);
+    if (action === "delete") {
+      setSearchResults((prev) => prev?.filter((s) => !selectedSet.has(s.id)) ?? null);
+      setTotal((prev) => Math.max(0, prev - selectedIds.length));
+    }
     if (nextTags !== tags) setTags(nextTags);
     exitSelect();
     setBatchMsg(null);
@@ -180,6 +189,7 @@ export function SnippetsView({
     } catch (e) {
       setSnippets(snippets);
       setTags(tags);
+      if (action === "delete") setTotal((prev) => prev + selectedIds.length);
       setBatchMsg(e instanceof Error ? e.message : "操作失败");
       window.setTimeout(() => setBatchMsg(null), 3000);
     }
@@ -209,27 +219,63 @@ export function SnippetsView({
     if (isValidTagColor(t.color)) tagColors[t.name] = t.color;
   }
 
-  // 搜索框非空时用 API 结果；否则用本地集合
+  // 搜索框非空时用 API 结果；每页固定 10 条，保留 cursor 供滚动继续加载。
   useEffect(() => {
     const q = searchQuery.trim();
     if (!q) {
       setSearchResults(null);
+      setNextCursor(initialNextCursor);
       return;
     }
     setSearching(true);
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/snippets?q=${encodeURIComponent(q)}&limit=100`);
-        const data = (await res.json()) as { snippets: SnippetItem[] };
+        const res = await fetch(`/api/snippets?q=${encodeURIComponent(q)}&limit=10`, {
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as {
+          snippets: SnippetItem[];
+          nextCursor: string | null;
+        };
         setSearchResults(data.snippets ?? []);
+        setNextCursor(data.nextCursor ?? null);
       } catch {
-        setSearchResults([]);
+        if (!controller.signal.aborted) setSearchResults([]);
       } finally {
-        setSearching(false);
+        if (!controller.signal.aborted) setSearching(false);
       }
     }, 200);
-    return () => window.clearTimeout(timer);
-  }, [searchQuery]);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery, initialNextCursor]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    const q = searchQuery.trim();
+    try {
+      const params = new URLSearchParams({ cursor: nextCursor, limit: "10" });
+      if (q) params.set("q", q);
+      const res = await fetch(`/api/snippets?${params}`);
+      const data = (await res.json()) as {
+        snippets: SnippetItem[];
+        nextCursor: string | null;
+      };
+      if (!res.ok) throw new Error("加载失败");
+      const appendUnique = (current: SnippetItem[]) => {
+        const existing = new Set(current.map((item) => item.id));
+        return [...current, ...(data.snippets ?? []).filter((item) => !existing.has(item.id))];
+      };
+      if (q) setSearchResults((current) => appendUnique(current ?? []));
+      else setSnippets((current) => appendUnique(current));
+      setNextCursor(data.nextCursor ?? null);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore, searchQuery]);
 
   const baseList = searchResults ?? snippets;
   const filteredSnippets = baseList.filter((s) => {
@@ -271,6 +317,8 @@ export function SnippetsView({
   const handleDeleted = (id: string) => {
     const removed = snippets.find((s) => s.id === id);
     setSnippets((prev) => prev.filter((s) => s.id !== id));
+    setSearchResults((prev) => prev?.filter((s) => s.id !== id) ?? null);
+    setTotal((prev) => Math.max(0, prev - 1));
     if (!removed) return;
     const delTags = removed.tags;
     if (delTags.length === 0) return;
@@ -449,6 +497,9 @@ export function SnippetsView({
             selectMode={selectMode}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
+            hasMore={!!nextCursor}
+            loadingMore={loadingMore}
+            onLoadMore={() => void loadMore()}
           />
         </div>
       </div>

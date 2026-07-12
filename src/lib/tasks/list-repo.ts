@@ -13,6 +13,9 @@ export async function listFoldersWithLists() {
     where: { name: LEGACY_RECOVERY_LIST_NAME, folderId: null },
     data: { name: RECOVERY_LIST_NAME },
   });
+  // 收集箱是任务工作流的固定入口，不再等到首次恢复/删除任务时才创建。
+  // 侧边栏首次加载即可稳定展示它（即使暂时没有任务）。
+  await ensureRecoveryList();
   const [folders, standaloneLists] = await Promise.all([
     prisma.taskFolder.findMany({
       orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
