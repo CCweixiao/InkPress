@@ -14,7 +14,7 @@ export const ALLOWED_IMAGE_TYPES = [
 
 /** 管理员通知邮箱（用户创建工单/追问时通知到此邮箱） */
 export const TICKET_ADMIN_EMAIL =
-  process.env.TICKET_NOTIFY_EMAIL?.trim() || "18739577989@163.com";
+  process.env.TICKET_NOTIFY_EMAIL?.trim() || "support@longoflow.com";
 
 /** OSS 签名 URL 有效期（秒） */
 export const OSS_SIGN_EXPIRES_SEC = 900;

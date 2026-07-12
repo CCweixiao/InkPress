@@ -1,0 +1,166 @@
+PolyForm Noncommercial License 1.0.0
+
+Copyright (c) 2024-present InkPress Contributors
+
+# Terms
+
+This PolyForm Noncommercial License 1.0.0 (the "License") applies to the
+work designated above and provided with this License, if accepted by You.
+"Work" means any materials identifiable as the original work of authorship
+of the Licensor, including but not limited to: source code, object code,
+binary executables, images, audio, video, text, documentation, and any
+related or ancillary materials.
+
+The Licensor grants You the rights described in this License only if You
+accept the License, by acting or replying in any way that implies consent.
+If You do not accept the License, do not exercise any of the rights
+granted by it.
+
+## Purpose
+
+The Licensor makes the Work available under this License to enable
+noncommercial use, study, modification, and redistribution of the Work.
+
+## Grant of Copyright License
+
+Subject to the terms and conditions of this License, Licensor grants You a
+worldwide, royalty-free, non-exclusive, sublicensable, non-commercial
+copyright license to use the Work, to prepare Derivative Works of the Work,
+and to reproduce and distribute the Work and Derivative Works, in source
+and object or binary form.
+
+The Licensor further grants You a non-commercial license to prepare and
+reproduce Derivative Works but not to distribute them.
+
+## Grant of Patent License
+
+Subject to the terms and conditions of this License, Licensor grants You a
+worldwide, royalty-free, non-exclusive, sublicensable, non-commercial patent
+license to make, have made, use, offer to sell, sell, import, and otherwise
+transfer the Work, where such license applies to any patent claims that
+Licensor can license that read on the Work as contributed by Licensor.
+
+## Limitations
+
+This License does not grant any rights in patents, copyrights, trademarks,
+or trade secrets of Licensor not identifiable as the Work.
+
+## Conditions
+
+If You distribute copies of the Work or Derivative Works, You must:
+
+  a. include a copy of or the Uniform Resource Identifier for this License
+     with every copy;
+
+  b. provide the name of the Licensor, the name of the Work, and any
+     attribution notices required by the Licensor in the Work, or, if not
+     provided, a brief notice such as "Made with <Work Name>.";
+
+  c. retain all attribution notices in the Work; and
+
+  d. if the Work includes a "NOTICE" file, include a readable copy of the
+     attribution notices in that file.
+
+You may add Your own attribution notices to Derivative Works You distribute,
+alongside or as an addendum to the NOTICE text from the Work, provided that
+the additional attribution notices do not alter the terms of this License.
+
+## Noncommercial
+
+"Noncommercial" means not primarily intended for or directed towards
+commercial advantage or monetary compensation. Licensor permits, but does
+not endorse, Your distribution of Derivative Works under this License to
+third parties that pay You a fee, whether a subscription fee, one-time fee,
+or otherwise, provided that:
+
+  a. You distribute the Work and Derivative Works under this License at no
+     additional charge; and
+
+  b. You do not pay or otherwise compensate any party for distributing the
+     Work or Derivative Works.
+
+For clarity, the following are noncommercial:
+
+  - Making the Work available, in source or binary form, to third parties
+    for their personal, educational, or research use.
+
+  - Distributing the Work or Derivative Works as part of a larger project
+    or service that is itself noncommercial, where the Work or Derivative
+    Works remain available for noncommercial use.
+
+  - Internal use of the Work or Derivative Works within an organization
+    for evaluation, research, or education.
+
+The following are commercial:
+
+  - Selling, licensing, or distributing the Work or Derivative Works for
+    a fee or other consideration.
+
+  - Using the Work or Derivative Works as part of a paid product or
+    service.
+
+  - Using the Work or Derivative Works to provide a paid service, such as
+    a hosted SaaS application that charges users.
+
+  - Distributing the Work or Derivative Works as part of a product or
+    service that is primarily intended for or directed towards commercial
+    advantage or monetary compensation.
+
+## Disclaimer
+
+This License does not cover any patent claims that can be infringed by the
+Work alone, without modification.
+
+## Scope of License
+
+The License applies to all of the Work, as a whole. The License does not
+apply to separate works that happen to be included with or distributed
+alongside the Work, if those separate works are not Derivative Works of the
+Work.
+
+If You begin litigation asserting that the Work directly or indirectly
+infringes any patent, Licensor may terminate Your License, upon written
+notice, at any time. Licensor need not wait for litigation to conclude
+before terminating.
+
+## Term
+
+The License applies for as long as You continue to distribute the Work or
+Derivative Works. The License terminates automatically if You fail to comply
+with any of its terms.
+
+## Disclaimer of Warranty
+
+Unless required by applicable law or agreed to in writing, Licensor
+provides the Work on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
+ANY KIND, either express or implied, including, without limitation, any
+warranties or conditions of title, non-infringement, merchantability, or
+fitness for a particular purpose. You are solely responsible for determining
+the appropriateness of using or redistributing the Work and assume any
+risks associated with Your exercise of permissions under this License.
+
+## Limitation of Liability
+
+In no event and under no legal theory, whether in tort (including
+negligence), contract, or otherwise, unless required by applicable law (such
+as deliberate and grossly negligent acts) or agreed to in writing, shall
+Licensor be liable to You for damages, including any direct, indirect,
+special, incidental, or consequential damages of any character arising as
+a result of this License or out of the use or inability to use the Work
+(including but not limited to damages for loss of goodwill, work stoppage,
+computer failure or malfunction, or any and all other commercial damages or
+losses), even if the Licensor has been advised of the possibility of such
+damages.
+
+## Trademark
+
+This License does not grant permission to use the trade names, trademarks,
+service marks, or product names of the Licensor, except as required for
+reasonable and customary use in describing the origin of the Work and
+reproducing the content of the NOTICE file.
+
+## Contact
+
+If You have any questions about this License or the Work, please contact the
+Licensor through the project's repository at:
+https://github.com/CCweixiao/InkPress

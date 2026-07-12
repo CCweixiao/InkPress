@@ -14,8 +14,8 @@
 #   9. 健康检查 https://<域名>/login
 #
 # 用法：
-#   SSH_HOST=root@8.217.175.141 bash scripts/setup-https.sh
-#   SSH_HOST=root@8.217.175.141 DOMAIN=www.longoflow.com bash scripts/setup-https.sh
+#   SSH_HOST=root@<YOUR_SERVER_IP> bash scripts/setup-https.sh
+#   SSH_HOST=root@<YOUR_SERVER_IP> DOMAIN=www.longoflow.com bash scripts/setup-https.sh
 #
 # 前置条件：
 #   - 域名 DNS A 记录已解析到服务器 IP

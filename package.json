@@ -2,6 +2,7 @@
   "name": "inkpress",
   "version": "0.5.2",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "main": "dist-electron/electron/main.js",
   "engines": {
     "node": ">=22 <23"

@@ -2,6 +2,7 @@
   "name": "inkpress-service",
   "version": "0.1.0",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "description": "InkPress 用户服务、认证、License 与管理后台服务（独立部署）",
   "engines": {
     "node": ">=22 <23"

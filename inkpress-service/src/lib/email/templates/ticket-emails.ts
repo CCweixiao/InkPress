@@ -105,7 +105,7 @@ export function renderNewTicketAdminEmail(
   const typeLabel = TICKET_TYPE_LABELS[ticket.type] ?? ticket.type;
   const descPreview = (ticket.description ?? "").slice(0, 200);
   return ticketEnvelope({
-    to: process.env.TICKET_NOTIFY_EMAIL?.trim() || "18739577989@163.com",
+    to: process.env.TICKET_NOTIFY_EMAIL?.trim() || "support@longoflow.com",
     subject: `【${BRAND_NAME}】新工单 #${ticket.id.slice(-8)} ${ticket.subject}`,
     title: "收到新的支持工单",
     bodyHtml: `
@@ -151,7 +151,7 @@ export function renderTicketRepliedAdminEmail(
   userEmail: string
 ): MailMessage {
   return ticketEnvelope({
-    to: process.env.TICKET_NOTIFY_EMAIL?.trim() || "18739577989@163.com",
+    to: process.env.TICKET_NOTIFY_EMAIL?.trim() || "support@longoflow.com",
     subject: `【${BRAND_NAME}】工单 #${ticket.id.slice(-8)} 用户追问`,
     title: "用户在工单中追问了新内容",
     bodyHtml: `
