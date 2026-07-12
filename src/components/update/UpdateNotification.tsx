@@ -58,6 +58,7 @@ function writeLS(key: string, value: string): void {
 export function UpdateNotification() {
   const [state, setState] = useState<VisibleState>({ kind: "hidden" });
   const [mounted, setMounted] = useState(false);
+  const [isElectron, setIsElectron] = useState(false);
 
   const doCheck = useCallback(async (force: boolean): Promise<void> => {
     const now = Date.now();
@@ -123,7 +124,11 @@ export function UpdateNotification() {
   }, []);
 
   useEffect(() => {
+    // Electron 主进程已经负责后台下载和退出安装，避免再展示网页端“前往下载”。
+    const desktopShell = navigator.userAgent.includes("Electron/");
+    setIsElectron(desktopShell);
     setMounted(true);
+    if (desktopShell) return;
     void doCheck(false);
 
     // 每 6h 重检一次（页面长开场景）
@@ -149,7 +154,7 @@ export function UpdateNotification() {
     // 不立即关闭：用户回来后可能还想点一次，关闭由 dismiss 显式触发
   }, [state]);
 
-  if (!mounted || state.kind !== "visible") return null;
+  if (!mounted || isElectron || state.kind !== "visible") return null;
 
   const { payload } = state;
   const sizeLabel =

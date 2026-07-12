@@ -247,6 +247,9 @@ void (async () => {
   if (finalMaterialized > 0) {
     console.log(`  ✓ 最终物化 ${finalMaterialized} 处运行时 symlink`);
   }
+  // Next 16 的 Turbopack NFT 会漏掉 jsdom 深层 ESM 文件；在所有裁剪和物化结束后
+  // 逐一修复并验证，确保真正写入安装包的最终目录可直接加载。
+  ensureCriticalTracedRuntimeFiles();
   // 10. 复制 bytenode 到 bundle/node_modules（运行时薄加载器 require('bytenode') 用）
   ensureBytenodeInBundle();
   // 11. server.js → server.jsc + 薄加载器（V8 字节码保护，防逆向）
@@ -1044,9 +1047,12 @@ function patchAllTracedPackageGaps(): void {
   const pnpmDir = path.join(root, "node_modules", ".pnpm");
   const sourceCache = new Map<string, string>();
 
-  const findSourceInPnpm = (name: string): string | null => {
-    if (sourceCache.has(name)) {
-      const cached = sourceCache.get(name)!;
+  const findSourceInPnpm = (name: string, version?: string): string | null => {
+    // 同名包可以在 pnpm 虚拟存储中共存多个版本；必须按 name + version 匹配，
+    // 否则会把另一个版本的不完整依赖树复制进 traced 包。
+    const cacheKey = `${name}@${version || ""}`;
+    if (sourceCache.has(cacheKey)) {
+      const cached = sourceCache.get(cacheKey)!;
       return cached || null;
     }
     try {
@@ -1054,10 +1060,13 @@ function patchAllTracedPackageGaps(): void {
       const escapedName = name.replace("/", "+");
       for (const e of entries) {
         if (!e.isDirectory()) continue;
-        if (e.name.startsWith(escapedName + "@") || e.name === escapedName) {
+        const matchesPackage = version
+          ? e.name.startsWith(`${escapedName}@${version}`)
+          : e.name.startsWith(escapedName + "@");
+        if (matchesPackage || e.name === escapedName) {
           const pkgDir = path.join(pnpmDir, e.name, "node_modules", name);
           if (fs.existsSync(path.join(pkgDir, "package.json"))) {
-            sourceCache.set(name, pkgDir);
+            sourceCache.set(cacheKey, pkgDir);
             return pkgDir;
           }
         }
@@ -1065,7 +1074,7 @@ function patchAllTracedPackageGaps(): void {
     } catch {
       /* .pnpm/ not readable */
     }
-    sourceCache.set(name, "");
+    sourceCache.set(cacheKey, "");
     return null;
   };
 
@@ -1095,7 +1104,10 @@ function patchAllTracedPackageGaps(): void {
         try {
           const pj = JSON.parse(fs.readFileSync(pjPath, "utf8"));
           if (typeof pj.name === "string") {
-            const srcDir = findSourceInPnpm(pj.name);
+            const srcDir = findSourceInPnpm(
+              pj.name,
+              typeof pj.version === "string" ? pj.version : undefined
+            );
             if (srcDir) {
               const before = countFiles(full);
               mergeDir(srcDir, full);
@@ -1116,6 +1128,76 @@ function patchAllTracedPackageGaps(): void {
 
   if (patchedFiles > 0) {
     console.log(`  ✓ 兜底补齐 traced 包缺失文件：${patchedFiles} 个`);
+  }
+}
+
+/**
+ * 修复并验证 Next Turbopack traced 的关键 ESM 运行时文件。
+ *
+ * jsdom 的 html-encoding-sniffer 会动态 import
+ * @exodus/bytes/fallback/single-byte.encodings.js；NFT 曾多次漏追踪这个文件。
+ * 这个检查必须在 slimBundle 和最终 symlink 物化之后运行，避免构建阶段“补过”
+ * 但最终交给 electron-builder 的目录里仍然缺失文件。
+ */
+function ensureCriticalTracedRuntimeFiles(): void {
+  const nextNm = path.join(bundle, ".next", "node_modules");
+  if (!fs.existsSync(nextNm)) return;
+
+  const projectPnpm = path.join(root, "node_modules", ".pnpm");
+  const requiredFiles = ["fallback/single-byte.js", "fallback/single-byte.encodings.js"];
+  const tracedBytesDirs: string[] = [];
+
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(dir, entry.name);
+      const packageJson = path.join(full, "package.json");
+      try {
+        const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8"));
+        if (pkg.name === "@exodus/bytes" && typeof pkg.version === "string") {
+          tracedBytesDirs.push(full);
+        }
+      } catch {
+        // 非包目录，继续向下查找深层 node_modules。
+      }
+      walk(full);
+    }
+  };
+  walk(nextNm);
+
+  for (const tracedDir of tracedBytesDirs) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(tracedDir, "package.json"), "utf8"));
+    const escapedName = "@exodus+bytes";
+    const sourceEntry = fs.readdirSync(projectPnpm, { withFileTypes: true }).find(
+      (entry) => entry.isDirectory() && entry.name.startsWith(`${escapedName}@${pkg.version}`)
+    );
+    if (!sourceEntry) {
+      throw new Error(`找不到 @exodus/bytes@${pkg.version} 的 pnpm 源目录`);
+    }
+    const sourceDir = path.join(projectPnpm, sourceEntry.name, "node_modules", "@exodus", "bytes");
+    for (const rel of requiredFiles) {
+      const source = path.join(sourceDir, rel);
+      const destination = path.join(tracedDir, rel);
+      if (!fs.existsSync(source)) {
+        throw new Error(`运行时依赖源文件缺失：${source}`);
+      }
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      // 强制覆盖，避免 NFT 产出的悬空链接或残缺文件逃过 existsSync 判断。
+      fs.copyFileSync(source, destination);
+      if (!fs.existsSync(destination)) {
+        throw new Error(`运行时依赖补齐失败：${destination}`);
+      }
+    }
+  }
+
+  if (tracedBytesDirs.length > 0) {
+    console.log(`  ✓ 验证并补齐 ${tracedBytesDirs.length} 个 traced @exodus/bytes ESM 依赖`);
   }
 }
 

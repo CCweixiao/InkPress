@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell } from "electron";
+import { autoUpdater } from "electron-updater";
 import { spawn, ChildProcess } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
@@ -25,7 +26,16 @@ let mainWindow: BrowserWindow | null = null;
 let serverPort = PREFERRED_PORT;
 let isQuitting = false;
 let splash: BrowserWindow | null = null;
+let downloadedUpdateVersion: string | null = null;
+let updateCheckTimer: NodeJS.Timeout | null = null;
 const isPackageSmokeTest = process.env.INKPRESS_PACKAGE_SMOKE_TEST === "1";
+
+/** OSS 静态更新源。支持用环境变量切换私有镜像 / 测试环境。 */
+const UPDATE_BASE_URL = (
+  process.env.INKPRESS_UPDATE_BASE_URL ||
+  "https://inkpressassets.oss-cnshanghai.aliyuncs.com"
+).replace(/\/+$/, "");
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
 
 if (isPackageSmokeTest && process.env.INKPRESS_SMOKE_HOME?.trim()) {
   app.setPath(
@@ -40,6 +50,49 @@ if (isPackageSmokeTest && process.env.INKPRESS_SMOKE_HOME?.trim()) {
  */
 function isPackaged(): boolean {
   return app.isPackaged || process.env.INKPRESS_PACKAGED_TEST === "1";
+}
+
+function updaterPlatform(): "darwin-arm64" | "darwin-x64" | "win32-x64" | null {
+  if (process.platform === "darwin" && process.arch === "arm64") return "darwin-arm64";
+  if (process.platform === "darwin" && process.arch === "x64") return "darwin-x64";
+  if (process.platform === "win32" && process.arch === "x64") return "win32-x64";
+  return null;
+}
+
+/**
+ * 已安装客户端的原地更新：后台下载，用户正常退出时才替换应用。
+ * 首次安装仍然使用 DMG / NSIS 安装包；开发和打包 smoke 均不发起网络更新。
+ */
+function setupAutoUpdater() {
+  const platform = updaterPlatform();
+  if (!app.isPackaged || isPackageSmokeTest || !platform) return;
+
+  autoUpdater.autoDownload = true;
+  // 退出链路会先关闭 Next 子进程，再显式 quitAndInstall，避免编辑服务遗留。
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.autoRunAppAfterInstall = true;
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: `${UPDATE_BASE_URL}/releases/latest/${platform}`,
+  });
+
+  autoUpdater.on("error", (error) => {
+    // 更新服务不可达、旧版本无元数据等均不影响正常启动。
+    console.warn("[updater] 更新检查失败：", error.message);
+  });
+  autoUpdater.on("update-available", (info) => {
+    console.log(`[updater] 发现 v${info.version}，开始后台下载`);
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    downloadedUpdateVersion = info.version;
+    console.log(`[updater] v${info.version} 已下载，将在退出 InkPress 后静默安装`);
+  });
+
+  const check = () => {
+    if (!isQuitting) void autoUpdater.checkForUpdates().catch(() => undefined);
+  };
+  setTimeout(check, 30_000);
+  updateCheckTimer = setInterval(check, UPDATE_RECHECK_MS);
 }
 
 /** 用户数据根目录：打包=平台默认数据目录，开发=null（用项目目录） */
@@ -486,6 +539,7 @@ async function bootstrap() {
     }
     await createWindow(serverPort);
     closeSplash();
+    setupAutoUpdater();
   } catch (e) {
     console.error("[electron] 启动失败：", e);
     // 失败时清理 server 子进程，避免孤儿进程占用端口
@@ -547,7 +601,10 @@ app.on("before-quit", (e) => {
   isQuitting = true;
   e.preventDefault();
   void killServer().then(() => {
-    app.quit();
+    if (updateCheckTimer) clearInterval(updateCheckTimer);
+    // 更新包已完整校验下载后才进入这里；true 让 NSIS 更新也不展示安装向导。
+    if (downloadedUpdateVersion) autoUpdater.quitAndInstall(true, true);
+    else app.quit();
   });
 });
 

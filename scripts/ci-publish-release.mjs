@@ -2,11 +2,12 @@
 /**
  * CI 发布：上传安装包到 OSS + 登记 inkpress-service。
  *
- * 在 GitHub Actions 的 build job 中执行（DMG/EXE 构建后、runner 销毁前）。
+ * 在 GitHub Actions 的 build job 中执行（DMG/ZIP/EXE 构建后、runner 销毁前）。
  * 复用 inkpress 根目录已安装的 ali-oss 依赖，无需安装 inkpress-service。
  *
  * 做两件事：
- * 1. 上传 dist/ 中的安装包 + blockmap + latest*.yml 到 OSS（版本归档 + latest 别名）
+ * 1. 上传 dist/ 中的安装包、自动更新 ZIP / blockmap / latest*.yml 到 OSS。
+ *    自动更新元数据按 platform-arch 隔离，避免 macOS arm64/x64 的 latest-mac.yml 互相覆盖。
  * 2. 对每个安装包（.dmg/.exe）调 /api/releases/register，写入 sha256/size/downloadUrl
  *    → 桌面端启动时调 /api/releases/check-update 检测新版本就靠这条记录
  *
@@ -80,10 +81,10 @@ if (!fs.existsSync(distDir)) {
 
 const allFiles = fs.readdirSync(distDir);
 
-/** 上传到 OSS 的文件：安装包 + blockmap + latest*.yml */
+/** 上传到 OSS 的文件：首次安装包 + 自动更新包 / 元数据。 */
 const ossFiles = allFiles.filter(
   (name) =>
-    /\.(dmg|exe)(\.blockmap)?$/.test(name) || /^latest.*\.yml$/.test(name)
+    /\.(dmg|exe|zip)(\.blockmap)?$/.test(name) || /^latest.*\.yml$/.test(name)
 );
 
 /** 登记到 service 的文件：仅安装包（.dmg / .exe），不含 blockmap/yml */
@@ -91,7 +92,7 @@ const installerFiles = allFiles.filter((name) => /\.(dmg|exe)$/.test(name));
 
 if (ossFiles.length === 0) {
   console.error(
-    `✗ dist/ 下未找到打包产物（*.dmg / *.exe / *.blockmap / latest*.yml）`
+    `✗ dist/ 下未找到打包产物（*.dmg / *.zip / *.exe / *.blockmap / latest*.yml）`
   );
   process.exit(1);
 }
@@ -125,8 +126,13 @@ const client = new OSS({
   secure: true,
 });
 
-const versionDir = `releases/v${version}`;
-const latestDir = `releases/latest`;
+const updatePlatform = inferRuntimePlatform();
+if (updatePlatform === "unknown") {
+  console.error(`✗ 无法从构建 runner 推断更新平台：${process.platform}/${process.arch}`);
+  process.exit(1);
+}
+const versionDir = `releases/v${version}/${updatePlatform}`;
+const latestDir = `releases/latest/${updatePlatform}`;
 
 for (const name of ossFiles) {
   const localPath = path.join(distDir, name);
@@ -214,6 +220,14 @@ function inferPlatform(fileName) {
   if (lower.endsWith(".exe")) return "win32-x64";
   if (lower.endsWith(".appimage") || lower.endsWith(".deb") || lower.endsWith(".rpm"))
     return "linux-x64";
+  return "unknown";
+}
+
+/** 更新元数据文件本身不含架构，必须以构建 runner 的原生平台作为目录分片。 */
+function inferRuntimePlatform() {
+  if (process.platform === "darwin" && process.arch === "arm64") return "darwin-arm64";
+  if (process.platform === "darwin" && process.arch === "x64") return "darwin-x64";
+  if (process.platform === "win32" && process.arch === "x64") return "win32-x64";
   return "unknown";
 }
 
