@@ -197,14 +197,14 @@ describe("abort before result：runtime 错误仍带 sessionId（PDC §5.2/§10.
     expect(readSessionFromError(caught)).toBe("sdk-error-session");
   });
 
-  it("SDK stream after abort ends without result: rejects as timeout and keeps partial session", async () => {
+  it("SDK stream after request abort ends without result: keeps partial session", async () => {
     const controller = new AbortController();
     const query = vi.fn().mockReturnValueOnce(
       (async function* () {
         yield {
           type: "system",
           subtype: "init",
-          session_id: "sdk-timeout-session",
+          session_id: "sdk-aborted-session",
           tools: [],
           mcp_servers: [],
           model: "m",
@@ -248,8 +248,8 @@ describe("abort before result：runtime 错误仍带 sessionId（PDC §5.2/§10.
     }
 
     expect(caught).toBeInstanceOf(Error);
-    expect(caught).toMatchObject({ name: "AbortError", code: "timeout" });
-    expect(readSessionFromError(caught)).toBe("sdk-timeout-session");
+    expect(caught).toMatchObject({ name: "AbortError", code: "request-aborted" });
+    expect(readSessionFromError(caught)).toBe("sdk-aborted-session");
   });
 
   it("SDK stream that ends without result and without abort is a missing-result error", async () => {

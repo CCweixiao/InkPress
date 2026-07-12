@@ -8,6 +8,10 @@ import {
   buildClaudeAgentOptions,
   type ClaudeAgentTarget,
 } from "@/lib/ai/claude-agent-options";
+import {
+  readRunAbortReason,
+  type RunAbortReason,
+} from "@/lib/ai/run-timeout";
 import type { CodeSourceReference } from "@/lib/ai/code-source";
 import {
   createSdkToUiAdapter,
@@ -58,6 +62,29 @@ type RunOnceResult = {
   /** 尚未收到 assistant 帧，重试不会重放工具副作用。 */
   safeToRetry: boolean;
 };
+
+function abortErrorForReason(
+  reason: RunAbortReason | undefined,
+  original?: Error
+): Error & { code?: string } {
+  if (reason?.code === "runtime-timeout") {
+    const seconds = Math.max(1, Math.round(reason.timeoutMs / 1000));
+    const error = new Error(
+      `Claude Agent 运行超过 ${seconds} 秒，已自动中止。`
+    ) as Error & { code?: string };
+    error.name = "TimeoutError";
+    error.code = "timeout";
+    if (original) error.cause = original;
+    return error;
+  }
+  const error = new Error("客户端连接已断开，Claude Agent 已中止。") as Error & {
+    code?: string;
+  };
+  error.name = "AbortError";
+  error.code = "request-aborted";
+  if (original) error.cause = original;
+  return error;
+}
 
 /** 用最终 status/source 收口 summary（last*Tokens 快显用 input/output 派生）。 */
 function finalizeOutcome(
@@ -269,11 +296,15 @@ async function runOnce(
   // 每轮用新的 AbortController 桥接请求级信号（重试时上一轮的 controller 可能已废）。
   const abortController = new AbortController();
   if (input.abortSignal) {
-    if (input.abortSignal.aborted) abortController.abort();
+    if (input.abortSignal.aborted) abortController.abort(input.abortSignal.reason);
     else
-      input.abortSignal.addEventListener("abort", () => abortController.abort(), {
-        once: true,
-      });
+      input.abortSignal.addEventListener(
+        "abort",
+        () => abortController.abort(input.abortSignal?.reason),
+        {
+          once: true,
+        }
+      );
   }
 
   const options: Options = {
@@ -294,6 +325,9 @@ async function runOnce(
     adapter.flush();
     if (!adapter.hasResult()) {
       const aborted = input.abortSignal?.aborted || abortController.signal.aborted;
+      const abortReason =
+        readRunAbortReason(input.abortSignal) ??
+        readRunAbortReason(abortController.signal);
       return {
         outcome: {
           usageSummary: adapter.getSummary(),
@@ -302,24 +336,39 @@ async function runOnce(
           runtimeMetadata: adapter.result.runtimeMetadata,
           mirrorHealthy: adapter.result.mirrorHealthy,
         },
-        error: terminalStreamError(
-          aborted
-            ? {
-                code: "timeout",
-                message: "Claude Agent 运行已中止或超时，SDK 流未返回最终结果。",
-              }
-            : {
+        error: aborted
+          ? abortErrorForReason(abortReason)
+          : terminalStreamError(
+              {
                 code: "missing-result",
                 message: "Claude Agent SDK 流已结束，但未返回最终结果。",
               }
-        ),
+            ),
         errorKind: aborted ? "abort" : "throw",
         safeToRetry: !adapter.hasAssistantActivity(),
       };
     }
   } catch (err) {
     // for-await 抛错（abort / 网络 / 限流穿透）：尽量用 step fallback 兜底 usage。
-    const error = err instanceof Error ? err : new Error(String(err));
+    const originalError = err instanceof Error ? err : new Error(String(err));
+    const aborted = input.abortSignal?.aborted || abortController.signal.aborted;
+    const abortReason =
+      readRunAbortReason(input.abortSignal) ??
+      readRunAbortReason(abortController.signal);
+    const error = aborted
+      ? abortErrorForReason(abortReason, originalError)
+      : originalError;
+    if (aborted) {
+      log.warn(
+        {
+          abortReason,
+          originalError,
+          sessionId: input.sessionId,
+          sdkSessionId: adapter.result.sessionId,
+        },
+        "claude-agent-sdk 子进程被中止"
+      );
+    }
     return {
       outcome: {
         usageSummary: adapter.getSummary(),
@@ -329,7 +378,7 @@ async function runOnce(
         mirrorHealthy: adapter.result.mirrorHealthy,
       },
       error,
-      errorKind: isAbortError(error) ? "abort" : "throw",
+      errorKind: aborted || isAbortError(error) ? "abort" : "throw",
       safeToRetry: !adapter.hasAssistantActivity(),
     };
   }

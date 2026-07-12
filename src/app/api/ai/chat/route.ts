@@ -17,7 +17,10 @@ import {
   readRuntimeMetadataFromError,
   readMirrorHealthyFromError,
 } from "@/lib/ai/claude-agent-runtime";
-import { createRunAbortSignal } from "@/lib/ai/run-timeout";
+import {
+  agentRunTimeoutMs,
+  createRunAbortSignal,
+} from "@/lib/ai/run-timeout";
 import { chooseLlmConfig } from "@/lib/ai/llm-config";
 import { upsertUsageTurnIfSessionGenerationCurrent } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
@@ -853,8 +856,9 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               providerId: newProviderId,
               modelId: newModelId,
               messages: runtimeMessages,
-              // 主动早于路由 maxDuration 收口，避免 SDK 无终止事件时客户端永久 streaming。
-              abortSignal: createRunAbortSignal(req.signal, 110_000),
+              // 桌面端长任务（网页读取、多 Agent 调研）常超过 2 分钟；
+              // 默认 10 分钟，仅作为 SDK 无终止事件时的兜底，可用 INKPRESS_AGENT_RUN_TIMEOUT_MS 调整。
+              abortSignal: createRunAbortSignal(req.signal, agentRunTimeoutMs()),
             },
             ew
           );
