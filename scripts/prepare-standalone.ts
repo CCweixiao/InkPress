@@ -989,6 +989,11 @@ function materializeTracedNextPackageDependencies(): void {
       if (!fs.existsSync(destDepDir)) {
         safeCpSync(srcDepDir, destDepDir);
         copiedPackages++;
+      } else {
+        // NFT 可能已创建"存在但残缺"的目录（如 @exodus/bytes 只追踪了
+        // single-byte.js 但漏了 single-byte.encodings.js）。用 mergeDir
+        // 补齐缺失文件，而非因目录存在就跳过。
+        mergeDir(srcDepDir, destDepDir);
       }
       copyRuntimeDeps(srcDepDir, destDepDir);
     }
