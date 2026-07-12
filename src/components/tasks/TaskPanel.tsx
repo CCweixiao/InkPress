@@ -203,6 +203,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
               onTasksChanged={refetch}
               onSectionsChanged={loadList}
               onCreateTaskInSection={async (sectionId, title, priority, dueDate) => createTask({ title, priority, dueDate, listId: listId ?? undefined, sectionId })}
+              onCreateSubtask={async (parent, title) => createTask({ title, parentId: parent.id, listId: parent.listId, sectionId: parent.sectionId ?? null })}
             />
           )}
           {viewMode === "calendar" && (

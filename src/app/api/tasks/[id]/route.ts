@@ -72,6 +72,11 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (tagsJson !== undefined) data.tagsJson = tagsJson;
     if (isCollapsed !== undefined) data.isCollapsed = isCollapsed;
 
+    if (parentId) {
+      const depthError = await validateParentDepth(parentId, id);
+      if (depthError) return NextResponse.json({ error: depthError }, { status: 400 });
+    }
+
     const task = await prisma.$transaction(async (tx) => {
       if (tagIds !== undefined) {
         await tx.taskTag.deleteMany({ where: { taskId: id } });
@@ -96,6 +101,23 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     const message = err instanceof Error ? err.message : "更新任务失败";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/** 防止移动任务形成环，并将整个任务树限制在三层以内。 */
+async function validateParentDepth(parentId: string, movingTaskId: string): Promise<string | null> {
+  let currentId: string | null = parentId;
+  let depth = 0;
+  const visited = new Set<string>();
+  while (currentId) {
+    if (visited.has(currentId) || currentId === movingTaskId) return "不能将任务移动到其自身或后代任务下";
+    visited.add(currentId);
+    const current: { parentId: string | null } | null = await prisma.task.findUnique({ where: { id: currentId }, select: { parentId: true } });
+    if (!current) return "父任务不存在";
+    depth += 1;
+    if (depth >= 3) return "子任务最多支持 3 级";
+    currentId = current.parentId;
+  }
+  return null;
 }
 
 // DELETE /api/tasks/[id] — 软删除（移入垃圾箱，级联后代，30 天后过期）

@@ -166,6 +166,16 @@ export async function POST(req: NextRequest) {
       resolvedListId = firstList.id;
     }
 
+    // 任务树统一限制为三级：根任务（第一级）→ 子任务 → 下级任务。
+    // 这样看板和列表等不同入口不会创建无法完整展示的更深层级。
+    if (parentId) {
+      const depthError = await validateParentDepth(parentId);
+      if (depthError) return NextResponse.json({ error: depthError }, { status: 400 });
+      const parent = await prisma.task.findUnique({ where: { id: parentId }, select: { listId: true, trashed: true } });
+      if (!parent || parent.trashed) return NextResponse.json({ error: "父任务不存在" }, { status: 400 });
+      if (parent.listId !== resolvedListId) return NextResponse.json({ error: "子任务必须属于与父任务相同的清单" }, { status: 400 });
+    }
+
     // 获取同级最大 sortOrder
     const maxSort = await prisma.task.aggregate({
       where: { parentId: parentId ?? null },
@@ -196,4 +206,21 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : "创建任务失败";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/** parent 的祖先数达到 3 时，再创建子项会成为第 4 级任务。 */
+async function validateParentDepth(parentId: string, movingTaskId?: string): Promise<string | null> {
+  let currentId: string | null = parentId;
+  let depth = 0;
+  const visited = new Set<string>();
+  while (currentId) {
+    if (visited.has(currentId) || currentId === movingTaskId) return "不能将任务移动到其自身或后代任务下";
+    visited.add(currentId);
+    const current: { parentId: string | null } | null = await prisma.task.findUnique({ where: { id: currentId }, select: { parentId: true } });
+    if (!current) return "父任务不存在";
+    depth += 1;
+    if (depth >= 3) return "子任务最多支持 3 级";
+    currentId = current.parentId;
+  }
+  return null;
 }

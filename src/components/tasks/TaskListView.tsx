@@ -90,6 +90,31 @@ export function TaskListView({
   };
   const dndProps = { sensors, collisionDetection: closestCenter, onDragStart: (event: { active: { id: string | number } }) => setActiveTask(allTasks.find((task) => task.id === event.active.id) ?? null), onDragEnd: handleDragEnd, onDragCancel: () => setActiveTask(null) };
 
+  // 切换控件（两个分支共用）
+  const groupToggle = sections && sections.length > 0 && (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center bg-muted rounded-lg p-0.5">
+        {([
+          { mode: "status" as const, label: "按状态" },
+          { mode: "custom" as const, label: "自定义" },
+        ]).map((opt) => (
+          <button
+            key={opt.mode}
+            onClick={() => setListGroupMode(opt.mode)}
+            className={cn(
+              "px-3 py-1 rounded-md text-xs font-medium transition-all",
+              listGroupMode === opt.mode
+                ? "bg-background shadow-sm text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   if (sections && listGroupMode === "custom") {
     const groups = [
       ...sections,
@@ -98,6 +123,7 @@ export function TaskListView({
     return (
       <DndContext {...dndProps}>
       <div className="space-y-6">
+        {groupToggle}
         {groups.map((section) => {
           const sectionTasks = tasks.filter((task) => section.id === "unsectioned" ? !task.sectionId : task.sectionId === section.id);
           return (
@@ -139,30 +165,7 @@ export function TaskListView({
   return (
     <DndContext {...dndProps}>
     <div className="space-y-5">
-      {/* 分组切换：按状态 / 自定义（仅当有自定义分组时显示切换） */}
-      {sections && sections.length > 0 && (
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-muted rounded-lg p-0.5">
-            {([
-              { mode: "status" as const, label: "按状态" },
-              { mode: "custom" as const, label: "自定义" },
-            ]).map((opt) => (
-              <button
-                key={opt.mode}
-                onClick={() => setListGroupMode(opt.mode)}
-                className={cn(
-                  "px-3 py-1 rounded-md text-xs font-medium transition-all",
-                  listGroupMode === opt.mode
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {groupToggle}
 
       {/* 按状态分组渲染：待办 / 进行中 / 已完成（可折叠） / 已归档（可折叠），空分类也显示 */}
       {listGroupMode === "status" && STATUS_SECTIONS.map((sec) => {
