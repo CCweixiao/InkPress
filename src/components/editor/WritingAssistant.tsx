@@ -308,7 +308,7 @@ function ProposalCard({
       await refresh();
       return;
     }
-    setStatus("applied");
+    setStatus(data.status ?? "applied");
     setDetail((current) => (current ? { ...current, status: "applied" } : current));
     setDiffOpen(false);
     const applied = data.article;
@@ -429,7 +429,7 @@ function ProposalCard({
             <Eye className="h-3.5 w-3.5" />
             全屏审查
           </Button>
-          {status === "pending" && (
+          {(status === "pending" || status === "error" || status === "applying") && (
             <>
               <Button
                 size="sm"
@@ -442,9 +442,9 @@ function ProposalCard({
                 ) : (
                   <Check className="h-3.5 w-3.5" />
                 )}
-                应用修改
+                {status === "pending" ? "应用修改" : "重试同步"}
               </Button>
-              <Button
+              {status === "pending" && <Button
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs"
@@ -453,7 +453,7 @@ function ProposalCard({
               >
                 <X className="h-3.5 w-3.5" />
                 放弃
-              </Button>
+              </Button>}
             </>
           )}
           <Button

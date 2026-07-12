@@ -55,7 +55,9 @@ describe("article proposal revision claim", () => {
     findUniqueOrThrow.mockReset().mockResolvedValue({ id: "article-1", contentRevision: 1 });
     readContentAt.mockReset().mockResolvedValue("migrated file body");
     contentExistsAt.mockReset().mockResolvedValue(true);
-    writeContentAt.mockReset().mockResolvedValue(undefined);
+    writeContentAt.mockReset().mockImplementation(async (_path: string, markdown: string) => {
+      readContentAt.mockResolvedValue(markdown);
+    });
   });
 
   function mockProposal(value: Record<string, unknown>) {
@@ -125,22 +127,54 @@ describe("article proposal revision claim", () => {
     expect(writeContentAt).toHaveBeenCalled();
   });
 
-  it("marks the proposal error without reverting its revision after body write finalization fails", async () => {
+  it("returns a recoverable partial-success error when finalization retries are exhausted", async () => {
     mockProposal({
       id: "proposal-1", articleId: "article-1", status: "pending", markdown: "proposal body", title: "new title", digest: null,
       baseVersionHash: articleVersionHash({ title: "title", markdown: "migrated file body", digest: "digest" }),
       article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: "articles/article-1.md", spaceId: null, contentRevision: 0 },
     });
-    articleUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    articleUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValue({ count: 0 });
 
     const response = await POST(new Request("http://localhost", { method: "POST", body: "{}" }), {
       params: Promise.resolve({ id: "proposal-1" }),
     });
 
     expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "article-finalize-failed",
+      contentApplied: true,
+      recoverable: true,
+      status: "error",
+    });
     expect(proposalUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "proposal-1", status: "applying" },
       data: expect.objectContaining({ status: "error" }),
+    }));
+    expect(writeContentAt).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers an error proposal when its body was already written", async () => {
+    readContentAt.mockResolvedValue("proposal body");
+    mockProposal({
+      id: "proposal-1", articleId: "article-1", status: "error", markdown: "proposal body", title: "new title", digest: null,
+      baseVersionHash: articleVersionHash({ title: "title", markdown: "migrated file body", digest: "digest" }),
+      article: { id: "article-1", title: "title", digest: "digest", contentMd: "stale", contentPath: "articles/article-1.md", spaceId: null, contentRevision: 1 },
+    });
+
+    const response = await POST(new Request("http://localhost", { method: "POST", body: "{}" }), {
+      params: Promise.resolve({ id: "proposal-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "applied",
+      idempotent: true,
+      recovered: true,
+      article: { contentMd: "proposal body" },
+    });
+    expect(writeContentAt).not.toHaveBeenCalled();
+    expect(articleUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "article-1" },
     }));
   });
 

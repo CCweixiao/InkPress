@@ -78,8 +78,11 @@ export function ArticleDiffDialog({
     changeRows.forEach((item, index) => map.set(item.index, index));
     return map;
   }, [changeRows]);
-  const canDecide =
-    proposal?.status === "pending" && (!!onApply || !!onReject);
+  const canApply =
+    ["pending", "applying", "error"].includes(proposal?.status ?? "") &&
+    Boolean(onApply);
+  const canReject = proposal?.status === "pending" && Boolean(onReject);
+  const canDecide = canApply || canReject;
   const currentActiveChange = changeRows.length
     ? Math.min(activeChange, changeRows.length - 1)
     : 0;
@@ -119,10 +122,10 @@ export function ArticleDiffDialog({
         return;
       }
       const key = e.key.toLowerCase();
-      if (key === "a" && onApply) {
+      if (key === "a" && onApply && canApply && !applying) {
         e.preventDefault();
         onApply();
-      } else if (key === "r" && onReject) {
+      } else if (key === "r" && onReject && canReject && !applying) {
         e.preventDefault();
         onReject();
       } else if (key === "f") {
@@ -133,7 +136,7 @@ export function ArticleDiffDialog({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, activeChange, changeRows, onApply, onReject]);
+  }, [open, activeChange, changeRows, onApply, onReject, applying, canApply, canReject]);
 
   if (!proposal) return null;
 
@@ -249,18 +252,22 @@ export function ArticleDiffDialog({
             {canDecide && (
               <>
                 <div className="mx-1 h-5 w-px bg-border" />
-                <Button size="sm" onClick={onApply} disabled={applying} title="应用修改" className="h-8 rounded-md">
-                  {applying ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Check className="h-3.5 w-3.5" />
-                  )}
-                  应用修改
-                </Button>
-                <Button size="sm" variant="outline" onClick={onReject} disabled={applying} title="放弃" className="h-8 rounded-md">
-                  <X className="h-3.5 w-3.5" />
-                  放弃
-                </Button>
+                {canApply && (
+                  <Button size="sm" onClick={onApply} disabled={applying} title="应用修改" className="h-8 rounded-md">
+                    {applying ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                    {proposal.status === "pending" ? "应用修改" : "重试同步"}
+                  </Button>
+                )}
+                {canReject && (
+                  <Button size="sm" variant="outline" onClick={onReject} disabled={applying} title="放弃" className="h-8 rounded-md">
+                    <X className="h-3.5 w-3.5" />
+                    放弃
+                  </Button>
+                )}
               </>
             )}
             {fullscreen ? (
