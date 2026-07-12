@@ -68,6 +68,13 @@ describe("classifyError", () => {
     expect(classifyError("socket hang up").category).toBe("network");
   });
 
+  it("归类用户主动中断 Claude Code 进程", () => {
+    const r = classifyError("Claude Code process aborted by user");
+    expect(r.category).toBe("cancelled");
+    expect(r.label).toBe("任务已取消");
+    expect(r.suggestion).not.toContain("网络");
+  });
+
   it("归类 GitHub API 限流（code-source 403/429，文案不匹配通用 rate-limit 规则）", () => {
     const r = classifyError(new Error("GitHub API 访问受限，请稍后重试或配置 GitHub Token。"));
     expect(r.category).toBe("rate-limit");
@@ -151,5 +158,14 @@ describe("classifyError", () => {
       label: "请求失败，请稍后重试",
     });
     expect(parsed?.raw).toContain("[REDACTED]");
+  });
+
+  it("格式化用户中断错误时不提示检查网络配置", () => {
+    const message = formatErrorForUser(
+      new Error("Claude Code process aborted by user")
+    );
+    expect(message).toContain("任务已取消");
+    expect(message).toContain("category=cancelled");
+    expect(message).not.toContain("检查模型与网络配置");
   });
 });

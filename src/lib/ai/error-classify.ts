@@ -9,6 +9,7 @@
  */
 
 export type ErrorCategory =
+  | "cancelled"
   | "quota"
   | "auth"
   | "model-not-found"
@@ -142,6 +143,8 @@ const NETWORK_TEST =
   /fetch failed|network|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|ENETDOWN|EPIPE|EHOSTUNREACH|failed to fetch|网络|socket|socket hang up|connection (?:error|reset|refused|closed|terminated|aborted)|other side closed|premature close|terminated|UND_ERR|undici|tunnel|proxy|代理|dns|temporary failure|TLS|SSL|certificate|CERT_/i;
 const PROVIDER_SERVICE_TEST =
   /\b50[023]\b|server error|internal server error|bad gateway|service unavailable|temporarily unavailable|model overloaded|overloaded|模型服务异常|服务暂时不可用|服务不可用|上游服务异常/i;
+const CANCELLED_TEST =
+  /aborted by user|cancel(?:led|ed) by user|user abort|user cancelled|user canceled|AbortError|操作已取消|对话已取消|用户取消|用户中断/i;
 
 const RULES: Array<{
   category: ErrorCategory;
@@ -149,6 +152,12 @@ const RULES: Array<{
   label: string;
   suggestion: string;
 }> = [
+  {
+    category: "cancelled",
+    test: CANCELLED_TEST,
+    label: "任务已取消",
+    suggestion: "Claude Code 进程已被用户中断，本次结果未继续生成。",
+  },
   {
     // GitHub Token 无效/过期：代码源 clone 前的 API 探测（githubRequest）返回 Bad credentials。
     // 必须排在通用 auth 规则之前——后者只匹配 401/unauthorized/forbidden，漏掉 "Bad credentials"。
@@ -250,12 +259,16 @@ function categoryByStatus(code: number): ErrorCategory | undefined {
 export function classifyError(err: unknown): ClassifiedError {
   const text = unwrapMessage(err);
   const statusCode = extractStatusCode(err);
+  const cancelledByText = CANCELLED_TEST.test(text)
+    ? RULES.find((r) => r.category === "cancelled")
+    : undefined;
   // 显式网络层 code（如 UND_ERR_SOCKET/ECONNRESET）优先，其次状态码，再按供应商文案匹配。
   const networkByText = NETWORK_TEST.test(text)
     ? RULES.find((r) => r.category === "network")
     : undefined;
   const byStatus = statusCode ? categoryByStatus(statusCode) : undefined;
   const matched =
+    cancelledByText ??
     networkByText ??
     (byStatus && RULES.find((r) => r.category === byStatus)) ??
     RULES.find((r) => r.test.test(text));
@@ -278,14 +291,6 @@ export function classifyError(err: unknown): ClassifiedError {
 }
 
 export function formatErrorForUser(err: unknown): string {
-  if (err instanceof DOMException && err.name === "AbortError") return "对话已取消。";
-  if (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { name?: unknown }).name === "AbortError"
-  ) {
-    return "对话已取消。";
-  }
   const classified = classifyError(err);
   const details = [
     classified.statusCode ? `HTTP ${classified.statusCode}` : null,

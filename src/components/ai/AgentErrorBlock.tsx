@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertCircle, ChevronDown, Loader2, RefreshCcw } from "lucide-react";
+import { AlertCircle, ChevronDown, Loader2, RefreshCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   classifyError,
@@ -36,13 +36,29 @@ export function AgentErrorBlock({
     showInlineRaw && classified.raw.length > 160
       ? `${classified.raw.slice(0, 160)}…`
       : classified.raw;
+  const isCancelled = classified.category === "cancelled";
+  const Icon = isCancelled ? XCircle : AlertCircle;
 
   return (
-    <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-md border p-2.5 text-xs",
+        isCancelled
+          ? "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300"
+          : "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+      )}
+    >
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="font-medium">{classified.label}</div>
-        <div className="mt-0.5 text-red-600/90 dark:text-red-300/80">
+        <div
+          className={cn(
+            "mt-0.5",
+            isCancelled
+              ? "text-slate-600/90 dark:text-slate-300/80"
+              : "text-red-600/90 dark:text-red-300/80"
+          )}
+        >
           {classified.suggestion}
         </div>
         {showInlineRaw && (
@@ -76,7 +92,7 @@ export function AgentErrorBlock({
           </>
         )}
       </div>
-      {canRetry && onRetry && (
+      {!isCancelled && canRetry && onRetry && (
         <Button
           size="sm"
           variant="outline"
