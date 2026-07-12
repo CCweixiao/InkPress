@@ -150,6 +150,10 @@ function verifyTracedJSDomRuntime(base) {
   const jsdomDirs = [];
   walk(tracedRoot, (file, entry) => {
     if (!entry.isDirectory()) return;
+    if (entry.name.startsWith("jsdom-")) {
+      jsdomDirs.push(file);
+      return;
+    }
     try {
       const pkg = JSON.parse(fs.readFileSync(path.join(file, "package.json"), "utf8"));
       if (pkg.name === "jsdom") jsdomDirs.push(file);
@@ -168,7 +172,13 @@ function verifyTracedJSDomRuntime(base) {
       "fallback"
     );
     for (const file of ["single-byte.js", "single-byte.encodings.js"]) {
-      requirePath(path.join(bytesDir, file), path.relative(base, path.join(bytesDir, file)));
+      const target = path.join(bytesDir, file);
+      requirePath(target, path.relative(base, target));
+      const actual = fs.realpathSync(target);
+      const expected = path.resolve(target);
+      if (process.platform === "win32" && actual.toLowerCase() !== expected.toLowerCase()) {
+        fail(`traced jsdom 依赖仍是 junction：${path.relative(base, target)}`);
+      }
     }
   }
 }

@@ -1188,28 +1188,52 @@ function ensureCriticalTracedRuntimeFiles(): void {
     return result;
   };
 
-  const sourceFor = (version?: string): string => {
-    const escapedName = "@exodus+bytes";
+  const sourceFor = (packageName: string, version?: string): string => {
+    const escapedName = packageName.replace("/", "+");
     const sourceEntry = fs.readdirSync(projectPnpm, { withFileTypes: true }).find(
       (entry) =>
         entry.isDirectory() &&
         entry.name.startsWith(version ? `${escapedName}@${version}` : `${escapedName}@`)
     );
     if (!sourceEntry) {
-      throw new Error(`找不到 @exodus/bytes${version ? `@${version}` : ""} 的 pnpm 源目录`);
+      throw new Error(`找不到 ${packageName}${version ? `@${version}` : ""} 的 pnpm 源目录`);
     }
-    return path.join(projectPnpm, sourceEntry.name, "node_modules", "@exodus", "bytes");
+    return path.join(projectPnpm, sourceEntry.name, "node_modules", packageName);
+  };
+
+  const packageVersionAt = (dir: string): string | undefined => {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      return typeof pkg.version === "string" ? pkg.version : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const materializePackage = (source: string, destination: string) => {
+    let redirected = !fs.existsSync(destination);
+    if (!redirected) {
+      try {
+        const actual = fs.realpathSync(destination);
+        const expected = path.resolve(destination);
+        redirected = process.platform === "win32"
+          ? actual.toLowerCase() !== expected.toLowerCase()
+          : actual !== expected;
+      } catch {
+        redirected = true;
+      }
+    }
+    // Windows junction 在 win-unpacked 中可读，但 NSIS 安装后会失效；用实体目录替换。
+    if (redirected) {
+      fs.rmSync(destination, { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      safeCpSync(source, destination);
+    }
   };
 
   const patchBytesDir = (tracedDir: string) => {
-    let version: string | undefined;
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(tracedDir, "package.json"), "utf8"));
-      if (typeof pkg.version === "string") version = pkg.version;
-    } catch {
-      // 目标目录可能被 NFT 仅部分创建；回退到唯一已安装版本。
-    }
-    const sourceDir = sourceFor(version);
+    const sourceDir = sourceFor("@exodus/bytes", packageVersionAt(tracedDir));
+    materializePackage(sourceDir, tracedDir);
     for (const rel of requiredFiles) {
       const source = path.join(sourceDir, rel);
       const destination = path.join(tracedDir, rel);
@@ -1233,6 +1257,11 @@ function ensureCriticalTracedRuntimeFiles(): void {
   // 也按 Turbopack 的实际运行时解析路径强制补齐，而不依赖通用遍历是否命中。
   const tracedJsdomDirs = findPackageDirs("jsdom");
   for (const jsdomDir of tracedJsdomDirs) {
+    const htmlDir = path.join(jsdomDir, "node_modules", "html-encoding-sniffer");
+    materializePackage(
+      sourceFor("html-encoding-sniffer", packageVersionAt(htmlDir)),
+      htmlDir
+    );
     const bytesDir = path.join(
       jsdomDir,
       "node_modules",
