@@ -69,7 +69,7 @@ import {
   shouldPollRecoveringTurn,
 } from "@/lib/ai/recovery-state";
 import { mergeFinishedMessages } from "@/lib/ai/chat-message-merge";
-import { dedupeAdjacentAssistantTextParts } from "@/lib/ai/chat-message-display";
+import { dedupeAssistantDisplayParts } from "@/lib/ai/chat-message-display";
 import { findAssistantCheckpointBefore } from "@/lib/ai/agent-checkpoint";
 import {
   isArticleProposalPart,
@@ -1479,7 +1479,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
     () =>
       moveProposalPartsToEnd(
         message.role === "assistant"
-          ? dedupeAdjacentAssistantTextParts(filteredParts)
+          ? dedupeAssistantDisplayParts(filteredParts)
           : filteredParts
       ),
     [filteredParts, message.role]
