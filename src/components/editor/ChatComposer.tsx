@@ -151,6 +151,10 @@ function ChatComposerImpl({
     },
     [isComposing]
   );
+  // 流式 token/用量更新会重渲染 Composer 底栏；组合输入回调保持稳定，
+  // 让 StructuredChatInput 的 memo 边界不触碰 contenteditable DOM。
+  const handleCompositionStart = useCallback(() => setIsComposing(true), []);
+  const handleCompositionEnd = useCallback(() => setIsComposing(false), []);
 
   useEffect(() => {
     setAtActiveIndex(0);
@@ -423,8 +427,8 @@ function ChatComposerImpl({
           disabled={disabled || submitting}
           onDocumentChange={handleInputChange}
           onKeyDown={stableChatKeydown}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           placeholder={placeholder}
           className={cn(
             "min-h-20 w-full resize-none bg-transparent px-1 text-xs outline-none",

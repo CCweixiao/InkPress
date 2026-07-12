@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useImperativeHandle,
   useRef,
@@ -137,7 +138,7 @@ function placeCaretAtEnd(root: HTMLElement) {
   selection.addRange(range);
 }
 
-export const StructuredChatInput = forwardRef<
+export const StructuredChatInput = memo(forwardRef<
   StructuredChatInputHandle,
   {
     disabled?: boolean;
@@ -318,4 +319,4 @@ export const StructuredChatInput = forwardRef<
       }}
     />
   );
-});
+}));
