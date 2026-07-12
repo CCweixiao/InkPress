@@ -32,6 +32,6 @@ describe("createRunAbortSignal", () => {
 
   it("defaults to a long desktop-friendly agent timeout", () => {
     expect(agentRunTimeoutMs()).toBe(DEFAULT_AGENT_RUN_TIMEOUT_MS);
-    expect(DEFAULT_AGENT_RUN_TIMEOUT_MS).toBe(10 * 60 * 1000);
+    expect(DEFAULT_AGENT_RUN_TIMEOUT_MS).toBe(15 * 60 * 1000);
   });
 });

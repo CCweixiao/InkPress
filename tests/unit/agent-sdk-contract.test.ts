@@ -95,6 +95,6 @@ describe("agent options performance and SDK version contract", () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8")
     ) as { dependencies: Record<string, string> };
-    expect(pkg.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.195");
+    expect(pkg.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.207");
   });
 });

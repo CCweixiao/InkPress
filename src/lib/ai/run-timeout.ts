@@ -1,4 +1,4 @@
-export const DEFAULT_AGENT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_AGENT_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
 export type RunAbortReason =
   | { code: "request-aborted" }
