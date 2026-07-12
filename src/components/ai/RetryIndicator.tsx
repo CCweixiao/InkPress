@@ -81,11 +81,15 @@ function inferLabel(error: string): string {
     return "Key 无效";
   if (/429|rate limit|too many|限流|频繁|繁忙|overloaded/i.test(error))
     return "模型限流";
-  if (/5\d{2}|server error|服务异常|unavailable/i.test(error))
+  if (/5\d{2}|server error|服务异常|unavailable|bad gateway|overloaded/i.test(error))
     return "服务异常";
-  if (/timeout|timed? ?out|超时|ETIMEDOUT|ECONNRESET/i.test(error))
+  if (/timeout|timed? ?out|超时|ETIMEDOUT/i.test(error))
     return "请求超时";
-  if (/network|fetch failed|ECONNREFUSED|ENOTFOUND|网络/i.test(error))
+  if (
+    /network|fetch failed|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EAI_AGAIN|UND_ERR|socket|terminated|other side closed|proxy|dns|网络/i.test(
+      error
+    )
+  )
     return "网络异常";
   return "模型限流";
 }

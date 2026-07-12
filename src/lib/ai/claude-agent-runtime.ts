@@ -215,7 +215,7 @@ function isRetryableTransportError(error: Error): boolean {
   ) {
     return false;
   }
-  return /network|fetch failed|connection (?:error|reset|refused)|socket|econnreset|econnrefused|enotfound|eai_again|etimedout|ehostunreach|\b50[0234]\b|gateway|temporarily unavailable|overloaded/.test(
+  return /network|fetch failed|connection (?:error|reset|refused|closed|terminated|aborted)|socket|socket hang up|other side closed|premature close|terminated|und_err|undici|econnreset|econnrefused|econnaborted|enotfound|eai_again|enetunreach|enetdown|epipe|etimedout|ehostunreach|tunnel|proxy|dns|temporary failure|tls|ssl|certificate|cert_|\b50[0234]\b|gateway|bad gateway|server error|service unavailable|temporarily unavailable|overloaded/.test(
     text
   );
 }
@@ -224,6 +224,14 @@ function retryDelayMs(): number {
   const configured = Number(process.env.INKPRESS_NETWORK_RETRY_WAIT_MS);
   if (Number.isFinite(configured) && configured >= 0) return Math.min(configured, 10_000);
   return 800;
+}
+
+function maxNetworkRetries(): number {
+  const configured = Number(process.env.INKPRESS_NETWORK_MAX_RETRIES);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return Math.min(Math.floor(configured), 10);
+  }
+  return 10;
 }
 
 async function waitForRetry(signal: AbortSignal | undefined, delayMs: number): Promise<boolean> {
@@ -360,8 +368,8 @@ async function runOnce(
  * 运行 Claude Agent Runtime。
  *
  * - 用最近一条 user 消息作为单轮 prompt（多轮记忆由 Claude Agent SDK session/resume 承载）。
- * - SDK 自身的 api_retry 可安全重试单次 API 调用。对未产生 assistant 帧的瞬时网络故障，
- *   额外允许一次应用层 retry；一旦有输出/工具活动则绝不重放，避免副作用重复。
+ * - SDK 自身的 api_retry 可安全重试单次 API 调用。对未产生 assistant 帧的瞬时网络/模型服务故障，
+ *   额外允许应用层 retry（最多 10 次）；一旦有输出/工具活动则绝不重放，避免副作用重复。
  * - SDK 自身的轮内重试（api_retry）由 adapter 透传为 `data-agent-retry {level:"sdk"}`。
  * - 成功 → 返回 outcome（usage + usageSummary）；失败/中止 → throw error（携带 usageSummary，
  *   route catch 时持久化失败轮次用量，避免「失败不消耗」的误解）。
@@ -376,23 +384,29 @@ export async function runClaudeAgentRuntime(
   }
 
   let attempt = await runOnce(input, writer, prompt);
-  if (
-    attempt.error &&
-    attempt.safeToRetry &&
-    isRetryableTransportError(attempt.error) &&
-    await waitForRetry(input.abortSignal, retryDelayMs())
-  ) {
+  const maxRetries = maxNetworkRetries();
+  for (let retryAttempt = 1; retryAttempt <= maxRetries; retryAttempt += 1) {
+    if (
+      !attempt.error ||
+      !attempt.safeToRetry ||
+      !isRetryableTransportError(attempt.error)
+    ) {
+      break;
+    }
+    const delayMs = retryDelayMs();
     writer.write({
       type: "data-agent-retry",
       id: crypto.randomUUID(),
       data: {
         level: "turn",
-        attempt: 1,
-        maxRetries: 1,
-        delayMs: retryDelayMs(),
+        attempt: retryAttempt,
+        maxRetries,
+        delayMs,
+        waitMs: delayMs,
         error: attempt.error.message,
       },
     } as never);
+    if (!(await waitForRetry(input.abortSignal, delayMs))) break;
     attempt = await runOnce(
       {
         ...input,

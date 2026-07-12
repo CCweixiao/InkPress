@@ -25,6 +25,11 @@ export function AgentErrorBlock({
   const classified = useMemo(() => classifyError(error), [error]);
   const [expanded, setExpanded] = useState(false);
   const hasRaw = classified.raw && classified.raw !== classified.label;
+  const showInlineRaw = classified.category === "unknown" && hasRaw;
+  const inlineRaw =
+    showInlineRaw && classified.raw.length > 160
+      ? `${classified.raw.slice(0, 160)}…`
+      : classified.raw;
 
   return (
     <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
@@ -34,6 +39,11 @@ export function AgentErrorBlock({
         <div className="mt-0.5 text-red-600/90 dark:text-red-300/80">
           {classified.suggestion}
         </div>
+        {showInlineRaw && (
+          <div className="mt-1 rounded bg-red-100/60 px-2 py-1 font-mono text-[10px] leading-4 text-red-800 dark:bg-red-950 dark:text-red-200">
+            原始错误：{inlineRaw}
+          </div>
+        )}
         {hasRaw && (
           <>
             <button
@@ -44,15 +54,14 @@ export function AgentErrorBlock({
               <ChevronDown
                 className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")}
               />
-              {expanded ? "收起原始错误" : "展开原始错误"}
+              {expanded ? "收起诊断信息" : "展开诊断信息"}
             </button>
             {expanded && (
               <div className="mt-1 space-y-1">
-                {classified.statusCode && (
-                  <div className="text-[10px] font-medium text-red-500 dark:text-red-400">
-                    HTTP {classified.statusCode} · {classified.category}
-                  </div>
-                )}
+                <div className="text-[10px] font-medium text-red-500 dark:text-red-400">
+                  {classified.statusCode ? `HTTP ${classified.statusCode} · ` : ""}
+                  {classified.category}
+                </div>
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-red-100/70 p-2 text-[10px] leading-5 font-mono text-red-800 dark:bg-red-950 dark:text-red-200">
                   {classified.raw}
                 </pre>

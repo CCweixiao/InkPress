@@ -15,6 +15,7 @@ export type ErrorCategory =
   | "no-structured-output"
   | "rate-limit"
   | "timeout"
+  | "provider-service"
   | "network"
   | "unknown";
 
@@ -32,24 +33,70 @@ export type ClassifiedError = {
 
 type RetryErrorLike = {
   name?: string;
+  message?: string;
+  code?: string | number;
+  status?: number;
+  statusCode?: number;
   lastError?: { message?: string; statusCode?: number } | Error;
   errors?: Array<{ message?: string; statusCode?: number } | Error>;
-  cause?: { message?: string; statusCode?: number };
+  cause?: { message?: string; code?: string | number; statusCode?: number };
 };
+
+function stringifyFallback(err: unknown): string {
+  if (err instanceof Error) {
+    const extra = err as Error & {
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      cause?: { message?: unknown; code?: unknown };
+    };
+    const fields = [
+      err.name && err.name !== "Error" ? err.name : "",
+      err.message,
+      typeof extra.code === "string" ? `code=${extra.code}` : "",
+      typeof extra.status === "number" ? `status=${extra.status}` : "",
+      typeof extra.statusCode === "number"
+        ? `statusCode=${extra.statusCode}`
+        : "",
+      extra.cause?.message ? `cause=${String(extra.cause.message)}` : "",
+      extra.cause?.code ? `causeCode=${String(extra.cause.code)}` : "",
+    ].filter(Boolean);
+    return fields.join(" · ") || "请求失败";
+  }
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const retryErr = err as RetryErrorLike;
+    const fields = [
+      retryErr.name,
+      retryErr.message,
+      retryErr.code === undefined ? undefined : `code=${String(retryErr.code)}`,
+      retryErr.status === undefined ? undefined : `status=${retryErr.status}`,
+      retryErr.statusCode === undefined
+        ? undefined
+        : `statusCode=${retryErr.statusCode}`,
+      retryErr.cause?.message ? `cause=${retryErr.cause.message}` : undefined,
+      retryErr.cause?.code === undefined
+        ? undefined
+        : `causeCode=${String(retryErr.cause.code)}`,
+    ].filter(Boolean);
+    if (fields.length) return fields.join(" · ");
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return Object.prototype.toString.call(err);
+    }
+  }
+  return "请求失败";
+}
 
 /** 解包 AI_RetryError 等包装错误，取最底层的 message。 */
 function unwrapMessage(err: unknown): string {
-  const raw =
-    err instanceof Error
-      ? err.message
-      : typeof err === "string"
-        ? err
-        : "请求失败";
+  const raw = stringifyFallback(err);
   const retryErr = err as RetryErrorLike;
   if (retryErr?.name === "AI_RetryError" || /RetryError/i.test(raw)) {
     const inner =
       (retryErr.lastError instanceof Error
-        ? retryErr.lastError.message
+        ? stringifyFallback(retryErr.lastError)
         : retryErr.lastError?.message) ??
       retryErr.errors?.find((e) => e)?.message ??
       retryErr.cause?.message ??
@@ -77,6 +124,10 @@ const SETTINGS_HINT = "在「设置 → 系统配置 → AI 模型」中";
 /** 限流判定正则（rate-limit 规则与 isRateLimitError 共用）。 */
 const RATE_LIMIT_TEST =
   /rate limit|too many requests|429|访问量过大|访问频率|过于频繁|稍后再试|当前繁忙|频次限制|触发限流/i;
+const NETWORK_TEST =
+  /fetch failed|network|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|ENETDOWN|EPIPE|EHOSTUNREACH|failed to fetch|网络|socket|socket hang up|connection (?:error|reset|refused|closed|terminated|aborted)|other side closed|premature close|terminated|UND_ERR|undici|tunnel|proxy|代理|dns|temporary failure|TLS|SSL|certificate|CERT_/i;
+const PROVIDER_SERVICE_TEST =
+  /\b50[023]\b|server error|internal server error|bad gateway|service unavailable|temporarily unavailable|model overloaded|overloaded|模型服务异常|服务暂时不可用|服务不可用|上游服务异常/i;
 
 const RULES: Array<{
   category: ErrorCategory;
@@ -158,8 +209,14 @@ const RULES: Array<{
     suggestion: "请重试，或更换响应更快的模型。",
   },
   {
+    category: "provider-service",
+    test: PROVIDER_SERVICE_TEST,
+    label: "模型服务暂时不可用",
+    suggestion: "供应商服务可能短暂波动；系统会在安全条件下自动重试，也可以稍后手动重试或更换模型。",
+  },
+  {
     category: "network",
-    test: /fetch failed|network|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|failed to fetch|网络/i,
+    test: NETWORK_TEST,
     label: "网络连接失败",
     suggestion: "请检查网络或代理设置后重试。",
   },
@@ -171,6 +228,7 @@ function categoryByStatus(code: number): ErrorCategory | undefined {
   if (code === 401 || code === 403) return "auth";
   if (code === 402) return "quota";
   if (code === 408 || code === 504) return "timeout";
+  if (code === 500 || code === 502 || code === 503) return "provider-service";
   return undefined;
 }
 
@@ -178,9 +236,13 @@ function categoryByStatus(code: number): ErrorCategory | undefined {
 export function classifyError(err: unknown): ClassifiedError {
   const text = unwrapMessage(err);
   const statusCode = extractStatusCode(err);
-  // 状态码优先（精确），其次按消息文本（含厂商中文文案）匹配
+  // 显式网络层 code（如 UND_ERR_SOCKET/ECONNRESET）优先，其次状态码，再按供应商文案匹配。
+  const networkByText = NETWORK_TEST.test(text)
+    ? RULES.find((r) => r.category === "network")
+    : undefined;
   const byStatus = statusCode ? categoryByStatus(statusCode) : undefined;
   const matched =
+    networkByText ??
     (byStatus && RULES.find((r) => r.category === byStatus)) ??
     RULES.find((r) => r.test.test(text));
   if (matched) {

@@ -677,6 +677,24 @@ type AgentPart = Record<string, unknown>;
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object";
 
+function codeSourceApprovalKey(part: AgentPart): string | null {
+  if (part.type !== "data-code-source-approval" || !isObj(part.data)) return null;
+  const data = part.data as Record<string, unknown>;
+  const id = typeof data.id === "string" ? data.id.trim() : "";
+  if (id) return `id:${id}`;
+  const locator = typeof data.locator === "string" ? data.locator.trim() : "";
+  if (locator) return `locator:${locator}`;
+  return null;
+}
+
+function codeSourceApprovalOccurrenceKey(input: {
+  messageId: string;
+  partIndex: number;
+  approvalKey: string;
+}) {
+  return `${input.messageId}:${input.partIndex}:${input.approvalKey}`;
+}
+
 export type RenderCtx = {
   role: "user" | "assistant" | "system";
   targetKind: "article";
@@ -1400,6 +1418,7 @@ type AgentMessageRowProps = {
   onApprovalFailed?: RenderCtx["onApprovalFailed"];
   onToolApprovalStatusChange?: RenderCtx["onToolApprovalStatusChange"];
   profileId?: string | null;
+  visibleCodeSourceApprovalOccurrences: ReadonlySet<string>;
 };
 
 /**
@@ -1424,22 +1443,38 @@ const AgentMessageRow = memo(function AgentMessageRow({
   onApprovalFailed,
   onToolApprovalStatusChange,
   profileId,
+  visibleCodeSourceApprovalOccurrences,
 }: AgentMessageRowProps) {
   const allParts = message.parts as unknown as AgentPart[];
+  const visibleParts = useMemo(
+    () =>
+      allParts.filter((part, partIndex) => {
+        const approvalKey = codeSourceApprovalKey(part);
+        if (!approvalKey) return true;
+        return visibleCodeSourceApprovalOccurrences.has(
+          codeSourceApprovalOccurrenceKey({
+            messageId: message.id,
+            partIndex,
+            approvalKey,
+          })
+        );
+      }),
+    [allParts, message.id, visibleCodeSourceApprovalOccurrences]
+  );
   // data-agent-retry（SDK 轮内重试会连发多条）只保留最后一条，避免堆积。
   let lastRetryIdx = -1;
-  for (let i = allParts.length - 1; i >= 0; i -= 1) {
-    if (allParts[i].type === "data-agent-retry") {
+  for (let i = visibleParts.length - 1; i >= 0; i -= 1) {
+    if (visibleParts[i].type === "data-agent-retry") {
       lastRetryIdx = i;
       break;
     }
   }
   const filteredParts =
     lastRetryIdx >= 0
-      ? allParts.filter(
+      ? visibleParts.filter(
           (p, i) => p.type !== "data-agent-retry" || i === lastRetryIdx
         )
-      : allParts;
+      : visibleParts;
   const parts = useMemo(
     () =>
       moveProposalPartsToEnd(
@@ -1537,6 +1572,12 @@ const AgentMessageRow = memo(function AgentMessageRow({
   if (prev.messageIndex !== next.messageIndex) return false;
   if (prev.showUserDivider !== next.showUserDivider) return false;
   if (prev.isLastAssistant !== next.isLastAssistant) return false;
+  if (
+    prev.visibleCodeSourceApprovalOccurrences !==
+    next.visibleCodeSourceApprovalOccurrences
+  ) {
+    return false;
+  }
   if (prev.targetKind !== next.targetKind) return false;
   if (prev.settled !== next.settled) return false;
   // 已定格的历史行不受 busy 影响；活动行需随 busy 更新 rerun 禁用态等。
@@ -2335,6 +2376,26 @@ export function WritingAssistant({
     return ids;
   }, [messages, busy, lastAssistantIndex, prefixProposalIds]);
 
+  const visibleCodeSourceApprovalOccurrences = useMemo(() => {
+    const latestByApproval = new Map<string, string>();
+    for (const message of messages) {
+      const parts = message.parts as unknown as AgentPart[];
+      for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+        const approvalKey = codeSourceApprovalKey(parts[partIndex]);
+        if (!approvalKey) continue;
+        latestByApproval.set(
+          approvalKey,
+          codeSourceApprovalOccurrenceKey({
+            messageId: message.id,
+            partIndex,
+            approvalKey,
+          })
+        );
+      }
+    }
+    return new Set(latestByApproval.values());
+  }, [messages]);
+
   const chatTimeline = useMemo(
     () => buildSnippetReviewTimeline(messages, snippetReviews),
     [messages, snippetReviews]
@@ -2417,6 +2478,9 @@ export function WritingAssistant({
                   onApprovalFailed={handleApprovalFailed}
                   onToolApprovalStatusChange={handleToolApprovalStatusChange}
                   profileId={profileId}
+                  visibleCodeSourceApprovalOccurrences={
+                    visibleCodeSourceApprovalOccurrences
+                  }
                 />
               );
             })}

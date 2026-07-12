@@ -53,8 +53,15 @@ describe("classifyError", () => {
     expect(classifyError("ETIMEDOUT").category).toBe("timeout");
   });
 
+  it("归类大模型供应商服务异常", () => {
+    expect(classifyError({ message: "Service Unavailable", statusCode: 503 }).category).toBe("provider-service");
+    expect(classifyError("model overloaded, please try again").category).toBe("provider-service");
+  });
+
   it("归类网络错误", () => {
     expect(classifyError("fetch failed").category).toBe("network");
+    expect(classifyError("TypeError: terminated UND_ERR_SOCKET other side closed").category).toBe("network");
+    expect(classifyError("socket hang up").category).toBe("network");
   });
 
   it("归类 GitHub API 限流（code-source 403/429，文案不匹配通用 rate-limit 规则）", () => {
@@ -102,6 +109,24 @@ describe("classifyError", () => {
   it("非 Error/非 string 输入不抛错", () => {
     const r = classifyError({ foo: "bar" });
     expect(r.category).toBe("unknown");
+    expect(r.raw).toContain("foo");
+  });
+
+  it("保留错误对象的 code/status/cause 方便诊断", () => {
+    const cause = new Error("other side closed");
+    (cause as Error & { code: string }).code = "UND_ERR_SOCKET";
+    const error = new Error("terminated") as Error & {
+      code: string;
+      statusCode: number;
+      cause: Error;
+    };
+    error.code = "UND_ERR_SOCKET";
+    error.statusCode = 502;
+    error.cause = cause;
+    const r = classifyError(error);
+    expect(r.category).toBe("network");
+    expect(r.raw).toContain("UND_ERR_SOCKET");
+    expect(r.raw).toContain("other side closed");
   });
 
   it("raw 截断超长文本", () => {

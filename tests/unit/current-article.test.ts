@@ -24,6 +24,12 @@ describe("referencesCurrentArticle", () => {
     expect(referencesCurrentArticle("   ")).toBe(false);
     // 「文章」单出现但无当前/本/这/上面 等限定，不视为指代当前文章
     expect(referencesCurrentArticle("文章怎么排版比较好")).toBe(false);
+    expect(
+      referencesCurrentArticle(
+        "了解 爱娃纪项目 /Users/jielongping/OpenProjects/aiwaji 的孕期模式功能，梳理核心功能项，编写用户指引，扫描素材时，相似素材可以一列多个，本文是针对用户的功能介绍指引手册，不要涉及太多技术细节"
+      )
+    ).toBe(false);
+    expect(referencesCurrentArticle("本文是针对用户的功能介绍指引手册")).toBe(false);
   });
 });
 

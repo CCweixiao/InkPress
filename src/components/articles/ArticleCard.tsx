@@ -69,12 +69,14 @@ export function ArticleCard({
   // 列表视图：横向布局
   if (view === "list") {
     return (
-      <Link
-        href={`/editor/${article.id}`}
-        className="block h-full"
+      <Card
+        className="group flex h-full flex-row items-center overflow-hidden rounded-xl border-border/70 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg"
         title={hoverText}
       >
-        <Card className="h-full rounded-xl border-border/70 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40 transition-all duration-200 cursor-pointer group flex flex-row items-center overflow-hidden">
+        <Link
+          href={`/editor/${article.id}`}
+          className="flex min-w-0 flex-1 items-center"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={cover}
@@ -98,29 +100,28 @@ export function ArticleCard({
               <span>{formatDate(article.updatedAt)}</span>
             </div>
           </div>
-          <div className="pr-3">
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-600 p-1"
-              title="删除"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        </Card>
-      </Link>
+        </Link>
+        <div className="pr-3">
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="p-1 text-muted-foreground opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
+            title="删除"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </Card>
     );
   }
 
   // 网格视图：封面在上
   return (
-    <Link
-      href={`/editor/${article.id}`}
-      className="block h-full"
+    <Card
+      className="group relative flex h-full flex-col overflow-hidden rounded-xl border-border/70 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg"
       title={hoverText}
     >
-        <Card className="h-full rounded-xl border-border/70 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40 transition-all duration-200 cursor-pointer group overflow-hidden flex flex-col">
+      <Link href={`/editor/${article.id}`} className="flex h-full flex-col">
         <div className="aspect-video bg-muted/40 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -147,18 +148,16 @@ export function ArticleCard({
             <span>{article.theme?.name ?? "默认主题"}</span>
             <span>{formatDate(article.updatedAt)}</span>
           </div>
-          <div className="flex justify-end mt-2">
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-600 p-1"
-              title="删除"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
         </CardContent>
-      </Card>
-    </Link>
+      </Link>
+      <button
+        onClick={handleDelete}
+        disabled={deleting}
+        className="absolute bottom-3 right-3 z-10 rounded-md bg-background/85 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-red-600 group-hover:opacity-100"
+        title="删除"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </Card>
   );
 }

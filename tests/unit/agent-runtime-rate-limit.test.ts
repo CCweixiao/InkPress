@@ -170,6 +170,88 @@ describe("runClaudeAgentRuntime rate-limit handling", () => {
     expect(writes).toContainEqual(expect.objectContaining({ type: "data-agent-retry" }));
   });
 
+  it("无 assistant 活动的 Undici socket 错误也会重试一次", async () => {
+    vi.stubEnv("INKPRESS_NETWORK_RETRY_WAIT_MS", "0");
+    const error = new TypeError("terminated") as TypeError & {
+      code: string;
+      cause: Error & { code: string };
+    };
+    error.code = "UND_ERR_SOCKET";
+    error.cause = Object.assign(new Error("other side closed"), {
+      code: "UND_ERR_SOCKET",
+    });
+    const query = vi
+      .fn()
+      .mockImplementationOnce(async function* () {
+        throw error;
+      })
+      .mockReturnValueOnce(streamOf(resultMessage({ result: "已恢复", usage: {} })));
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
+    vi.doMock("@/lib/ai/claude-agent-options", () => ({
+      buildClaudeAgentOptions: vi.fn().mockResolvedValue({}),
+    }));
+    const { runClaudeAgentRuntime } = await import(
+      "../../src/lib/ai/claude-agent-runtime"
+    );
+    const writes: unknown[] = [];
+
+    await expect(
+      runClaudeAgentRuntime(
+        {
+          target: { kind: "article", id: "article-1", title: "Article", markdown: "Body" },
+          sessionId: "session-1",
+          messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "hello" }] } as UIMessage],
+        },
+        { write: (part) => writes.push(part) as never }
+      )
+    ).resolves.toMatchObject({});
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(writes).toContainEqual(expect.objectContaining({ type: "data-agent-retry" }));
+  });
+
+  it("连续网络错误最多自动重试 10 次", async () => {
+    vi.stubEnv("INKPRESS_NETWORK_RETRY_WAIT_MS", "0");
+    const query = vi.fn(async function* () {
+      throw new TypeError("fetch failed");
+    });
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
+    vi.doMock("@/lib/ai/claude-agent-options", () => ({
+      buildClaudeAgentOptions: vi.fn().mockResolvedValue({}),
+    }));
+    const { runClaudeAgentRuntime } = await import(
+      "../../src/lib/ai/claude-agent-runtime"
+    );
+    const writes: unknown[] = [];
+
+    await expect(
+      runClaudeAgentRuntime(
+        {
+          target: { kind: "article", id: "article-1", title: "Article", markdown: "Body" },
+          sessionId: "session-1",
+          messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "hello" }] } as UIMessage],
+        },
+        { write: (part) => writes.push(part) as never }
+      )
+    ).rejects.toThrow(/fetch failed/);
+
+    expect(query).toHaveBeenCalledTimes(11);
+    expect(
+      writes.filter(
+        (part) =>
+          typeof part === "object" &&
+          part !== null &&
+          (part as { type?: unknown }).type === "data-agent-retry"
+      )
+    ).toHaveLength(10);
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        type: "data-agent-retry",
+        data: expect.objectContaining({ attempt: 10, maxRetries: 10 }),
+      })
+    );
+  });
+
   it("已有 assistant 输出后网络错误不重放整轮", async () => {
     vi.stubEnv("INKPRESS_NETWORK_RETRY_WAIT_MS", "0");
     const query = vi.fn(async function* () {

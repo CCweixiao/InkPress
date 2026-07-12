@@ -12,11 +12,23 @@
  * 保守起见，要求带「当前/本/这/上面/现有/原文」等限定词。
  */
 const CURRENT_ARTICLE_PATTERN =
-  /当前(?:文章|正文|内容|这篇|编辑区|编辑器|文档)|本文(?:章|档|内容|正文)?|这(?:篇|份)(?:文章|正文|文档|内容)|上面的?(?:文章|正文|内容|这篇)|现有(?:文章|正文|文档)|原文章?|编辑区(?:里的?)?(?:文章|正文|内容|这篇)|当前这篇/i;
+  /当前(?:文章|正文|内容|这篇|编辑区|编辑器|文档)|本(?:文章|文档|内容|正文)|这(?:篇|份)(?:文章|正文|文档|内容)|上面的?(?:文章|正文|内容|这篇)|现有(?:文章|正文|文档)|原文章?|编辑区(?:里的?)?(?:文章|正文|内容|这篇)|当前这篇/i;
+
+const ARTICLE_OPERATION =
+  /(?:润色|改写|修改|编辑|处理|优化|扩写|缩写|精简|总结|摘要|提炼|审校|校对|翻译|排版|重写|续写|补全|检查|分析|评价|点评|调整|完善|整理|拆解|复盘|生成|提取|压缩)/;
+const STANDALONE_CURRENT_TEXT_PATTERN =
+  new RegExp(
+    `(?:${ARTICLE_OPERATION.source}.{0,12}本文|本文.{0,12}${ARTICLE_OPERATION.source})`,
+    "i"
+  );
 
 export function referencesCurrentArticle(raw: string): boolean {
   if (!raw) return false;
-  return CURRENT_ARTICLE_PATTERN.test(raw.trim());
+  const text = raw.trim();
+  return (
+    CURRENT_ARTICLE_PATTERN.test(text) ||
+    STANDALONE_CURRENT_TEXT_PATTERN.test(text)
+  );
 }
 
 /**
