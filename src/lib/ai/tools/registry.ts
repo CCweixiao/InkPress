@@ -627,7 +627,9 @@ const setArticleDigestTool: InkPressToolDefinition = {
     ctx.emit({
       type: "data-article-digest",
       id: crypto.randomUUID(),
-      data: { digest },
+      // 该工具已直接写入数据库；编辑器必须接收推进后的版本游标，
+      // 不能再带旧 revision 自动保存同一摘要。
+      data: { digest, contentRevision: ctx.target.contentRevision },
     } as never);
     return { ok: true, digest };
   },

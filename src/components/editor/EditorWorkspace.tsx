@@ -160,6 +160,8 @@ export function EditorWorkspace({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSave = useRef<Partial<ArticleData>>({});
   const serverRevision = useRef(article.contentRevision);
+  // Agent 工具/提案已经在服务端完成写入，回填时不要再触发同字段 autosave。
+  const serverSyncedValues = useRef(new Map<keyof ArticleData, unknown>());
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const dirty = useRef(false);
   const dirtyGeneration = useRef(0);
@@ -211,11 +213,22 @@ export function EditorWorkspace({
     }, 5000);
   };
 
+  const consumeServerSyncedValue = <K extends keyof ArticleData>(
+    field: K,
+    value: ArticleData[K]
+  ) => {
+    if (serverSyncedValues.current.get(field) !== value) return false;
+    serverSyncedValues.current.delete(field);
+    return true;
+  };
+
   const flushArticle = async (patch: Partial<ArticleData> = {}, keepalive = false) => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
+    // 空 flush 同样会推进服务端 revision；无脏数据时不发送。
+    if (!dirty.current && Object.keys(patch).length === 0) return;
     const payload: Partial<ArticleData> = {
       ...pendingSave.current,
       title,
@@ -256,11 +269,13 @@ export function EditorWorkspace({
   };
 
   useEffect(() => {
+    if (consumeServerSyncedValue("title", title)) return;
     save({ title });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title]);
 
   useEffect(() => {
+    if (consumeServerSyncedValue("contentMd", markdown)) return;
     save({ contentMd: markdown });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markdown]);
@@ -336,6 +351,7 @@ export function EditorWorkspace({
   // 摘要自动保存（AI 生成或手动编辑都会触发）
   useEffect(() => {
     // 仅当摘要与初始值不同时才保存，避免初次挂载空写
+    if (consumeServerSyncedValue("digest", digest)) return;
     if (digest !== article.digest) {
       save({ digest });
     }
@@ -400,9 +416,16 @@ export function EditorWorkspace({
         </div>
         <AIPanel
           onApply={setMarkdown}
-          onApplyDigest={setDigest}
+          onApplyDigest={(updated) => {
+            serverRevision.current = updated.contentRevision;
+            serverSyncedValues.current.set("digest", updated.digest);
+            setDigest(updated.digest);
+          }}
           onApplyArticle={(updated) => {
             serverRevision.current = updated.contentRevision;
+            serverSyncedValues.current.set("title", updated.title);
+            serverSyncedValues.current.set("contentMd", updated.contentMd);
+            serverSyncedValues.current.set("digest", updated.digest ?? "");
             setTitle(updated.title);
             setMarkdown(updated.contentMd);
             setDigest(updated.digest ?? "");

@@ -69,6 +69,10 @@ import {
   shouldPollRecoveringTurn,
 } from "@/lib/ai/recovery-state";
 import { mergeFinishedMessages } from "@/lib/ai/chat-message-merge";
+import {
+  dedupeAdjacentAssistantTextParts,
+  dedupeConsecutiveAssistantMessages,
+} from "@/lib/ai/chat-message-display";
 import { findAssistantCheckpointBefore } from "@/lib/ai/agent-checkpoint";
 import {
   isArticleProposalPart,
@@ -241,11 +245,13 @@ function ProposalCard({
   fallback,
   profileId,
   onApplied,
+  onBeforeApply,
 }: {
   proposalId: string;
   fallback?: ProposalSummary;
   profileId?: string | null;
   onApplied: (result: Record<string, unknown>) => void;
+  onBeforeApply?: () => Promise<void>;
 }) {
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
   const [status, setStatus] = useState(fallback?.status ?? "pending");
@@ -274,6 +280,8 @@ function ProposalCard({
     setError("");
     let markdown: string | undefined;
     try {
+      // 先落盘本地编辑，令 apply 与 autosave 使用同一 revision 顺序。
+      await onBeforeApply?.();
       if (
         detail?.proposalKind === "article" &&
         detail.targetId &&
@@ -682,6 +690,7 @@ export type RenderCtx = {
     digest: string | null;
     contentRevision: number;
   }) => void;
+  onFlushArticle?: () => Promise<void>;
   resumeAfterApproval: () => Promise<void>;
   /** 代码源授权状态变化（pending 时父级锁定 composer）。 */
   onApprovalStatusChange?: (status: string) => void;
@@ -993,6 +1002,7 @@ function renderToolPart(part: AgentPart, ctx: RenderCtx): ReactNode {
       <ProposalCard
         proposalId={proposalId}
         profileId={ctx.profileId}
+        onBeforeApply={ctx.onFlushArticle}
         onApplied={(result) => {
           ctx.onApplyArticle?.(
             result as {
@@ -1386,6 +1396,7 @@ type AgentMessageRowProps = {
   busy: boolean;
   setFullscreenText: (text: string | null) => void;
   onApplyArticle?: RenderCtx["onApplyArticle"];
+  onFlushArticle?: RenderCtx["onFlushArticle"];
   onRerun: NonNullable<RenderCtx["rerun"]>;
   onResumeAfterApproval: RenderCtx["resumeAfterApproval"];
   onApprovalStatusChange?: RenderCtx["onApprovalStatusChange"];
@@ -1409,6 +1420,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
   busy,
   setFullscreenText,
   onApplyArticle,
+  onFlushArticle,
   onRerun,
   onResumeAfterApproval,
   onApprovalStatusChange,
@@ -1432,8 +1444,13 @@ const AgentMessageRow = memo(function AgentMessageRow({
         )
       : allParts;
   const parts = useMemo(
-    () => moveProposalPartsToEnd(filteredParts),
-    [filteredParts]
+    () =>
+      moveProposalPartsToEnd(
+        message.role === "assistant"
+          ? dedupeAdjacentAssistantTextParts(filteredParts)
+          : filteredParts
+      ),
+    [filteredParts, message.role]
   );
   const items = useMemo(() => aggregateParts(parts), [parts]);
 
@@ -1443,6 +1460,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
       targetKind,
       setFullscreenText,
       onApplyArticle,
+      onFlushArticle,
       resumeAfterApproval: onResumeAfterApproval,
       onApprovalStatusChange,
       onApprovalFailed,
@@ -1458,6 +1476,7 @@ const AgentMessageRow = memo(function AgentMessageRow({
       targetKind,
       setFullscreenText,
       onApplyArticle,
+      onFlushArticle,
       onResumeAfterApproval,
       onApprovalStatusChange,
       onApprovalFailed,
@@ -1555,8 +1574,8 @@ export function WritingAssistant({
   }) => void;
   onFlushArticle?: () => Promise<void>;
   onFlushTarget?: () => Promise<void>;
-  /** Agent 摘要生成后镜像到编辑器 digest 字段（复用编辑器自动保存链路落盘）。 */
-  onApplyDigest?: (digest: string) => void;
+  /** Agent 摘要已在服务端落盘；回填编辑器并同步版本游标。 */
+  onApplyDigest?: (update: { digest: string; contentRevision: number }) => void;
 }) {
   const resolvedTargetId = targetId ?? articleId ?? "";
   const { providers, providerId, modelId, select: selectModel } =
@@ -2271,8 +2290,10 @@ export function WritingAssistant({
         p.data &&
         typeof p.data === "object"
       ) {
-        const d = (p.data as { digest?: unknown }).digest;
-        if (typeof d === "string") return d;
+        const d = p.data as { digest?: unknown; contentRevision?: unknown };
+        if (typeof d.digest === "string" && typeof d.contentRevision === "number") {
+          return { digest: d.digest, contentRevision: d.contentRevision };
+        }
       }
     }
     return null;
@@ -2282,8 +2303,9 @@ export function WritingAssistant({
   const appliedDigestRef = useRef<string | null>(null);
   useEffect(() => {
     if (!busy || !latestDigest || !onApplyDigest) return;
-    if (appliedDigestRef.current === latestDigest) return;
-    appliedDigestRef.current = latestDigest;
+    const key = `${latestDigest.contentRevision}:${latestDigest.digest}`;
+    if (appliedDigestRef.current === key) return;
+    appliedDigestRef.current = key;
     onApplyDigest(latestDigest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestDigest, busy]);
@@ -2316,9 +2338,20 @@ export function WritingAssistant({
     return ids;
   }, [messages, busy, lastAssistantIndex, prefixProposalIds]);
 
+  const visibleMessages = useMemo(
+    () => dedupeConsecutiveAssistantMessages(messages),
+    [messages]
+  );
+  const lastVisibleAssistantIndex = useMemo(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
+      const index = messages.indexOf(visibleMessages[i]);
+      if (index >= 0 && visibleMessages[i].role === "assistant") return index;
+    }
+    return -1;
+  }, [messages, visibleMessages]);
   const chatTimeline = useMemo(
-    () => buildSnippetReviewTimeline(messages, snippetReviews),
-    [messages, snippetReviews]
+    () => buildSnippetReviewTimeline(visibleMessages, snippetReviews),
+    [visibleMessages, snippetReviews]
   );
 
   return (
@@ -2346,7 +2379,7 @@ export function WritingAssistant({
             加载写作会话…
           </div>
         ) : !hasAssistantTimelineContent({
-            messageCount: messages.length,
+            messageCount: visibleMessages.length,
             proposalCount: proposals.length,
             reviewCount: snippetReviews.length,
           }) ? (
@@ -2384,13 +2417,14 @@ export function WritingAssistant({
                   key={message.id}
                   message={message}
                   messageIndex={idx}
-                  settled={!(busy && idx === lastAssistantIndex)}
-                  isLastAssistant={idx === lastAssistantIndex}
+                  settled={!(busy && idx === lastVisibleAssistantIndex)}
+                  isLastAssistant={idx === lastVisibleAssistantIndex}
                   showUserDivider={idx > 0 && message.role === "user"}
                   targetKind={targetKind}
                   busy={busy}
                   setFullscreenText={setFullscreenText}
                   onApplyArticle={onApplyArticle}
+                  onFlushArticle={onFlushTarget ?? onFlushArticle}
                   onRerun={stableRerun}
                   onResumeAfterApproval={stableResumeAfterApproval}
                   onApprovalStatusChange={handleApprovalStatusChange}
@@ -2417,6 +2451,7 @@ export function WritingAssistant({
                   proposalId={proposal.id}
                   fallback={proposal}
                   profileId={profileId}
+                  onBeforeApply={onFlushTarget ?? onFlushArticle}
                   onApplied={(result) => {
                     onApplyArticle?.(
                       result as {

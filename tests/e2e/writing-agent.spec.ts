@@ -189,6 +189,7 @@ test("shows a persisted proposal and applies it to the editor", async ({ page, r
           title: "新的文章标题",
           contentMd: "# 新的文章标题\n\n这是 Agent 调整后的正文。",
           digest: "新的摘要",
+          contentRevision: 1,
         },
       }),
     });

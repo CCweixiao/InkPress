@@ -182,5 +182,11 @@ describe("propose_article_revision", () => {
       data: { digest: "新摘要", contentRevision: { increment: 1 } },
     });
     expect(ctx.target.contentRevision).toBe(5);
+    expect(ctx.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "data-article-digest",
+        data: { digest: "新摘要", contentRevision: 5 },
+      })
+    );
   });
 });

@@ -42,7 +42,7 @@ export function AIPanel({
     digest?: string;
   }) => Promise<void>;
   /** Agent 摘要生成后镜像到编辑器 digest 字段。 */
-  onApplyDigest?: (digest: string) => void;
+  onApplyDigest?: (update: { digest: string; contentRevision: number }) => void;
   /** 灵感 tab snippet 插入回调，下传给 SnippetInsertPanel。Task 6 由 EditorWorkspace 注入。 */
   onInsertMarkdown?: (md: string) => void;
 }) {
