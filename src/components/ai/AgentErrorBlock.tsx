@@ -3,7 +3,10 @@
 import { useMemo, useState } from "react";
 import { AlertCircle, ChevronDown, Loader2, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { classifyError } from "@/lib/ai/error-classify";
+import {
+  classifyError,
+  parseFormattedErrorMessage,
+} from "@/lib/ai/error-classify";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,7 +25,10 @@ export function AgentErrorBlock({
   retrying?: boolean;
   canRetry?: boolean;
 }) {
-  const classified = useMemo(() => classifyError(error), [error]);
+  const classified = useMemo(() => {
+    const message = typeof error === "string" ? error : error.message;
+    return message ? parseFormattedErrorMessage(message) ?? classifyError(error) : classifyError(error);
+  }, [error]);
   const [expanded, setExpanded] = useState(false);
   const hasRaw = classified.raw && classified.raw !== classified.label;
   const showInlineRaw = classified.category === "unknown" && hasRaw;

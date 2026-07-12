@@ -36,7 +36,7 @@ import {
 } from "@/lib/ai/chat-turn-lease";
 import { replaceLastUserText } from "@/lib/ai/message-overrides";
 import { abortApproval } from "@/lib/ai/pending-approvals";
-import { classifyError } from "@/lib/ai/error-classify";
+import { classifyError, formatErrorForUser } from "@/lib/ai/error-classify";
 import {
   CAPABILITY_REPLY,
   CLARIFY_REPLY,
@@ -154,12 +154,37 @@ function isAbortError(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown) {
-  // 中止（用户取消/断连）：返回中性文案。此时客户端通常已断开，不会展示；仅用于流内收尾。
-  if (isAbortError(error)) return "对话已取消。";
-  // 统一委托 classifyError（前后端共享同一份归类规则，含厂商中文限流文案与 statusCode 探测）。
-  // 注意：streamText 的 onError 返回值会被忽略；真正面向用户的归类展示由前端
-  // AgentErrorBlock 对 useChat 转发的 error 调用同一份 classifyError 完成。
-  return classifyError(error).label;
+  return formatErrorForUser(error);
+}
+
+function logAgentRuntimeError(input: {
+  error: unknown;
+  sessionId: string;
+  turnId: string;
+  targetId: string;
+  providerId?: string | null;
+  modelId?: string | null;
+  sdkSessionId?: string | null;
+  phase: "stream" | "request";
+}) {
+  if (isAbortError(input.error)) return;
+  const classified = classifyError(input.error);
+  log.error(
+    {
+      err: input.error,
+      errorCategory: classified.category,
+      errorStatusCode: classified.statusCode,
+      errorRaw: classified.raw,
+      sessionId: input.sessionId,
+      turnId: input.turnId,
+      targetId: input.targetId,
+      providerId: input.providerId,
+      modelId: input.modelId,
+      sdkSessionId: input.sdkSessionId,
+      phase: input.phase,
+    },
+    "Agent 对话运行失败"
+  );
 }
 
 function writeStep(
@@ -911,6 +936,16 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           const mirrorHealthy = readMirrorHealthyFromError(error);
           const sdkSessionId =
             readSessionFromError(error) ?? effectiveClaudeAgentSessionId ?? null;
+          logAgentRuntimeError({
+            error,
+            sessionId: session.id,
+            turnId,
+            targetId: target.id,
+            providerId: newProviderId,
+            modelId: newModelId,
+            sdkSessionId,
+            phase: "stream",
+          });
           // 状态必须在错误/中断三路都落库；即便 sessionId 与旧值相同，也要从 running 收口到
           // interrupted/error（PDC §7.3），否则 UI 会误判为仍在运行。
           const errorUpdate = await prisma.agentChatSession
@@ -987,10 +1022,13 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
     });
     return createUIMessageStreamResponse({ stream });
   } catch (error) {
-    log.error(
-      { err: error, sessionId: session.id, targetId: target.id },
-      "Agent 对话失败"
-    );
+    logAgentRuntimeError({
+      error,
+      sessionId: session.id,
+      turnId,
+      targetId: target.id,
+      phase: "request",
+    });
     return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
 });

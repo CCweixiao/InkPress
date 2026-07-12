@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyError } from "../../src/lib/ai/error-classify";
+import {
+  classifyError,
+  formatErrorForUser,
+  parseFormattedErrorMessage,
+} from "../../src/lib/ai/error-classify";
 
 describe("classifyError", () => {
   it("归类余额/配额错误", () => {
@@ -132,5 +136,20 @@ describe("classifyError", () => {
   it("raw 截断超长文本", () => {
     const long = "x".repeat(1000);
     expect(classifyError(long).raw.length).toBeLessThanOrEqual(500);
+  });
+
+  it("格式化给用户的错误包含可解析诊断信息并脱敏", () => {
+    const message = formatErrorForUser(
+      new Error("upstream exploded api_key=sk-super-secret-token")
+    );
+    expect(message).toContain("诊断：");
+    expect(message).not.toContain("sk-super-secret-token");
+
+    const parsed = parseFormattedErrorMessage(message);
+    expect(parsed).toMatchObject({
+      category: "unknown",
+      label: "请求失败，请稍后重试",
+    });
+    expect(parsed?.raw).toContain("[REDACTED]");
   });
 });

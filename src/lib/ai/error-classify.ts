@@ -31,6 +31,20 @@ export type ClassifiedError = {
   statusCode?: number;
 };
 
+const DIAGNOSTIC_PREFIX = "诊断：";
+
+function redactSensitiveText(text: string): string {
+  return text
+    .replace(
+      /(api[_-]?key|token|authorization|auth[_-]?token|secret|password)(["'\s:=]+)([A-Za-z0-9._~+/=-]{8,})/gi,
+      "$1$2[REDACTED]"
+    )
+    .replace(
+      /(sk-[A-Za-z0-9_-]{12,}|[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})/g,
+      "[REDACTED]"
+    );
+}
+
 type RetryErrorLike = {
   name?: string;
   message?: string;
@@ -260,6 +274,50 @@ export function classifyError(err: unknown): ClassifiedError {
     suggestion: "若多次失败，请检查模型与网络配置。",
     raw: text.slice(0, 500),
     statusCode,
+  };
+}
+
+export function formatErrorForUser(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") return "对话已取消。";
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { name?: unknown }).name === "AbortError"
+  ) {
+    return "对话已取消。";
+  }
+  const classified = classifyError(err);
+  const details = [
+    classified.statusCode ? `HTTP ${classified.statusCode}` : null,
+    `category=${classified.category}`,
+    classified.raw ? `raw=${redactSensitiveText(classified.raw)}` : null,
+  ].filter(Boolean);
+  return [
+    classified.label,
+    classified.suggestion,
+    details.length ? `${DIAGNOSTIC_PREFIX}${details.join(" · ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function parseFormattedErrorMessage(message: string): ClassifiedError | null {
+  const line = message
+    .split(/\r?\n/)
+    .find((part) => part.trim().startsWith(DIAGNOSTIC_PREFIX));
+  if (!line) return null;
+  const diagnostic = line.trim().slice(DIAGNOSTIC_PREFIX.length);
+  const statusMatch = diagnostic.match(/HTTP\s+(\d{3})/i);
+  const categoryMatch = diagnostic.match(/category=([a-z-]+)/i);
+  const rawMatch = diagnostic.match(/(?:^| · )raw=([\s\S]*)$/);
+  const category = categoryMatch?.[1] as ErrorCategory | undefined;
+  if (!category) return null;
+  return {
+    category,
+    label: message.split(/\r?\n/)[0]?.trim() || "请求失败，请稍后重试",
+    suggestion: message.split(/\r?\n/)[1]?.trim() || "若多次失败，请检查模型与网络配置。",
+    raw: rawMatch?.[1] ?? "",
+    statusCode: statusMatch ? Number(statusMatch[1]) : undefined,
   };
 }
 
