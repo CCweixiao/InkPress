@@ -76,8 +76,19 @@ function verifyBundle(base) {
     "node_modules/next/package.json",
     "node_modules/better-sqlite3/package.json",
     "node_modules/bytenode/lib/index.js",
+    "node_modules/jsdom/package.json",
+    "node_modules/@exodus/bytes/fallback/single-byte.encodings.js",
   ];
   for (const rel of required) requirePath(path.join(base, rel), rel);
+  const tracedRoot = path.join(base, ".next", "node_modules");
+  if (fs.existsSync(tracedRoot)) {
+    for (const entry of fs.readdirSync(tracedRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith("jsdom-")) {
+        const nested = path.join(tracedRoot, entry.name, "node_modules");
+        if (fs.existsSync(nested)) fail(`traced jsdom 仍含深层 node_modules：${path.relative(base, nested)}`);
+      }
+    }
+  }
   const buildId = fs.readFileSync(path.join(base, ".next", "BUILD_ID"), "utf8").trim();
   if (!buildId) fail("bundle 的 .next/BUILD_ID 为空");
 
@@ -110,7 +121,6 @@ function verifyBundle(base) {
   verifyPlatformPackageSet(base);
   verifyPlatformPackageVersions(base);
   verifyResourceMirror(base);
-  verifyTracedJSDomRuntime(base);
 
   const badRoots = [".env", "dist", "storage", "dev.database", "graphify-out", "inkpress-service"];
   for (const rel of badRoots) {
@@ -138,49 +148,6 @@ function verifyBundle(base) {
   }
   for (const file of nativeBindings) verifyNativeArch(file);
   console.log(`✓ bundle 校验通过：${formatSize(sizeOf(base))}，${nativeBindings.length} 个原生绑定，arch=${arch}`);
-}
-
-/**
- * Next Turbopack 会让 jsdom 从带 hash 的 traced 目录加载深层 ESM 依赖。
- * 该路径曾在 Windows 安装包中被遗漏，必须同时校验 standalone 与 win-unpacked 成品。
- */
-function verifyTracedJSDomRuntime(base) {
-  const tracedRoot = path.join(base, ".next", "node_modules");
-  if (!fs.existsSync(tracedRoot)) return;
-  const jsdomDirs = [];
-  walk(tracedRoot, (file, entry) => {
-    if (!entry.isDirectory()) return;
-    if (entry.name.startsWith("jsdom-")) {
-      jsdomDirs.push(file);
-      return;
-    }
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(file, "package.json"), "utf8"));
-      if (pkg.name === "jsdom") jsdomDirs.push(file);
-    } catch {
-      // 非包目录。
-    }
-  });
-  for (const jsdomDir of jsdomDirs) {
-    const bytesDir = path.join(
-      jsdomDir,
-      "node_modules",
-      "html-encoding-sniffer",
-      "node_modules",
-      "@exodus",
-      "bytes",
-      "fallback"
-    );
-    for (const file of ["single-byte.js", "single-byte.encodings.js"]) {
-      const target = path.join(bytesDir, file);
-      requirePath(target, path.relative(base, target));
-      const actual = fs.realpathSync(target);
-      const expected = path.resolve(target);
-      if (process.platform === "win32" && actual.toLowerCase() !== expected.toLowerCase()) {
-        fail(`traced jsdom 依赖仍是 junction：${path.relative(base, target)}`);
-      }
-    }
-  }
 }
 
 function verifyArtifact() {

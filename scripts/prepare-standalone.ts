@@ -193,6 +193,10 @@ materializeTracedNextPackageDependencies();
 // NFT 对 @exodus/bytes/fallback/single-byte.encodings.js 等文件的追踪不全，
 // 仅靠 copyRuntimeDeps 的依赖链解析有时无法覆盖到深层嵌套包。
 patchAllTracedPackageGaps();
+// Turbopack 仍会以 jsdom-<hash> 作为外部入口，但其深层 node_modules 在 Windows
+// 安装路径下会超过 NSIS 的传统路径长度限制。jsdom 已在 external 闭包中根级完整保留，
+// 删除 traced 入口的嵌套副本，让 Node 向上解析到 standalone/node_modules。
+flattenTracedJsdomDependencies();
 
 // 重写 server.js 内硬编码的项目绝对路径（outputFileTracingRoot / turbopack.root）。
 // Next.js 构建时把构建机器的项目根写入 nextConfig，运行时 require-hook 用它解析
@@ -247,9 +251,6 @@ void (async () => {
   if (finalMaterialized > 0) {
     console.log(`  ✓ 最终物化 ${finalMaterialized} 处运行时 symlink`);
   }
-  // Next 16 的 Turbopack NFT 会漏掉 jsdom 深层 ESM 文件；在所有裁剪和物化结束后
-  // 逐一修复并验证，确保真正写入安装包的最终目录可直接加载。
-  ensureCriticalTracedRuntimeFiles();
   // 10. 复制 bytenode 到 bundle/node_modules（运行时薄加载器 require('bytenode') 用）
   ensureBytenodeInBundle();
   // 11. server.js → server.jsc + 薄加载器（V8 字节码保护，防逆向）
@@ -1131,152 +1132,21 @@ function patchAllTracedPackageGaps(): void {
   }
 }
 
-/**
- * 修复并验证 Next Turbopack traced 的关键 ESM 运行时文件。
- *
- * jsdom 的 html-encoding-sniffer 会动态 import
- * @exodus/bytes/fallback/single-byte.encodings.js；NFT 曾多次漏追踪这个文件。
- * 这个检查必须在 slimBundle 和最终 symlink 物化之后运行，避免构建阶段“补过”
- * 但最终交给 electron-builder 的目录里仍然缺失文件。
- */
-function ensureCriticalTracedRuntimeFiles(): void {
+/** 让 jsdom 的 traced 入口复用根级 external 依赖闭包，避免 Windows 深层安装路径。 */
+function flattenTracedJsdomDependencies(): void {
   const nextNm = path.join(bundle, ".next", "node_modules");
   if (!fs.existsSync(nextNm)) return;
-
-  const projectPnpm = path.join(root, "node_modules", ".pnpm");
-  const requiredFiles = ["fallback/single-byte.js", "fallback/single-byte.encodings.js"];
-  const findPackageDirs = (packageName: string): string[] => {
-    const result: string[] = [];
-    const visited = new Set<string>();
-
-    const walk = (dir: string) => {
-      try {
-        const real = fs.realpathSync(dir);
-        if (visited.has(real)) return;
-        visited.add(real);
-      } catch {
-        return;
-      }
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name);
-        let isDirectory = entry.isDirectory();
-        // Windows NFT 输出中的依赖经常是 junction；Dirent 不会把它标成目录。
-        if (!isDirectory && entry.isSymbolicLink()) {
-          try {
-            isDirectory = fs.statSync(full).isDirectory();
-          } catch {
-            continue;
-          }
-        }
-        if (!isDirectory) continue;
-        try {
-          const pkg = JSON.parse(fs.readFileSync(path.join(full, "package.json"), "utf8"));
-          if (pkg.name === packageName) result.push(full);
-        } catch {
-          // 非包目录，继续向下查找深层 node_modules。
-        }
-        walk(full);
-      }
-    };
-    walk(nextNm);
-    return result;
-  };
-
-  const sourceFor = (packageName: string, version?: string): string => {
-    const escapedName = packageName.replace("/", "+");
-    const sourceEntry = fs.readdirSync(projectPnpm, { withFileTypes: true }).find(
-      (entry) =>
-        entry.isDirectory() &&
-        entry.name.startsWith(version ? `${escapedName}@${version}` : `${escapedName}@`)
-    );
-    if (!sourceEntry) {
-      throw new Error(`找不到 ${packageName}${version ? `@${version}` : ""} 的 pnpm 源目录`);
+  let flattened = 0;
+  for (const entry of fs.readdirSync(nextNm, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith("jsdom-")) continue;
+    const nestedNodeModules = path.join(nextNm, entry.name, "node_modules");
+    if (fs.existsSync(nestedNodeModules)) {
+      fs.rmSync(nestedNodeModules, { recursive: true, force: true });
+      flattened++;
     }
-    return path.join(projectPnpm, sourceEntry.name, "node_modules", packageName);
-  };
-
-  const packageVersionAt = (dir: string): string | undefined => {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-      return typeof pkg.version === "string" ? pkg.version : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-
-  const materializePackage = (source: string, destination: string) => {
-    let redirected = !fs.existsSync(destination);
-    if (!redirected) {
-      try {
-        const actual = fs.realpathSync(destination);
-        const expected = path.resolve(destination);
-        redirected = process.platform === "win32"
-          ? actual.toLowerCase() !== expected.toLowerCase()
-          : actual !== expected;
-      } catch {
-        redirected = true;
-      }
-    }
-    // Windows junction 在 win-unpacked 中可读，但 NSIS 安装后会失效；用实体目录替换。
-    if (redirected) {
-      fs.rmSync(destination, { recursive: true, force: true });
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
-      safeCpSync(source, destination);
-    }
-  };
-
-  const patchBytesDir = (tracedDir: string) => {
-    const sourceDir = sourceFor("@exodus/bytes", packageVersionAt(tracedDir));
-    materializePackage(sourceDir, tracedDir);
-    for (const rel of requiredFiles) {
-      const source = path.join(sourceDir, rel);
-      const destination = path.join(tracedDir, rel);
-      if (!fs.existsSync(source)) {
-        throw new Error(`运行时依赖源文件缺失：${source}`);
-      }
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
-      // 强制覆盖，避免 NFT 产出的悬空链接或残缺文件逃过 existsSync 判断。
-      fs.copyFileSync(source, destination);
-      if (!fs.existsSync(destination)) {
-        throw new Error(`运行时依赖补齐失败：${destination}`);
-      }
-    }
-  };
-
-  // 补齐所有可遍历的 traced @exodus/bytes 包。
-  const tracedBytesDirs = findPackageDirs("@exodus/bytes");
-  for (const tracedDir of tracedBytesDirs) patchBytesDir(tracedDir);
-
-  // 关键：即使 html-encoding-sniffer / @exodus 以 junction 形式嵌套在 jsdom 中，
-  // 也按 Turbopack 的实际运行时解析路径强制补齐，而不依赖通用遍历是否命中。
-  const tracedJsdomDirs = findPackageDirs("jsdom");
-  for (const jsdomDir of tracedJsdomDirs) {
-    const htmlDir = path.join(jsdomDir, "node_modules", "html-encoding-sniffer");
-    materializePackage(
-      sourceFor("html-encoding-sniffer", packageVersionAt(htmlDir)),
-      htmlDir
-    );
-    const bytesDir = path.join(
-      jsdomDir,
-      "node_modules",
-      "html-encoding-sniffer",
-      "node_modules",
-      "@exodus",
-      "bytes"
-    );
-    patchBytesDir(bytesDir);
   }
-
-  if (tracedBytesDirs.length > 0 || tracedJsdomDirs.length > 0) {
-    console.log(
-      `  ✓ 验证并补齐 ${tracedBytesDirs.length} 个 traced @exodus/bytes、${tracedJsdomDirs.length} 个 jsdom 嵌套 ESM 依赖`
-    );
+  if (flattened > 0) {
+    console.log(`  ✓ 扁平化 ${flattened} 个 traced jsdom 依赖树（使用根级 external 闭包）`);
   }
 }
 
@@ -2034,11 +1904,26 @@ function verifyPreparedBundle(): void {
     "node_modules/next/package.json",
     "node_modules/better-sqlite3/package.json",
     "node_modules/bytenode/lib/index.js",
+    "node_modules/jsdom/package.json",
+    "node_modules/@exodus/bytes/fallback/single-byte.encodings.js",
   ];
   for (const rel of required) {
     if (!fs.existsSync(path.join(bundle, rel))) {
       console.error(`  ✗ bundle 完整性失败：缺少 ${rel}`);
       process.exit(1);
+    }
+  }
+
+  const tracedJsdomRoot = path.join(bundle, ".next", "node_modules");
+  if (fs.existsSync(tracedJsdomRoot)) {
+    for (const entry of fs.readdirSync(tracedJsdomRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith("jsdom-")) {
+        const nested = path.join(tracedJsdomRoot, entry.name, "node_modules");
+        if (fs.existsSync(nested)) {
+          console.error(`  ✗ traced jsdom 仍含深层 node_modules：${path.relative(bundle, nested)}`);
+          process.exit(1);
+        }
+      }
     }
   }
 
