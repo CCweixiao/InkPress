@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Send, Loader2, ImagePlus, ImageIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Send, Loader2, ImagePlus, ImageIcon, Library } from "lucide-react";
 import {
   DialogHeader,
   DialogTitle,
@@ -21,6 +21,14 @@ import {
 } from "@/components/ui/select";
 import type { ThemeOption } from "@/components/editor/EditorWorkspace";
 import { PublishPreview } from "./PublishPreview";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription as PickerDialogDescription,
+  DialogHeader as PickerDialogHeader,
+  DialogTitle as PickerDialogTitle,
+} from "@/components/ui/dialog";
+import type { Asset } from "@/types/asset";
 
 /**
  * 微信公众号发布面板（api-push 渠道）。
@@ -54,6 +62,10 @@ export function WechatPublishPanel({
   );
   const [cover, setCover] = useState<string | null>(coverMediaId);
   const [coverUploading, setCoverUploading] = useState(false);
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [coverAssets, setCoverAssets] = useState<Asset[]>([]);
+  const [coverAssetsLoading, setCoverAssetsLoading] = useState(false);
+  const [selectingAssetId, setSelectingAssetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [resultMeta, setResultMeta] = useState<{
@@ -65,62 +77,71 @@ export function WechatPublishPanel({
   >([]);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!coverPickerOpen) return;
+    let active = true;
+    setCoverAssetsLoading(true);
+    fetch("/api/materials?kind=image")
+      .then((response) => response.json())
+      .then((data) => {
+        if (active) setCoverAssets(Array.isArray(data.assets) ? data.assets : []);
+      })
+      .catch(() => {
+        if (active) setError("素材库图片加载失败，请稍后重试。");
+      })
+      .finally(() => {
+        if (active) setCoverAssetsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [coverPickerOpen]);
+
   async function handleUploadCover(file: File) {
     setCoverUploading(true);
     setError(null);
     try {
-      // 1) 先上传到 OSS 素材库（作为本地文章封面），拿到稳定 URL
-      const ossFd = new FormData();
-      ossFd.append("file", file);
-      ossFd.append("articleId", articleId);
-      const ossRes = await fetch("/api/upload", { method: "POST", body: ossFd });
-      const ossData = await ossRes.json();
-      if (!ossRes.ok) throw new Error(ossData.error || "封面上传到素材库失败");
-      const assetId: string | undefined = ossData.asset?.id;
-      const coverUrl: string | undefined = ossData.asset?.url;
-
-      // 2) 再上传到微信拿 media_id（推送草稿箱必需）。失败不阻塞，仅提示
-      let wxMediaId: string | null = null;
-      let wxError: string | null = null;
-      try {
-        const wxFd = new FormData();
-        wxFd.append("media", file);
-        wxFd.append("kind", "cover");
-        const wxRes = await fetch("/api/wechat/upload-material", {
-          method: "POST",
-          body: wxFd,
-        });
-        const wxData = await wxRes.json();
-        if (wxRes.ok) {
-          wxMediaId = wxData.mediaId;
-        } else {
-          wxError = wxData.error || "微信封面上传失败";
-        }
-      } catch (e) {
-        wxError = e instanceof Error ? e.message : "微信封面上传失败";
+      const form = new FormData();
+      form.append("file", file);
+      form.append("articleId", articleId);
+      const response = await fetch("/api/wechat/cover", { method: "POST", body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.mediaId) {
+        throw new Error(data.error || "封面上传失败");
       }
-
-      // 3) 持久化到文章：OSS 封面 id + 微信 media_id（若有）+ 封面 URL（列表展示直接读）
-      setCover(wxMediaId ?? "__oss_only__");
-      await fetch(`/api/articles/${articleId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          coverAssetId: assetId ?? null,
-          coverMediaId: wxMediaId,
-          coverUrl: coverUrl ?? null,
-        }),
-      });
-
-      if (wxError) {
-        setError(
-          `封面已保存到素材库。但微信端上传未成功（${wxError}）。推送草稿箱前需在公众号「基本配置 → IP白名单」加入当前 IP。`
-        );
-      }
+      setCover(data.mediaId);
+      // 只有微信上传、本地素材入库、文章绑定三步都成功，服务端才返回成功。
+      setCoverAssets((current) =>
+        data.asset && !current.some((asset) => asset.id === data.asset.id)
+          ? [data.asset as Asset, ...current]
+          : current
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "封面上传失败");
     } finally {
       setCoverUploading(false);
+    }
+  }
+
+  async function handleSelectCoverAsset(asset: Asset) {
+    setSelectingAssetId(asset.id);
+    setError(null);
+    try {
+      const response = await fetch("/api/wechat/cover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ articleId, assetId: asset.id }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.mediaId) {
+        throw new Error(data.error || "设置素材库封面失败");
+      }
+      setCover(data.mediaId);
+      setCoverPickerOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "设置素材库封面失败");
+    } finally {
+      setSelectingAssetId(null);
     }
   }
 
@@ -294,65 +315,57 @@ export function WechatPublishPanel({
             <div className="space-y-1.5">
               <Label>封面图（必填）</Label>
               {cover ? (
-                <div
-                  className={
-                    "flex items-center gap-2 rounded-md border px-3 py-2 " +
-                    (cover === "__oss_only__"
-                      ? "border-amber-200 bg-amber-50"
-                      : "border-emerald-200 bg-emerald-50")
-                  }
-                >
-                  <ImageIcon
-                    className={
-                      "h-4 w-4 shrink-0 " +
-                      (cover === "__oss_only__"
-                        ? "text-amber-600"
-                        : "text-emerald-600")
-                    }
-                  />
-                  <span
-                    className={
-                      "text-xs flex-1 " +
-                      (cover === "__oss_only__"
-                        ? "text-amber-700"
-                        : "text-emerald-700")
-                    }
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <ImageIcon className="h-4 w-4 shrink-0 text-emerald-600" />
+                    <span className="text-xs flex-1 text-emerald-700">封面已上传</span>
+                    <button
+                      onClick={() => setCover(null)}
+                      className="text-xs text-red-600 hover:underline shrink-0"
+                    >
+                      移除
+                    </button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setCoverPickerOpen(true)}
                   >
-                    {cover === "__oss_only__"
-                      ? "已存素材库（需配 IP 白名单后重传）"
-                      : "封面已上传"}
-                  </span>
-                  <button
-                    onClick={() => setCover(null)}
-                    className="text-xs text-red-600 hover:underline shrink-0"
-                  >
-                    移除
-                  </button>
+                    <Library className="h-3.5 w-3.5" /> 从素材库更换
+                  </Button>
                 </div>
               ) : (
-                <label className="flex items-center justify-center gap-2 rounded-md border border-dashed border-input px-3 py-4 text-sm text-muted-foreground hover:bg-accent cursor-pointer">
-                  {coverUploading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      上传中…
-                    </>
-                  ) : (
-                    <>
-                      <ImagePlus className="h-4 w-4" />
-                      上传封面（900×383）
-                    </>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
+                <div className="grid grid-cols-1 gap-2">
+                  <label className="flex items-center justify-center gap-2 rounded-md border border-dashed border-input px-3 py-3 text-sm text-muted-foreground hover:bg-accent cursor-pointer">
+                    {coverUploading ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" />上传中…</>
+                    ) : (
+                      <><ImagePlus className="h-4 w-4" />上传封面（900×383）</>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={coverUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.currentTarget.value = "";
+                        if (file) void handleUploadCover(file);
+                      }}
+                    />
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
                     disabled={coverUploading}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleUploadCover(f);
-                    }}
-                  />
-                </label>
+                    onClick={() => setCoverPickerOpen(true)}
+                  >
+                    <Library className="h-3.5 w-3.5" /> 从素材库选择
+                  </Button>
+                </div>
               )}
             </div>
             <div className="space-y-1.5">
@@ -398,6 +411,48 @@ export function WechatPublishPanel({
           </Button>
         </DialogFooter>
       )}
+
+      <Dialog open={coverPickerOpen} onOpenChange={setCoverPickerOpen}>
+        <DialogContent className="max-w-3xl">
+          <PickerDialogHeader>
+            <PickerDialogTitle>从素材库选择封面</PickerDialogTitle>
+            <PickerDialogDescription>
+              已有微信 media_id 的图片会直接复用，其他图片将在选中后同步到公众号。
+            </PickerDialogDescription>
+          </PickerDialogHeader>
+          {coverAssetsLoading ? (
+            <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载素材库…
+            </div>
+          ) : coverAssets.length === 0 ? (
+            <div className="flex h-48 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+              素材库暂无图片
+            </div>
+          ) : (
+            <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4">
+              {coverAssets.map((asset) => (
+                <button
+                  key={asset.id}
+                  type="button"
+                  disabled={selectingAssetId !== null}
+                  onClick={() => void handleSelectCoverAsset(asset)}
+                  className="group overflow-hidden rounded-md border bg-background text-left hover:border-primary disabled:opacity-60"
+                >
+                  <div className="relative aspect-[16/9] bg-muted">
+                    <img src={asset.url} alt={asset.name} className="h-full w-full object-cover" />
+                    {selectingAssetId === asset.id && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-background/70">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="truncate px-2 py-1.5 text-xs">{asset.name}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

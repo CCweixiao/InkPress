@@ -116,6 +116,51 @@ export async function deleteWxMaterial(mediaId: string): Promise<void> {
   ensureOk(data, "删除微信永久素材");
 }
 
+/** 直接把图片二进制上传为微信永久封面素材，不写本地 Asset/Material。 */
+export async function uploadCoverBuffer(input: {
+  buffer: Buffer | ArrayBuffer;
+  contentType?: string;
+  filename?: string;
+}): Promise<{ mediaId: string; url: string }> {
+  const start = Date.now();
+  const { buf: wxBuf, contentType, filename } = await ensureWechatCompatibleImage({
+    buf: input.buffer,
+    contentType: input.contentType,
+    filename: input.filename ?? "cover.png",
+  });
+  const blob = new Blob([wxBuf], { type: contentType });
+  const form = new FormData();
+  form.append("media", blob, filename || "cover.png");
+  const data = await wxUpload("/material/add_material", form, { type: "image" });
+  ensureOk(data, "上传封面图");
+  const result = data as { media_id?: string; url?: string };
+  if (!result.media_id) throw new Error("上传封面图失败：微信未返回 media_id");
+  log.info(
+    { mediaId: result.media_id, size: wxBuf.byteLength, durationMs: Date.now() - start },
+    "封面图二进制上传完成"
+  );
+  return { mediaId: result.media_id, url: result.url ?? "" };
+}
+
+/** 成功绑定本地素材后再写封面缓存，失败上传不会留下 Material 记录。 */
+export async function backfillCoverMaterialCache(
+  sourceUrl: string,
+  uploaded: { mediaId: string; url: string }
+): Promise<void> {
+  const sourceHash = `cover:${hashUrl(sourceUrl)}`;
+  await prisma.material.upsert({
+    where: { sourceHash },
+    update: { wxMediaId: uploaded.mediaId, wxUrl: uploaded.url },
+    create: {
+      sourceUrl,
+      sourceHash,
+      wxMediaId: uploaded.mediaId,
+      wxUrl: uploaded.url,
+      kind: "cover",
+    },
+  });
+}
+
 /**
  * 上传封面图（material/add_material，永久素材）
  * 返回 media_id，用于 draft/add 的 thumb_media_id
@@ -131,38 +176,13 @@ export async function uploadCoverImage(
     return { mediaId: cached.wxMediaId, url: cached.wxUrl };
   }
 
-  const start = Date.now();
   const rawBuf = await fetcher(sourceUrl);
-  // 第二层兜底：SVG → PNG（公众号不支持 SVG）；封面统一用 cover.png 最稳
-  const { buf: wxBuf } = await ensureWechatCompatibleImage({
-    buf: rawBuf,
-    contentType: undefined,
+  const result = await uploadCoverBuffer({
+    buffer: rawBuf,
     filename: sourceUrl,
   });
-  const blob = new Blob([wxBuf]);
-  const form = new FormData();
-  form.append("media", blob, "cover.png");
-  const data = await wxUpload("/material/add_material", form, { type: "image" });
-  ensureOk(data, "上传封面图");
-  const result = data as { media_id?: string; url?: string };
-  if (!result.media_id) return null;
-
-  await prisma.material.upsert({
-    where: { sourceHash: hash },
-    update: { wxMediaId: result.media_id, wxUrl: result.url ?? "" },
-    create: {
-      sourceUrl,
-      sourceHash: hash,
-      wxMediaId: result.media_id,
-      wxUrl: result.url ?? "",
-      kind: "cover",
-    },
-  });
-  log.info(
-    { mediaId: result.media_id, size: wxBuf.byteLength, durationMs: Date.now() - start },
-    "封面图上传完成"
-  );
-  return { mediaId: result.media_id, url: result.url ?? "" };
+  await backfillCoverMaterialCache(sourceUrl, result);
+  return result;
 }
 
 export type { WxResponse };
