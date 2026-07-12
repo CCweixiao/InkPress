@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   assetCreate: vi.fn(),
   assetUpdate: vi.fn(),
   articleUpdate: vi.fn(),
+  wechatAssetSyncFindUnique: vi.fn(),
+  wechatAssetSyncUpsert: vi.fn(),
   putBufferObject: vi.fn(),
   deleteStorageObject: vi.fn(),
   readStorageObjectBuffer: vi.fn(),
@@ -18,11 +20,16 @@ vi.mock("@/lib/db", () => {
   const tx = {
     asset: { create: mocks.assetCreate, update: mocks.assetUpdate },
     article: { update: mocks.articleUpdate },
+    wechatAssetSync: { upsert: mocks.wechatAssetSyncUpsert },
   };
   return {
     prisma: {
       article: { findUnique: mocks.articleFindUnique },
       asset: { findUnique: mocks.assetFindUnique, update: mocks.assetUpdate },
+      wechatAssetSync: {
+        findUnique: mocks.wechatAssetSyncFindUnique,
+        upsert: mocks.wechatAssetSyncUpsert,
+      },
       $transaction: (operation: (client: typeof tx) => unknown) => operation(tx),
     },
   };
@@ -68,6 +75,8 @@ describe("POST /api/wechat/cover", () => {
     });
     mocks.assetUpdate.mockResolvedValue({});
     mocks.articleUpdate.mockResolvedValue({});
+    mocks.wechatAssetSyncFindUnique.mockResolvedValue(null);
+    mocks.wechatAssetSyncUpsert.mockResolvedValue({});
     mocks.deleteStorageObject.mockResolvedValue(undefined);
     mocks.deleteWxMaterial.mockResolvedValue(undefined);
     mocks.backfillCoverMaterialCache.mockResolvedValue(undefined);
@@ -136,6 +145,53 @@ describe("POST /api/wechat/cover", () => {
     expect(mocks.uploadCoverBuffer).not.toHaveBeenCalled();
     expect(mocks.articleUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ coverAssetId: "asset-existing", coverMediaId: "wx-existing" }),
+    }));
+  });
+
+  it("reuses the account-specific media id when selecting an asset for an account", async () => {
+    mocks.assetFindUnique.mockResolvedValue({
+      id: "asset-existing",
+      name: "existing.png",
+      url: "/api/storage/existing",
+      kind: "image",
+      contentType: "image/png",
+      storageObjectId: "storage-existing",
+      wxMediaId: "wx-legacy",
+      wxUrl: "wx://legacy",
+      trashed: false,
+    });
+    mocks.wechatAssetSyncFindUnique.mockResolvedValue({
+      assetId: "asset-existing",
+      accountId: "account-1",
+      wxMediaId: "wx-account-1",
+      wxUrl: "wx://account-1",
+      status: "success",
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/wechat/cover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          articleId: "article-1",
+          assetId: "asset-existing",
+          accountId: "account-1",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      mediaId: "wx-account-1",
+      reused: true,
+    });
+    expect(mocks.uploadCoverBuffer).not.toHaveBeenCalled();
+    expect(mocks.wechatAssetSyncUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { assetId_accountId: { assetId: "asset-existing", accountId: "account-1" } },
+      update: expect.objectContaining({ wxMediaId: "wx-account-1", status: "success" }),
+    }));
+    expect(mocks.articleUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ coverAssetId: "asset-existing", coverMediaId: "wx-account-1" }),
     }));
   });
 });

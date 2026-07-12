@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Send, Loader2, ImagePlus, ImageIcon, Library } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Send,
+  Loader2,
+  ImagePlus,
+  ImageIcon,
+  Library,
+} from "lucide-react";
 import {
   DialogHeader,
   DialogTitle,
@@ -29,6 +37,8 @@ import {
   DialogTitle as PickerDialogTitle,
 } from "@/components/ui/dialog";
 import type { Asset } from "@/types/asset";
+
+const COVER_PICKER_PAGE_SIZE = 12;
 
 /**
  * 微信公众号发布面板（api-push 渠道）。
@@ -65,6 +75,7 @@ export function WechatPublishPanel({
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   const [coverAssets, setCoverAssets] = useState<Asset[]>([]);
   const [coverAssetsLoading, setCoverAssetsLoading] = useState(false);
+  const [coverAssetsPage, setCoverAssetsPage] = useState(1);
   const [selectingAssetId, setSelectingAssetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -80,14 +91,27 @@ export function WechatPublishPanel({
   const [accountId, setAccountId] = useState("");
   useEffect(() => { fetch("/api/wechat/accounts").then(r=>r.json()).then(d => { const list=d.accounts??[]; setAccounts(list); setAccountId((list.find((x: {isDefault:boolean})=>x.isDefault)??list[0])?.id??""); }).catch(()=>{}); }, []);
 
+  const coverAssetsPageCount = Math.max(
+    1,
+    Math.ceil(coverAssets.length / COVER_PICKER_PAGE_SIZE)
+  );
+  const pagedCoverAssets = coverAssets.slice(
+    (coverAssetsPage - 1) * COVER_PICKER_PAGE_SIZE,
+    coverAssetsPage * COVER_PICKER_PAGE_SIZE
+  );
+
   useEffect(() => {
     if (!coverPickerOpen) return;
     let active = true;
     setCoverAssetsLoading(true);
+    setCoverAssetsPage(1);
     fetch(`/api/materials?kind=image${accountId ? `&wechatAccountId=${encodeURIComponent(accountId)}` : ""}`)
       .then((response) => response.json())
       .then((data) => {
-        if (active) setCoverAssets(Array.isArray(data.assets) ? data.assets : []);
+        if (active) {
+          setCoverAssets(Array.isArray(data.assets) ? data.assets : []);
+          setCoverAssetsPage(1);
+        }
       })
       .catch(() => {
         if (active) setError("素材库图片加载失败，请稍后重试。");
@@ -107,6 +131,7 @@ export function WechatPublishPanel({
       const form = new FormData();
       form.append("file", file);
       form.append("articleId", articleId);
+      if (accountId) form.append("accountId", accountId);
       const response = await fetch("/api/wechat/cover", { method: "POST", body: form });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.mediaId) {
@@ -133,7 +158,7 @@ export function WechatPublishPanel({
       const response = await fetch("/api/wechat/cover", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ articleId, assetId: asset.id }),
+        body: JSON.stringify({ articleId, assetId: asset.id, accountId }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.mediaId) {
@@ -425,7 +450,7 @@ export function WechatPublishPanel({
       )}
 
       <Dialog open={coverPickerOpen} onOpenChange={setCoverPickerOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="w-[min(92vw,56rem)] max-w-none overflow-hidden">
           <PickerDialogHeader>
             <PickerDialogTitle>从素材库选择封面</PickerDialogTitle>
             <PickerDialogDescription>
@@ -441,26 +466,61 @@ export function WechatPublishPanel({
               素材库暂无图片
             </div>
           ) : (
-            <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4">
-              {coverAssets.map((asset) => (
-                <button
-                  key={asset.id}
-                  type="button"
-                  disabled={selectingAssetId !== null}
-                  onClick={() => void handleSelectCoverAsset(asset)}
-                  className="group overflow-hidden rounded-md border bg-background text-left hover:border-primary disabled:opacity-60"
-                >
-                  <div className="relative aspect-[16/9] bg-muted">
-                    <img src={asset.url} alt={asset.name} className="h-full w-full object-cover" />
-                    {selectingAssetId === asset.id && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-background/70">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                      </div>
-                    )}
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                {pagedCoverAssets.map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    disabled={selectingAssetId !== null}
+                    onClick={() => void handleSelectCoverAsset(asset)}
+                    className="group overflow-hidden rounded-md border bg-background text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
+                  >
+                    <div className="relative aspect-video bg-muted">
+                      <img src={asset.url} alt={asset.name} className="h-full w-full object-cover" />
+                      {selectingAssetId === asset.id && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-background/70">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="truncate px-2 py-1.5 text-xs">{asset.name}</div>
+                  </button>
+                ))}
+              </div>
+              {coverAssets.length > COVER_PICKER_PAGE_SIZE && (
+                <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
+                  <span>
+                    第 {coverAssetsPage} / {coverAssetsPageCount} 页，共 {coverAssets.length} 张
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={coverAssetsPage <= 1 || selectingAssetId !== null}
+                      onClick={() => setCoverAssetsPage((page) => Math.max(1, page - 1))}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      上一页
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={coverAssetsPage >= coverAssetsPageCount || selectingAssetId !== null}
+                      onClick={() =>
+                        setCoverAssetsPage((page) =>
+                          Math.min(coverAssetsPageCount, page + 1)
+                        )
+                      }
+                    >
+                      下一页
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
-                  <div className="truncate px-2 py-1.5 text-xs">{asset.name}</div>
-                </button>
-              ))}
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

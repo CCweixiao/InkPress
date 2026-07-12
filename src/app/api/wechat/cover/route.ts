@@ -39,7 +39,7 @@ async function readAssetBuffer(asset: {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function bindExistingAsset(articleId: string, assetId: string) {
+async function bindExistingAsset(articleId: string, assetId: string, accountId?: string) {
   const asset = await prisma.asset.findUnique({ where: { id: assetId } });
   if (!asset || asset.trashed) {
     return NextResponse.json({ error: "素材不存在或已在回收站。" }, { status: 404 });
@@ -48,7 +48,14 @@ async function bindExistingAsset(articleId: string, assetId: string) {
     return NextResponse.json({ error: "封面只能选择图片素材。" }, { status: 400 });
   }
 
-  let uploaded = asset.wxMediaId
+  const accountSync = accountId
+    ? await prisma.wechatAssetSync.findUnique({
+        where: { assetId_accountId: { assetId: asset.id, accountId } },
+      })
+    : null;
+  let uploaded = accountSync?.wxMediaId
+    ? { mediaId: accountSync.wxMediaId, url: accountSync.wxUrl ?? "" }
+    : !accountId && asset.wxMediaId
     ? { mediaId: asset.wxMediaId, url: asset.wxUrl ?? "" }
     : null;
   let newlyUploaded = false;
@@ -60,7 +67,7 @@ async function bindExistingAsset(articleId: string, assetId: string) {
         buffer,
         contentType: asset.contentType,
         filename: asset.name,
-      });
+      }, accountId);
       newlyUploaded = true;
     }
     const selected = uploaded;
@@ -75,6 +82,27 @@ async function bindExistingAsset(articleId: string, assetId: string) {
           wxSyncedAt: new Date(),
         },
       });
+      if (accountId) {
+        await tx.wechatAssetSync.upsert({
+          where: { assetId_accountId: { assetId: asset.id, accountId } },
+          create: {
+            assetId: asset.id,
+            accountId,
+            wxMediaId: selected.mediaId,
+            wxUrl: selected.url,
+            status: "success",
+            error: null,
+            syncedAt: new Date(),
+          },
+          update: {
+            wxMediaId: selected.mediaId,
+            wxUrl: selected.url,
+            status: "success",
+            error: null,
+            syncedAt: new Date(),
+          },
+        });
+      }
       await tx.article.update({
         where: { id: articleId },
         data: {
@@ -86,7 +114,7 @@ async function bindExistingAsset(articleId: string, assetId: string) {
     });
     await backfillCoverMaterialCache(asset.url, selected).catch(() => {});
     log.info(
-      { articleId, assetId: asset.id, mediaId: selected.mediaId, reused: !newlyUploaded },
+      { articleId, assetId: asset.id, accountId, mediaId: selected.mediaId, reused: !newlyUploaded },
       "已从素材库设置文章封面"
     );
     return NextResponse.json({ ok: true, asset, ...selected, reused: !newlyUploaded });
@@ -105,11 +133,28 @@ async function bindExistingAsset(articleId: string, assetId: string) {
         wxSyncedAt: new Date(),
       },
     }).catch(() => {});
+    if (accountId) {
+      await prisma.wechatAssetSync.upsert({
+        where: { assetId_accountId: { assetId: asset.id, accountId } },
+        create: {
+          assetId: asset.id,
+          accountId,
+          status: "failed",
+          error: error instanceof Error ? error.message : "封面同步失败",
+          syncedAt: new Date(),
+        },
+        update: {
+          status: "failed",
+          error: error instanceof Error ? error.message : "封面同步失败",
+          syncedAt: new Date(),
+        },
+      }).catch(() => {});
+    }
     throw error;
   }
 }
 
-async function uploadNewCover(articleId: string, file: File) {
+async function uploadNewCover(articleId: string, file: File, accountId?: string) {
   if (!file.type.startsWith("image/")) {
     return NextResponse.json({ error: "封面只能上传图片文件。" }, { status: 400 });
   }
@@ -125,7 +170,7 @@ async function uploadNewCover(articleId: string, file: File) {
     buffer,
     contentType: file.type,
     filename: file.name,
-  });
+  }, accountId);
   let storageObject: Awaited<ReturnType<typeof putBufferObject>> | null = null;
   try {
     const { kind, dir } = classifyByContentType(file.type);
@@ -163,6 +208,27 @@ async function uploadNewCover(articleId: string, file: File) {
           wxSyncedAt: new Date(),
         },
       });
+      if (accountId) {
+        await tx.wechatAssetSync.upsert({
+          where: { assetId_accountId: { assetId: created.id, accountId } },
+          create: {
+            assetId: created.id,
+            accountId,
+            wxMediaId: uploaded.mediaId,
+            wxUrl: uploaded.url,
+            status: "success",
+            error: null,
+            syncedAt: new Date(),
+          },
+          update: {
+            wxMediaId: uploaded.mediaId,
+            wxUrl: uploaded.url,
+            status: "success",
+            error: null,
+            syncedAt: new Date(),
+          },
+        });
+      }
       await tx.article.update({
         where: { id: articleId },
         data: {
@@ -198,19 +264,21 @@ async function postCover(req: Request) {
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData();
       const articleId = String(form.get("articleId") ?? "");
+      const accountId = String(form.get("accountId") ?? "") || undefined;
       const file = form.get("file");
       if (!articleId || !(file instanceof File)) {
         return NextResponse.json({ error: "缺少 articleId 或封面文件。" }, { status: 400 });
       }
-      return await uploadNewCover(articleId, file);
+      return await uploadNewCover(articleId, file, accountId);
     }
-    const body = (await req.json().catch(() => ({}))) as { articleId?: unknown; assetId?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { articleId?: unknown; assetId?: unknown; accountId?: unknown };
     const articleId = typeof body.articleId === "string" ? body.articleId : "";
     const assetId = typeof body.assetId === "string" ? body.assetId : "";
+    const accountId = typeof body.accountId === "string" && body.accountId ? body.accountId : undefined;
     if (!articleId || !assetId) {
       return NextResponse.json({ error: "缺少 articleId 或 assetId。" }, { status: 400 });
     }
-    return await bindExistingAsset(articleId, assetId);
+    return await bindExistingAsset(articleId, assetId, accountId);
   } catch (error) {
     log.warn({ err: error }, "设置文章封面失败");
     return NextResponse.json(
