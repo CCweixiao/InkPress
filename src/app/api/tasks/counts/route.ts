@@ -39,5 +39,8 @@ export async function GET() {
     byTag[row.tagId] = row._count;
   }
 
-  return NextResponse.json({ total, byList, byTag, trashed });
+  return NextResponse.json(
+    { total, byList, byTag, trashed },
+    { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+  );
 }

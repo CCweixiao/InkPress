@@ -62,6 +62,7 @@ export function TaskFolderDialog({ open, onOpenChange, onSaved, folder }: TaskFo
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+          maxLength={10}
           placeholder="文件夹名称"
           className="w-full px-3 py-2 bg-muted rounded-md text-sm outline-none"
         />

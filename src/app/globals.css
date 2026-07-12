@@ -17,6 +17,7 @@
 
 /* 简洁大气的主题色板（shadcn slate 风格） */
 :root {
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #0f172a;
   --card: #ffffff;
@@ -51,6 +52,7 @@
 
 /* 夜间模式：中性暗灰基调（参考 Codex / VS Code Dark+，去除蓝色调） */
 .dark {
+  color-scheme: dark;
   --background: #191919;
   --foreground: #e6e6e6;
   --card: #1e1e1e;
@@ -85,6 +87,7 @@
 /* auto 模式 + 系统深色：无 .dark 类时也应用深色变量（与 .dark 保持一致） */
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
+    color-scheme: dark;
     --background: #191919;
     --foreground: #e6e6e6;
     --card: #1e1e1e;
@@ -1201,4 +1204,14 @@ body {
 }
 .slide-in-from-top-2 {
   animation-name: slideInFromTop;
+}
+
+/* 原生日期选择器：夜间模式下日历图标反色适配 */
+.dark ::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) ::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+  }
 }

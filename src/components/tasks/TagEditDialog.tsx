@@ -129,6 +129,7 @@ export function TagEditDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="标签名"
+              maxLength={10}
               autoFocus
             />
           </div>

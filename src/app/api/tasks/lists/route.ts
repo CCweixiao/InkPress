@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  name: z.string().min(1).max(100),
+  name: z.string().min(1).max(10),
   color: z.string().optional(),
   folderId: z.string().nullable().optional(),
   viewMode: z.enum(["list", "kanban", "calendar"]).optional(),

@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const patchSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().min(1).max(10).optional(),
   color: z.string().optional(),
   folderId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
@@ -26,7 +26,10 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     include: { sections: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
   });
   if (!list) return NextResponse.json({ error: "清单不存在" }, { status: 404 });
-  return NextResponse.json({ list });
+  return NextResponse.json(
+    { list },
+    { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+  );
 }
 
 export async function PATCH(req: NextRequest, context: RouteContext) {

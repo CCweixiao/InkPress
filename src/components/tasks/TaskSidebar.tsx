@@ -76,6 +76,10 @@ interface TaskSidebarProps {
   onSelect: (key: SelectedKey) => void;
   onSelectTask?: (taskId: string, listId: string) => void;
   refreshKey?: number;
+  /** 递增信号：外部请求打开「新建清单」对话框 */
+  createListSignal?: number;
+  /** 树（folders/lists）变更后通知外部（用于空态自动选中） */
+  onTreeChanged?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +284,7 @@ function SortableListRow({
 // ===========================================================================
 // Main sidebar
 // ===========================================================================
-export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: TaskSidebarProps) {
+export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey, createListSignal, onTreeChanged }: TaskSidebarProps) {
   const [folders, setFolders] = useState<TaskFolderInfo[]>([]);
   const [standaloneLists, setStandaloneLists] = useState<TaskListInfo[]>([]);
   const [counts, setCounts] = useState<Counts>({
@@ -347,6 +351,14 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
   useEffect(() => {
     load();
   }, [load, refreshKey]);
+
+  // 外部请求打开「新建清单」对话框
+  useEffect(() => {
+    if (createListSignal && createListSignal > 0) {
+      openListDialog(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createListSignal]);
 
   // 搜索防抖
   useEffect(() => {
@@ -993,7 +1005,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
             setEditFolder(null);
           }
         }}
-        onSaved={load}
+        onSaved={() => { void load(); onTreeChanged?.(); }}
         folder={editFolder}
       />
       <TaskListDialog
@@ -1006,7 +1018,7 @@ export function TaskSidebar({ selected, onSelect, onSelectTask, refreshKey }: Ta
         }}
         folderId={listDialogFolderId}
         folders={folders.map((f) => ({ id: f.id, name: f.name }))}
-        onSaved={load}
+        onSaved={() => { void load(); onTreeChanged?.(); }}
         list={editList}
       />
       <TagEditDialog

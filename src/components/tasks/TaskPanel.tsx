@@ -19,9 +19,11 @@ interface TaskPanelProps {
   highlightTaskId?: string;
   onHighlightConsumed?: () => void;
   view?: "main" | "trash";
+  /** 清单配置版本号：变更时强制重新加载 list 配置（viewMode/groupMode/sections 等） */
+  listConfigVersion?: number;
 }
 
-export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighlightConsumed, view = "main" }: TaskPanelProps) {
+export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighlightConsumed, view = "main", listConfigVersion }: TaskPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
         setUngroupedName(data.list.ungroupedName ?? "未分组");
         setUngroupedVisible(data.list.ungroupedVisible ?? true);
       });
-  }, [listId, folderId, tagId]);
+  }, [listId, folderId, tagId, listConfigVersion]);
 
   useEffect(() => {
     void loadList();
@@ -72,7 +74,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
       await fetch(`/api/tasks/lists/${listId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ungroupedVisible: true }) });
       setUngroupedVisible(true);
     }
-    await createTask({ title, priority, dueDate, sectionId: groupMode === "custom" && !ungroupedVisible ? sections[0]?.id ?? null : null });
+    await createTask({ title, priority, dueDate, listId: listId ?? undefined, sectionId: groupMode === "custom" && !ungroupedVisible ? sections[0]?.id ?? null : null });
   };
 
   useEffect(() => {
@@ -177,10 +179,11 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
               onDelete={deleteTask}
               onCreateTask={createTask}
               onOpenTask={(task) => setSelectedTaskId(task.id)}
-              sections={groupMode === "custom" ? sections : undefined}
+              sections={sections.length > 0 ? sections : undefined}
               ungroupedName={ungroupedName}
               ungroupedVisible={ungroupedVisible}
               onReorder={reorderTasks}
+              onCreateTaskInSection={async (sectionId, title, priority, dueDate) => createTask({ title, priority, dueDate, listId: listId ?? undefined, sectionId })}
             />
           )}
           {viewMode === "kanban" && (
@@ -199,6 +202,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
               }}
               onTasksChanged={refetch}
               onSectionsChanged={loadList}
+              onCreateTaskInSection={async (sectionId, title, priority, dueDate) => createTask({ title, priority, dueDate, listId: listId ?? undefined, sectionId })}
             />
           )}
           {viewMode === "calendar" && (
@@ -206,6 +210,7 @@ export function TaskPanel({ listId, folderId, tagId, highlightTaskId, onHighligh
               tasks={tasks}
               onToggleStatus={toggleStatus}
               onUpdate={updateTask}
+              onOpenTask={(task) => setSelectedTaskId(task.id)}
             />
           )}
         </>

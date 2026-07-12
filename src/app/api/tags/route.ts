@@ -19,7 +19,7 @@ export async function GET() {
 }
 
 const createSchema = z.object({
-  name: z.string().trim().min(1, "标签名不能为空").max(50),
+  name: z.string().trim().min(1, "标签名不能为空").max(10),
   color: z.string().optional(),
   parentId: z.string().nullable().optional(),
 });

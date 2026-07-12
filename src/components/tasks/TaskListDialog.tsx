@@ -178,6 +178,7 @@ export function TaskListDialog({ open, onOpenChange, folderId, folders = [], onS
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleSave();
                   }}
+                  maxLength={10}
                   placeholder="例如：工作、生活、学习计划"
                   className="h-9 flex-1 min-w-0 px-3 bg-muted border border-transparent rounded-lg text-sm outline-none transition-all focus:border-primary focus:bg-background focus:ring-2 focus:ring-primary/10 placeholder:text-muted-foreground/60"
                 />

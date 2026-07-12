@@ -152,6 +152,7 @@ export function QuickAddInput({ onAdd, onCancel, compact, placeholder, autoFocus
         onKeyDown={handleKeyDown}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        maxLength={50}
         placeholder={placeholder ?? "添加任务... (支持 #高优先级 明天 等自然语言)"}
         className={cn(
           "flex-1 bg-transparent border-none outline-none placeholder:text-muted-foreground/60",

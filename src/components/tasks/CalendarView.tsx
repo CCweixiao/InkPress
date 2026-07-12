@@ -10,6 +10,7 @@ interface CalendarViewProps {
   tasks: Task[];
   onToggleStatus: (id: string, status: TaskStatus) => void;
   onUpdate: (id: string, data: Partial<Task>) => void;
+  onOpenTask?: (task: Task) => void;
 }
 
 const MONTH_NAMES = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
@@ -20,7 +21,7 @@ function dateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-export function CalendarView({ tasks, onToggleStatus }: CalendarViewProps) {
+export function CalendarView({ tasks, onToggleStatus, onOpenTask }: CalendarViewProps) {
   const today = useMemo(() => new Date(), []);
   const [currentDate, setCurrentDate] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(() => dateKey(today));
@@ -110,7 +111,7 @@ export function CalendarView({ tasks, onToggleStatus }: CalendarViewProps) {
         <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-3"><div><h3 className="text-sm font-semibold">{selectedDateValue.getMonth() + 1}月{selectedDateValue.getDate()}日任务</h3><p className="mt-0.5 text-[11px] text-muted-foreground">{selectedTasks.length > 0 ? `共 ${selectedTasks.length} 项，点击圆圈可更新完成状态` : "当前日期没有截止任务"}</p></div><span className="rounded-full bg-background px-2 py-1 text-xs text-muted-foreground shadow-sm">{selectedTasks.length}</span></div>
         {selectedTasks.length > 0 ? <div className="divide-y divide-border/70">{selectedTasks.map((task) => {
           const priority = PRIORITY_CONFIG[task.priority as TaskPriority];
-          return <div key={task.id} className="group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/30"><button onClick={() => onToggleStatus(task.id, task.status)} className="mt-0.5 shrink-0" title={task.status === "done" ? "标记为未完成" : "标记为已完成"}>{task.status === "done" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> : <Circle className="h-5 w-5 text-muted-foreground group-hover:text-primary" />}</button><div className="min-w-0 flex-1"><p className={cn("break-words text-sm font-medium leading-5", task.status === "done" && "text-muted-foreground line-through")}>{task.title}</p><div className="mt-1.5 flex flex-wrap items-center gap-1.5">{task.dueTime && <span className="flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"><Clock3 className="h-3 w-3" />{task.dueTime}</span>}{task.priority > 0 && <span className={cn("flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px]", priority.color)}><Flag className="h-3 w-3 fill-current" />{priority.label}优先级</span>}{task.list && <span className="rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: task.list.color, backgroundColor: `${task.list.color}18` }}>{task.list.name}</span>}{task.tags?.map((tag) => <span key={tag.id} className="rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: tag.color, backgroundColor: `${tag.color}18` }}>#{tag.name}</span>)}</div></div></div>;
+          return <div key={task.id} onDoubleClick={() => onOpenTask?.(task)} className={cn("group flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/30")}><button onClick={() => onToggleStatus(task.id, task.status)} className="mt-0.5 shrink-0" title={task.status === "done" ? "标记为未完成" : "标记为已完成"}>{task.status === "done" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> : <Circle className="h-5 w-5 text-muted-foreground group-hover:text-primary" />}</button><div className="min-w-0 flex-1"><p className={cn("break-words text-sm font-medium leading-5", task.status === "done" && "text-muted-foreground line-through")}>{task.title}</p><div className="mt-1.5 flex flex-wrap items-center gap-1.5">{task.dueTime && <span className="flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"><Clock3 className="h-3 w-3" />{task.dueTime}</span>}{task.priority > 0 && <span className={cn("flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px]", priority.color)}><Flag className="h-3 w-3 fill-current" />{priority.label}优先级</span>}{task.list && <span className="rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: task.list.color, backgroundColor: `${task.list.color}18` }}>{task.list.name}</span>}{task.tags?.map((tag) => <span key={tag.id} className="rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: tag.color, backgroundColor: `${tag.color}18` }}>#{tag.name}</span>)}</div></div></div>;
         })}</div> : <div className="flex flex-col items-center py-8 text-muted-foreground"><CalendarDays className="mb-2 h-7 w-7 opacity-40" /><p className="text-xs">选择其他日期查看任务</p></div>}
       </section>
 

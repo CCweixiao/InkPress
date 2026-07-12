@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const updateSchema = z.object({
-  name: z.string().trim().min(1).max(50).optional(),
+  name: z.string().trim().min(1).max(10).optional(),
   color: z.string().optional(),
   parentId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),

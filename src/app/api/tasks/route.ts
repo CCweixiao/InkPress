@@ -5,7 +5,7 @@ import { filterBySmartView, type SmartView } from "@/lib/tasks/smart-views";
 import type { Task } from "@/components/tasks/types";
 
 const createSchema = z.object({
-  title: z.string().min(1).max(500),
+  title: z.string().min(1).max(50),
   content: z.string().optional(),
   status: z.enum(["todo", "in_progress", "done", "archived"]).optional(),
   priority: z.number().int().min(0).max(4).optional(),
@@ -15,7 +15,7 @@ const createSchema = z.object({
   sectionId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
-  tagIds: z.array(z.string()).optional(),
+  tagIds: z.array(z.string()).max(5, "最多 5 个标签").optional(),
 });
 
 // GET /api/tasks - 列出任务（支持筛选）
@@ -68,7 +68,10 @@ export async function GET(req: NextRequest) {
       ...t,
       tags: t.tags.map((tt) => tt.tag),
     }));
-    return NextResponse.json({ tasks: flat });
+    return NextResponse.json(
+      { tasks: flat },
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+    );
   }
 
   const where: Record<string, unknown> = {};
@@ -132,7 +135,10 @@ export async function GET(req: NextRequest) {
     ? (filterBySmartView(flat as unknown as Task[], smartView) as unknown as typeof flat)
     : flat;
 
-  return NextResponse.json({ tasks: result });
+  return NextResponse.json(
+    { tasks: result },
+    { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+  );
 }
 
 // POST /api/tasks - 创建任务

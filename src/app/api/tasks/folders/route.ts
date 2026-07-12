@@ -7,10 +7,12 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const tree = await listFoldersWithLists();
-  return NextResponse.json(tree);
+  return NextResponse.json(tree, {
+    headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+  });
 }
 
-const createFolderSchema = z.object({ name: z.string().min(1).max(100) });
+const createFolderSchema = z.object({ name: z.string().min(1).max(10) });
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));

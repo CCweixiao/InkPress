@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { computeExpiresAt } from "@/lib/tasks/trash-lifecycle";
 
 const updateSchema = z.object({
-  title: z.string().min(1).max(500).optional(),
+  title: z.string().min(1).max(50).optional(),
   content: z.string().optional(),
   status: z.enum(["todo", "in_progress", "done", "archived"]).optional(),
   priority: z.number().int().min(0).max(4).optional(),
@@ -15,7 +15,7 @@ const updateSchema = z.object({
   sortOrder: z.number().int().optional(),
   tagsJson: z.string().optional(),
   isCollapsed: z.boolean().optional(),
-  tagIds: z.array(z.string()).optional(),
+  tagIds: z.array(z.string()).max(5, "最多 5 个标签").optional(),
 });
 
 type RouteContext = { params: Promise<{ id: string }> };
