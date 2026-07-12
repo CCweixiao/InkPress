@@ -76,6 +76,7 @@ next-env.d.ts
 # Electron 桌面应用打包产物
 /dist/
 /dist-electron/
+/dist-release-*/
 
 # 用户数据目录（桌面应用运行时生成，不入库）
 /.inkpress/
