@@ -28,9 +28,11 @@ export type InkPressSystemPromptInput = {
   tavilyApiKey?: string;
   /** P1：消息含 {{snippet:id}} 引用灵感素材时注入的融入规则文本（无引用则缺省）。 */
   snippetsHint?: string;
+  /** 当前模型自动推导出的正文注入字符预算。 */
+  articleBodyCharBudget?: number;
 };
 
-/** 正文注入预算（超长则截断，避免撑爆上下文；逐字改写长文后续可换更长上下文模型）。 */
+/** 兜底正文注入预算（实际运行会按当前模型上下文长度自动放大）。 */
 export const ARTICLE_BODY_BUDGET = 12_000;
 
 /** P1：消息含 {{snippet:id}} 时注入的灵感融入指令。 */
@@ -75,9 +77,13 @@ export function buildInkPressSystemPrompt(input: InkPressSystemPromptInput): str
       ]
     : [];
   const body = input.target.markdown ?? "";
+  const bodyBudget = Math.max(
+    ARTICLE_BODY_BUDGET,
+    Math.floor(input.articleBodyCharBudget ?? ARTICLE_BODY_BUDGET)
+  );
   const bodySection = body.trim()
-    ? body.length > ARTICLE_BODY_BUDGET
-      ? `${body.slice(0, ARTICLE_BODY_BUDGET)}\n\n<!-- 正文过长（约 ${body.length} 字），已截断前 ${ARTICLE_BODY_BUDGET} 字 -->`
+    ? body.length > bodyBudget
+      ? `${body.slice(0, bodyBudget)}\n\n<!-- 正文过长（约 ${body.length} 字），已截断前 ${bodyBudget} 字 -->`
       : body
     : "（编辑器为空——这是首次生成，也必须调用 propose_* 创建提案）";
   const codeSection = input.codeSource

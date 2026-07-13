@@ -7,12 +7,10 @@ import {
   Loader2,
   Plus,
   CheckCircle2,
-  FolderCode,
   GripVertical,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ExternalLink,
+  HelpCircle,
   ListPlus,
 } from "lucide-react";
 import {
@@ -43,6 +41,10 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { LLM_PRESETS } from "@/lib/llm-presets";
+import {
+  clampModelContextWindowTokens,
+  defaultContextWindowTokensForModel,
+} from "@/lib/ai/model-context";
 import { ConfigImportExport } from "./ConfigImportExport";
 import { FetchModelsDialog, type FetchedModel } from "./FetchModelsDialog";
 import { ProviderLogo } from "./provider-logos";
@@ -74,6 +76,7 @@ type LlmFormModel = {
   name: string;
   enabled: boolean;
   isDefault: boolean;
+  contextWindowTokens: number;
 };
 
 type LlmForm = {
@@ -101,18 +104,15 @@ type StorageForm = {
   };
 };
 
-type AgentProjectForm = {
-  id: string;
-  name: string;
-  root: string;
-};
-
 type AgentForm = {
+  configVersion: number;
   tavilyApiKey: string;
-  githubToken: string;
-  projects: AgentProjectForm[];
   maxSteps: number;
-  contextBudgetTokens: number;
+  runtimeTimeoutSeconds: number;
+  apiTimeoutSeconds: number;
+  apiMaxRetries: number;
+  asyncAgentStallTimeoutSeconds: number;
+  streamIdleTimeoutSeconds: number;
 };
 
 type WebResearchForm = {
@@ -175,16 +175,21 @@ const EMPTY_WECHAT: WechatForm = {
 };
 
 const DEFAULT_AGENT: AgentForm = {
+  configVersion: 3,
   tavilyApiKey: "",
-  githubToken: "",
-  projects: [],
-  maxSteps: 12,
-  contextBudgetTokens: 32000,
+  maxSteps: 1000,
+  runtimeTimeoutSeconds: 1800,
+  apiTimeoutSeconds: 900,
+  apiMaxRetries: 12,
+  asyncAgentStallTimeoutSeconds: 900,
+  streamIdleTimeoutSeconds: 300,
 };
+
+const LEGACY_AGENT_DEFAULT_STEPS = new Set([12, 30]);
 
 const DEFAULT_WEB_RESEARCH: WebResearchForm = {
   tavilyApiKey: "",
-  autoApprove: false,
+  autoApprove: true,
 };
 
 /**
@@ -221,6 +226,7 @@ function parseLlmValue(value?: string): LlmForm[] {
                     name: m,
                     enabled: legacyEnabled,
                     isDefault: i === 0 && legacyDefault,
+                    contextWindowTokens: defaultContextWindowTokensForModel(m),
                   };
                 }
                 if (m && typeof m === "object") {
@@ -240,6 +246,11 @@ function parseLlmValue(value?: string): LlmForm[] {
                         : typeof mo.default === "boolean"
                           ? mo.default
                           : i === 0 && legacyDefault,
+                    contextWindowTokens: clampModelContextWindowTokens(
+                      typeof mo.contextWindowTokens === "number"
+                        ? mo.contextWindowTokens
+                        : defaultContextWindowTokensForModel(id)
+                    ),
                   };
                 }
                 return null;
@@ -252,6 +263,9 @@ function parseLlmValue(value?: string): LlmForm[] {
                   name: rawModels.trim(),
                   enabled: legacyEnabled,
                   isDefault: legacyDefault,
+                  contextWindowTokens: defaultContextWindowTokensForModel(
+                    rawModels.trim()
+                  ),
                 },
               ]
             : [];
@@ -359,30 +373,43 @@ function parseWechatValue(value?: string): WechatForm {
 }
 
 function parseAgentValue(value?: string): AgentForm {
-  if (!value) return { ...DEFAULT_AGENT, projects: [] };
+  if (!value) return { ...DEFAULT_AGENT };
   try {
     const parsed = JSON.parse(value) as Partial<AgentForm>;
+    const isLegacyConfig = parsed.configVersion !== DEFAULT_AGENT.configVersion;
+    const rawMaxSteps =
+      typeof parsed.maxSteps === "number" ? parsed.maxSteps : DEFAULT_AGENT.maxSteps;
     return {
+      configVersion: DEFAULT_AGENT.configVersion,
       tavilyApiKey:
         typeof parsed.tavilyApiKey === "string" ? parsed.tavilyApiKey : "",
-      githubToken:
-        typeof parsed.githubToken === "string" ? parsed.githubToken : "",
-      projects: Array.isArray(parsed.projects)
-        ? parsed.projects.map((project) => ({
-            id: String(project.id ?? ""),
-            name: String(project.name ?? ""),
-            root: String(project.root ?? ""),
-          }))
-        : [],
       maxSteps:
-        typeof parsed.maxSteps === "number" ? parsed.maxSteps : DEFAULT_AGENT.maxSteps,
-      contextBudgetTokens:
-        typeof parsed.contextBudgetTokens === "number"
-          ? parsed.contextBudgetTokens
-          : DEFAULT_AGENT.contextBudgetTokens,
+        isLegacyConfig && LEGACY_AGENT_DEFAULT_STEPS.has(rawMaxSteps)
+          ? DEFAULT_AGENT.maxSteps
+          : rawMaxSteps,
+      runtimeTimeoutSeconds:
+        typeof parsed.runtimeTimeoutSeconds === "number"
+          ? parsed.runtimeTimeoutSeconds
+          : DEFAULT_AGENT.runtimeTimeoutSeconds,
+      apiTimeoutSeconds:
+        typeof parsed.apiTimeoutSeconds === "number"
+          ? parsed.apiTimeoutSeconds
+          : DEFAULT_AGENT.apiTimeoutSeconds,
+      apiMaxRetries:
+        typeof parsed.apiMaxRetries === "number"
+          ? parsed.apiMaxRetries
+          : DEFAULT_AGENT.apiMaxRetries,
+      asyncAgentStallTimeoutSeconds:
+        typeof parsed.asyncAgentStallTimeoutSeconds === "number"
+          ? parsed.asyncAgentStallTimeoutSeconds
+          : DEFAULT_AGENT.asyncAgentStallTimeoutSeconds,
+      streamIdleTimeoutSeconds:
+        typeof parsed.streamIdleTimeoutSeconds === "number"
+          ? parsed.streamIdleTimeoutSeconds
+          : DEFAULT_AGENT.streamIdleTimeoutSeconds,
     };
   } catch {
-    return { ...DEFAULT_AGENT, projects: [] };
+    return { ...DEFAULT_AGENT };
   }
 }
 
@@ -393,7 +420,7 @@ function parseWebResearchValue(value?: string): WebResearchForm {
     return {
       tavilyApiKey:
         typeof parsed.tavilyApiKey === "string" ? parsed.tavilyApiKey : "",
-      autoApprove: parsed.autoApprove === true,
+      autoApprove: true,
     };
   } catch {
     return { ...DEFAULT_WEB_RESEARCH };
@@ -779,74 +806,11 @@ function WebResearchEditor({
   onSave: () => void;
   pending: boolean;
 }) {
-  const [domains, setDomains] = useState<{
-    items: { id: string; domain: string; note: string; createdAt: string }[];
-    total: number;
-    hasMore: boolean;
-  }>({ items: [], total: 0, hasMore: false });
-  const [page, setPage] = useState(1);
-  const [q, setQ] = useState("");
-  const [newDomain, setNewDomain] = useState("");
-  const [newNote, setNewNote] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function loadDomains(p = page, query = q) {
-    setLoading(true);
-    try {
-      const url = new URL("/api/ai/web-allowlist", window.location.origin);
-      url.searchParams.set("page", String(p));
-      url.searchParams.set("pageSize", "10");
-      if (query) url.searchParams.set("q", query);
-      const res = await fetch(url);
-      const data = await res.json();
-      setDomains({
-        items: data.items ?? [],
-        total: data.total ?? 0,
-        hasMore: !!data.hasMore,
-      });
-    } catch {
-      // 忽略网络错误
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadDomains(1, "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function addDomain() {
-    setError("");
-    if (!newDomain.trim()) return;
-    const res = await fetch("/api/ai/web-allowlist", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ domain: newDomain, note: newNote || undefined }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error || "添加失败。");
-      return;
-    }
-    setNewDomain("");
-    setNewNote("");
-    setPage(1);
-    await loadDomains(1, q);
-  }
-
-  async function removeDomain(id: string) {
-    await fetch(`/api/ai/web-allowlist/${id}`, { method: "DELETE" });
-    await loadDomains(page, q);
-  }
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          联网搜索让写作 Agent 检索最新资料（Tavily）与抓取网页正文。web_fetch
-          可按下方策略放行——私网/本机地址始终被安全守卫拦截。
+          联网搜索让写作 Agent 检索最新资料（Tavily）与抓取网页正文。web_fetch 默认自动放行公开网址，避免写作过程中反复确认；私网、本机和高风险地址仍由安全守卫拦截。
         </p>
         <Button onClick={onSave} disabled={pending} size="sm">
           {pending ? (
@@ -872,122 +836,14 @@ function WebResearchEditor({
               onChange({ ...value, tavilyApiKey: event.target.value })
             }
           />
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            仅用于 web_search 搜索候选资料；已知 URL 的正文读取不依赖 Tavily，会直接通过 web_fetch 抓取。
+          </p>
         </Field>
-        <div className="flex items-center gap-3 rounded-md border p-3">
-          <Switch
-            checked={value.autoApprove}
-            onCheckedChange={(v) => onChange({ ...value, autoApprove: v })}
-          />
-          <div className="text-xs">
-            <div className="font-medium">自动放权网页抓取（web_fetch）</div>
-            <div className="text-muted-foreground">
-              开启后对话中读取网页不再逐个确认；未开启则仅白名单域名免确认，其余逐个授权。
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">网页抓取域名白名单</h3>
-          <Input
-            className="h-8 w-56 text-xs"
-            placeholder="搜索域名…"
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                setPage(1);
-                void loadDomains(1, q);
-              }
-            }}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Input
-            className="h-8 flex-1 text-xs"
-            placeholder="添加信任域名，如 github.com"
-            value={newDomain}
-            onChange={(event) => setNewDomain(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void addDomain();
-            }}
-          />
-          <Input
-            className="h-8 w-40 text-xs"
-            placeholder="备注（可选）"
-            value={newNote}
-            onChange={(event) => setNewNote(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void addDomain();
-            }}
-          />
-          <Button size="sm" className="h-8" onClick={() => void addDomain()}>
-            添加
-          </Button>
-        </div>
-        {error && <p className="text-xs text-red-600">{error}</p>}
-        <div className="rounded-md border">
-          {domains.items.length === 0 ? (
-            <div className="p-3 text-xs text-muted-foreground">
-              {loading
-                ? "加载中…"
-                : "暂无白名单域名。添加后，这些域名的网页抓取将自动放行。"}
-            </div>
-          ) : (
-            domains.items.map((d) => (
-              <div
-                key={d.id}
-                className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs last:border-b-0"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{d.domain}</div>
-                  {d.note && (
-                    <div className="truncate text-muted-foreground">{d.note}</div>
-                  )}
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs text-red-600"
-                  onClick={() => void removeDomain(d.id)}
-                >
-                  删除
-                </Button>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>共 {domains.total} 条{domains.hasMore ? "（更多未显示）" : ""}</span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              disabled={page <= 1 || loading}
-              onClick={() => {
-                const p = page - 1;
-                setPage(p);
-                void loadDomains(p, q);
-              }}
-            >
-              上一页
-            </Button>
-            <span className="leading-7">第 {page} 页</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              disabled={!domains.hasMore || loading}
-              onClick={() => {
-                const p = page + 1;
-                setPage(p);
-                void loadDomains(p, q);
-              }}
-            >
-              下一页
-            </Button>
+        <div className="rounded-md border p-3 text-xs">
+          <div className="font-medium">网页正文抓取默认放行</div>
+          <div className="mt-1 leading-5 text-muted-foreground">
+            Agent 会自动读取搜索结果或你提供的公开网址正文，让资料核验更顺畅；localhost、内网 IP、file URL 等非公开目标仍会被安全守卫拦截。
           </div>
         </div>
       </div>
@@ -1093,70 +949,11 @@ function AgentEditor({
   onSave: () => void;
   pending: boolean;
 }) {
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(10);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-
-  function updateProject(index: number, patch: Partial<AgentProjectForm>) {
-    onChange({
-      ...value,
-      projects: value.projects.map((project, i) =>
-        i === index ? { ...project, ...patch } : project
-      ),
-    });
-  }
-
-  function removeProject(index: number) {
-    onChange({
-      ...value,
-      projects: value.projects.filter((_, i) => i !== index),
-    });
-    // 删除后收缩展开集合：被删下标移除，其后下标前移
-    setExpanded((prev) => {
-      const next = new Set<number>();
-      prev.forEach((i) => {
-        if (i < index) next.add(i);
-        else if (i > index) next.add(i - 1);
-      });
-      return next;
-    });
-  }
-
-  function toggleExpand(index: number) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  }
-
-  function addProject() {
-    const newIdx = value.projects.length;
-    onChange({
-      ...value,
-      projects: [
-        ...value.projects,
-        { id: `project-${newIdx + 1}`, name: "", root: "" },
-      ],
-    });
-    // 跳到新项目所在页并展开，便于立即填写
-    setPage(Math.floor(newIdx / pageSize));
-    setExpanded((prev) => new Set(prev).add(newIdx));
-  }
-
-  const total = value.projects.length;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const safePage = Math.min(Math.max(0, page), pageCount - 1);
-  const start = safePage * pageSize;
-  const paged = value.projects.slice(start, start + pageSize);
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Tavily 用于联网检索；GitHub Token 仅用于提高公开仓库 API
-          限额。本地路径可在对话中首次授权，长期信任项目用于免确认访问。写作助手不会执行构建或修改项目文件。
+          写作 Agent 默认匿名探索公开 GitHub 仓库；私有仓库请先在本地 clone，再在对话中输入本地绝对路径并进行本会话授权。这里仅保留运行限制，减少日常配置负担。
         </p>
         <Button onClick={onSave} disabled={pending} size="sm">
           {pending ? (
@@ -1168,196 +965,118 @@ function AgentEditor({
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="GitHub Token（可选）">
-          <Input
-            type="password"
-            value={value.githubToken === "********" ? "" : value.githubToken}
-            placeholder={
-              value.githubToken === "********"
-                ? "已配置（留空保持不变）"
-                : "github_pat_..."
-            }
-            onChange={(event) =>
-              onChange({ ...value, githubToken: event.target.value })
-            }
-          />
-        </Field>
-        <Field label="单次 Agent 最大步骤">
-          <Input
-            type="number"
-            min={3}
-            max={20}
-            value={value.maxSteps}
-            onChange={(event) =>
-              onChange({ ...value, maxSteps: Number(event.target.value) })
-            }
-          />
-        </Field>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">长期信任项目</div>
-            <div className="text-xs text-muted-foreground mt-0.5">
-              可选。对话中也能直接输入绝对路径并进行一次性授权。
-            </div>
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={addProject}>
-            <Plus className="h-4 w-4" />
-            添加项目
-          </Button>
+      <SettingsSection
+        title="核心限制"
+        description="控制单轮 Agent 的最大行动步数；费用预算不再单独限制，上下文容量由当前模型配置自动推导。"
+      >
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <Field
+            label="单次 Agent 最大步骤"
+            help="对应 SDK maxTurns，限制一轮里可执行的工具往返次数。默认 1000，尽量避免长文改写、联网调研和多步骤编辑被过早截断；若希望任务快速停止，可按需调低。"
+          >
+            <Input
+              type="number"
+              min={3}
+              max={1000}
+              value={value.maxSteps}
+              onChange={(event) =>
+                onChange({ ...value, maxSteps: Number(event.target.value) })
+              }
+            />
+          </Field>
         </div>
+      </SettingsSection>
 
-        {value.projects.length === 0 ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            <FolderCode className="h-6 w-6 mx-auto mb-2 opacity-60" />
-            暂无长期信任项目；仍可在对话中临时授权本地路径
-          </div>
-        ) : (
-          <>
-            <div className="rounded-md border border-border overflow-hidden">
-              {/* 表头 */}
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 px-3 py-2 bg-muted/50 border-b border-border text-xs font-medium text-muted-foreground">
-                <div>项目 ID</div>
-                <div>显示名称</div>
-                <div>项目路径</div>
-                <div className="text-right">操作</div>
-              </div>
-              {/* 行（当前页） */}
-              {paged.map((project, i) => {
-                const idx = start + i;
-                const isOpen = expanded.has(idx);
-                return (
-                  <div
-                    key={idx}
-                    className="border-b border-border last:border-0"
-                  >
-                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 px-3 py-2 items-center">
-                      <div className="text-sm font-medium truncate min-w-0">
-                        {project.id || "—"}
-                      </div>
-                      <div className="text-sm truncate min-w-0 text-muted-foreground">
-                        {project.name || "—"}
-                      </div>
-                      <div className="text-xs font-mono truncate min-w-0 text-muted-foreground">
-                        {project.root || "—"}
-                      </div>
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          aria-label={isOpen ? "收起" : "展开"}
-                          onClick={() => toggleExpand(idx)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                        >
-                          <ChevronDown
-                            className={cn(
-                              "h-4 w-4 transition-transform",
-                              isOpen && "rotate-180"
-                            )}
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="移除"
-                          onClick={() => removeProject(idx)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                    {isOpen && (
-                      <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/20 grid gap-3 sm:grid-cols-2">
-                        <Field label="项目 ID">
-                          <Input
-                            value={project.id}
-                            placeholder="datastoria"
-                            onChange={(e) =>
-                              updateProject(idx, { id: e.target.value })
-                            }
-                          />
-                        </Field>
-                        <Field label="显示名称">
-                          <Input
-                            value={project.name}
-                            placeholder="Datastoria"
-                            onChange={(e) =>
-                              updateProject(idx, { name: e.target.value })
-                            }
-                          />
-                        </Field>
-                        <Field label="项目绝对路径" full>
-                          <Input
-                            value={project.root}
-                            className="font-mono text-xs"
-                            placeholder="/Users/name/OpenProjects/project"
-                            onChange={(e) =>
-                              updateProject(idx, { root: e.target.value })
-                            }
-                          />
-                        </Field>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* 分页 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-              <div className="text-xs text-muted-foreground">
-                共 {total} 个项目
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground">每页</span>
-                  <select
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value));
-                      setPage(0);
-                    }}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  >
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    disabled={safePage <= 0}
-                    onClick={() => setPage(safePage - 1)}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    上一页
-                  </Button>
-                  <span className="text-xs text-muted-foreground px-2 tabular-nums">
-                    第 {safePage + 1} / {pageCount} 页
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    disabled={safePage >= pageCount - 1}
-                    onClick={() => setPage(safePage + 1)}
-                  >
-                    下一页
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+      <SettingsSection
+        title="超时与重试"
+        description="控制 Claude Agent SDK 底层请求、重试和卡住检测；单位均为秒。"
+      >
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <Field
+            label="整轮运行超时"
+            help="应用层兜底超时，超过后会中止整轮 Agent。默认 1800 秒；普通对话可降到 600-900，联网调研或长文重写建议 1800-2700。"
+          >
+            <Input
+              type="number"
+              min={30}
+              max={3600}
+              step={30}
+              value={value.runtimeTimeoutSeconds}
+              onChange={(event) =>
+                onChange({
+                  ...value,
+                  runtimeTimeoutSeconds: Number(event.target.value),
+                })
+              }
+            />
+          </Field>
+          <Field
+            label="API 单次请求超时"
+            help="传给底层 API_TIMEOUT_MS，控制单次模型请求等待时间。默认 900 秒；网络稳定可降到 300-600，供应商偶发慢响应时保持 900 或更高。"
+          >
+            <Input
+              type="number"
+              min={30}
+              max={3600}
+              step={30}
+              value={value.apiTimeoutSeconds}
+              onChange={(event) =>
+                onChange({ ...value, apiTimeoutSeconds: Number(event.target.value) })
+              }
+            />
+          </Field>
+          <Field
+            label="API 最大重试次数"
+            help="传给 CLAUDE_CODE_MAX_RETRIES。默认 12，适合桌面端容忍临时拥塞；追求快速失败可设 2-5，网络或模型服务不稳定时可设 10-15。"
+          >
+            <Input
+              type="number"
+              min={0}
+              max={15}
+              value={value.apiMaxRetries}
+              onChange={(event) =>
+                onChange({ ...value, apiMaxRetries: Number(event.target.value) })
+              }
+            />
+          </Field>
+          <Field
+            label="异步子 Agent 卡住超时"
+            help="传给 CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS，子 Agent 长时间无新事件会被判定卡住。默认 900 秒；子任务较少可降到 300-600，复杂调研保持 900。"
+          >
+            <Input
+              type="number"
+              min={30}
+              max={3600}
+              step={30}
+              value={value.asyncAgentStallTimeoutSeconds}
+              onChange={(event) =>
+                onChange({
+                  ...value,
+                  asyncAgentStallTimeoutSeconds: Number(event.target.value),
+                })
+              }
+            />
+          </Field>
+          <Field
+            label="流响应空闲超时"
+            help="传给 CLAUDE_STREAM_IDLE_TIMEOUT_MS，响应已开始但长时间没有新 token 时触发重试。SDK 最小有效值约 300 秒，默认保持 300；只有供应商经常长时间静默时再调高。"
+          >
+            <Input
+              type="number"
+              min={300}
+              max={3600}
+              step={30}
+              value={value.streamIdleTimeoutSeconds}
+              onChange={(event) =>
+                onChange({
+                  ...value,
+                  streamIdleTimeoutSeconds: Number(event.target.value),
+                })
+              }
+            />
+          </Field>
+        </div>
+      </SettingsSection>
     </div>
   );
 }
@@ -1428,12 +1147,15 @@ function buildProviderTree(forms: LlmForm[]): ProviderTreeNode[] {
     apiProvider: p.apiProvider,
     baseUrl: p.baseUrl,
     apiKey: "",
-    models: p.models.map((m, i) => ({
-      id: m.id,
-      name: m.name,
-      enabled: true,
-      isDefault: i === 0,
-    })),
+      models: p.models.map((m, i) => ({
+        id: m.id,
+        name: m.name,
+        enabled: true,
+        isDefault: i === 0,
+        contextWindowTokens: clampModelContextWindowTokens(
+          m.contextWindowTokens ?? defaultContextWindowTokensForModel(m.id)
+        ),
+      })),
     temperature: 0.7,
     isConfigured: false,
     isPreset: true,
@@ -1559,7 +1281,13 @@ function LlmEditor({
                 ...f,
                 models: [
                   ...f.models,
-                  { id: trimmed, name: trimmed, enabled: true, isDefault: false },
+                  {
+                    id: trimmed,
+                    name: trimmed,
+                    enabled: true,
+                    isDefault: false,
+                    contextWindowTokens: defaultContextWindowTokensForModel(trimmed),
+                  },
                 ],
               }
             : f
@@ -1972,6 +1700,7 @@ function ProviderFormFields({
               name: m.name,
               enabled: true,
               isDefault: false,
+              contextWindowTokens: defaultContextWindowTokensForModel(m.id),
             }));
           if (additions.length === 0) return;
           mutations.patchProvider(node, {
@@ -2044,6 +1773,29 @@ function ModelRow({
         }
         className="h-8 min-w-[120px] flex-1 text-xs"
       />
+      <div className="flex min-w-[150px] shrink-0 items-center gap-1">
+        <span
+          className="text-[11px] text-muted-foreground"
+          title="模型可容纳的总上下文长度，用于 InkPress 自动推导正文与历史注入预算"
+        >
+          上下文
+        </span>
+        <Input
+          type="number"
+          min={8000}
+          max={1000000}
+          step={1000}
+          value={model.contextWindowTokens}
+          onChange={(e) =>
+            mutations.patchModel(node, modelIdx, {
+              contextWindowTokens: clampModelContextWindowTokens(
+                Number(e.target.value)
+              ),
+            })
+          }
+          className="h-8 w-24 text-xs"
+        />
+      </div>
       <label className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
         <Switch
           checked={model.enabled}
@@ -2361,15 +2113,61 @@ function Field({
   label,
   children,
   full,
+  help,
 }: {
   label: string;
   children: React.ReactNode;
   full?: boolean;
+  help?: React.ReactNode;
 }) {
   return (
     <div className={cn("space-y-1.5", full && "sm:col-span-2")}>
-      <Label className="text-xs">{label}</Label>
+      <div className="flex min-h-5 items-center gap-1.5">
+        <Label className="text-xs">{label}</Label>
+        {help && <HelpTip>{help}</HelpTip>}
+      </div>
       {children}
     </div>
+  );
+}
+
+function SettingsSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border bg-card/40 p-4">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {description && (
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {description}
+          </p>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function HelpTip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label="查看配置说明"
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <HelpCircle className="h-3.5 w-3.5" />
+      </button>
+      <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden w-72 -translate-x-1/2 rounded-md border bg-white px-3 py-2 text-[11px] leading-5 text-slate-700 shadow-lg ring-1 ring-black/5 group-hover:block group-focus-within:block dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:ring-white/10">
+        {children}
+      </span>
+    </span>
   );
 }

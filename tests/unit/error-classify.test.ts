@@ -76,15 +76,15 @@ describe("classifyError", () => {
   });
 
   it("归类 GitHub API 限流（code-source 403/429，文案不匹配通用 rate-limit 规则）", () => {
-    const r = classifyError(new Error("GitHub API 访问受限，请稍后重试或配置 GitHub Token。"));
+    const r = classifyError(new Error("GitHub 匿名 API 访问受限，请稍后重试。"));
     expect(r.category).toBe("rate-limit");
     expect(r.label).toBe("GitHub API 访问受限");
-    expect(r.suggestion).toContain("GitHub Token");
+    expect(r.suggestion).toContain("本地已 clone");
   });
 
   it("归类 GitHub 仓库不可访问（私有/不存在/无权，code-source 404）", () => {
     const r = classifyError(
-      new Error("GitHub 仓库不存在，或为无权访问的私有仓库（私有仓库需配置有权限的 Token）。")
+      new Error("GitHub 仓库不存在，或为私有/无权访问的仓库。")
     );
     expect(r.category).toBe("auth");
     expect(r.label).toBe("GitHub 仓库不可访问");
@@ -93,14 +93,6 @@ describe("classifyError", () => {
   it("归类其他 GitHub 请求失败（code-source 兜底文案，冒号后无空格）", () => {
     expect(classifyError(new Error("GitHub：Server Error")).category).toBe("network");
     expect(classifyError(new Error("GitHub 请求失败（502）。")).category).toBe("network");
-  });
-
-  it("GitHub Token 无效优先命中 auth 而非「仓库不可访问」", () => {
-    // 同时含「Token 无效」与「私有仓库」，应被更精确的 Token 无效规则优先捕获
-    const r = classifyError(
-      new Error("GitHub Token 无效，或仓库不存在/为私有仓库（私有仓库需配置有权限的 Token）。")
-    );
-    expect(r.label).toBe("GitHub Token 无效或已过期");
   });
 
   it("未知错误落到 unknown 并保留原文", () => {

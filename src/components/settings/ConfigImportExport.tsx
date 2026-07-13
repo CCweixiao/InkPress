@@ -57,6 +57,22 @@ function previewConfigs(configs: RawConfig[]): { label: string; summary: string 
 
 /** 按 key 提取非敏感概要字段（密钥字段不展示） */
 function summarize(key: string, parsed: unknown): string {
+  if (key === "inkpress.llm" && Array.isArray(parsed)) {
+    const providers = parsed.filter((item) => item && typeof item === "object");
+    const models = providers.flatMap((item) => {
+      const raw = (item as Record<string, unknown>).models;
+      return Array.isArray(raw) ? raw : [];
+    });
+    const maxContext = models.reduce((max, item) => {
+      if (!item || typeof item !== "object") return max;
+      const tokens = (item as Record<string, unknown>).contextWindowTokens;
+      return typeof tokens === "number" ? Math.max(max, tokens) : max;
+    }, 0);
+    const contextText = maxContext
+      ? `，最大上下文 ${maxContext.toLocaleString()} tokens`
+      : "";
+    return `${providers.length} 个供应商，${models.length} 个模型${contextText}`;
+  }
   if (Array.isArray(parsed)) {
     // llm 是数组：列出模型名
     const names = parsed
@@ -81,11 +97,10 @@ function summarize(key: string, parsed: unknown): string {
       return `appId: ${obj.appId ?? "-"}`;
     }
     if (key === "inkpress.agent") {
-      const projects = Array.isArray(obj.projects) ? obj.projects.length : 0;
-      return `maxSteps: ${obj.maxSteps ?? "-"}，projects: ${projects}`;
+      return `maxSteps: ${obj.maxSteps ?? "-"}`;
     }
     if (key === "inkpress.web-research") {
-      return `autoApprove: ${obj.autoApprove === true ? "开启" : "关闭"}`;
+      return "web_fetch: 默认自动放行";
     }
     return JSON.stringify(Object.keys(obj));
   }

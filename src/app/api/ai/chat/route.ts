@@ -22,6 +22,7 @@ import {
   createRunAbortSignal,
 } from "@/lib/ai/run-timeout";
 import { chooseLlmConfig } from "@/lib/ai/llm-config";
+import { deriveAgentContextBudgetTokens } from "@/lib/ai/model-context";
 import { upsertUsageTurnIfSessionGenerationCurrent } from "@/lib/ai/usage-ledger";
 import { getArticleProfile } from "@/lib/ai/article-type-profile";
 import { createAgentEventWriter } from "@/lib/ai/agent-event-writer";
@@ -625,7 +626,21 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
         const articleBodyTokens = estimateTokens(
           `${loaded.title}\n${loaded.digest ?? ""}\n${articleMarkdown}`
         );
-        const articleBodyTooLarge = articleBodyTokens > config.contextBudgetTokens * 0.65;
+        const requestedProviderId = parsed.data.providerId ?? null;
+        const requestedModelId = parsed.data.modelId ?? null;
+        const selectedLlm = await chooseLlmConfig(
+          requestedProviderId,
+          requestedModelId
+        );
+        if (!selectedLlm) {
+          throw new Error(
+            "未配置 AI 模型：请在「设置 → 系统配置 → AI 模型」中添加至少一个 Anthropic 兼容供应商并填入 API Key。"
+          );
+        }
+        const contextBudgetTokens = deriveAgentContextBudgetTokens(
+          selectedLlm.model.contextWindowTokens
+        );
+        const articleBodyTooLarge = articleBodyTokens > contextBudgetTokens * 0.65;
         // P3：斜杠命令 forceSkillIds 在前 + 文章 profile 的 defaultSkills 在后，合并去重。
         const profile = getArticleProfile(loaded.profileId);
         const preferredSkillIds = Array.from(
@@ -763,18 +778,6 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
           return;
         }
 
-        const requestedProviderId = parsed.data.providerId ?? null;
-        const requestedModelId = parsed.data.modelId ?? null;
-        const selectedLlm = await chooseLlmConfig(
-          requestedProviderId,
-          requestedModelId
-        );
-        if (!selectedLlm) {
-          throw new Error(
-            "未配置 AI 模型：请在「设置 → 系统配置 → AI 模型」中添加至少一个 Anthropic 兼容供应商并填入 API Key。"
-          );
-        }
-
         // 跨模型 resume 风险处理：若本轮最终生效的 provider/model 与上一轮不同，
         // 且已有 SDK 会话，则强制开启新会话（SDK transcript 跨厂商回放有风险）。
         const newProviderId = selectedLlm.id;
@@ -857,8 +860,11 @@ export const POST = withApiLog("POST /api/ai/chat", async (req: NextRequest) => 
               modelId: newModelId,
               messages: runtimeMessages,
               // 桌面端长任务（网页读取、多 Agent 调研）常超过 2 分钟；
-              // 默认 10 分钟，仅作为 SDK 无终止事件时的兜底，可用 INKPRESS_AGENT_RUN_TIMEOUT_MS 调整。
-              abortSignal: createRunAbortSignal(req.signal, agentRunTimeoutMs()),
+              // 仅作为 SDK 无终止事件时的兜底，可在「写作 Agent 配置」调整。
+              abortSignal: createRunAbortSignal(
+                req.signal,
+                agentRunTimeoutMs(config.runtimeTimeoutSeconds)
+              ),
             },
             ew
           );

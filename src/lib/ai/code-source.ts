@@ -7,12 +7,9 @@ import { promisify } from "node:util";
 import { prisma } from "@/lib/db";
 import { cacheDir } from "@/lib/paths";
 import {
-  AGENT_CONFIG_KEY,
   type AgentConfig,
   type AgentProjectConfig,
-  getAgentConfig,
 } from "@/lib/ai/agent-config";
-import { encryptConfigValueForStorage } from "@/lib/config-secrets";
 
 const execFileAsync = promisify(execFile);
 const LOCAL_PATH_PATTERN =
@@ -358,13 +355,12 @@ export async function approveCodeSourceGrant(input: {
   }
   if (!grant.root) throw new Error("本地项目路径无效。");
   const root = await validateLocalCodeSource(grant.root);
-  if (input.scope === "trusted") await addTrustedProject(grant.displayName, root);
   return prisma.codeSourceGrant.update({
     where: { id: grant.id },
     data: {
       root,
       locator: root,
-      scope: input.scope,
+      scope: "session",
       status: "approved",
       approvalTokenHash: null,
       approvedAt: new Date(),
@@ -373,38 +369,14 @@ export async function approveCodeSourceGrant(input: {
   });
 }
 
-async function addTrustedProject(name: string, root: string) {
-  const config = await getAgentConfig();
-  if (config.projects.some((project) => path.resolve(project.root) === root)) return;
-  const baseId =
-    path.basename(root).toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "project";
-  let id = baseId;
-  let suffix = 2;
-  while (config.projects.some((project) => project.id === id)) {
-    id = `${baseId}-${suffix++}`;
-  }
-  const next = { ...config, projects: [...config.projects, { id, name, root }] };
-  const value = encryptConfigValueForStorage(
-    AGENT_CONFIG_KEY,
-    JSON.stringify(next, null, 2)
-  );
-  await prisma.systemConfig.upsert({
-    where: { key: AGENT_CONFIG_KEY },
-    update: { value },
-    create: { key: AGENT_CONFIG_KEY, value },
-  });
-}
-
 async function rawGithubFetch(
   pathname: string,
-  token?: string
 ): Promise<{ response: Response; text: string }> {
   const response = await fetch(`https://api.github.com${pathname}`, {
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "InkPress-CodeExplorer",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     signal: AbortSignal.timeout(20_000),
   });
@@ -430,34 +402,21 @@ function parseGithubPayload(text: string): {
 /**
  * GitHub API 请求（ensureGithubCodeSource 与 fetchGithubPullRequest 共用）。
  *
- * Token 策略：token-first + 401 匿名回退——
- * - 有 token 先带 token（享受 5000/hr 高限流）。
- * - 若 token 自身无效（401 Bad credentials），自动回退一次匿名请求：**公开仓库不依赖
- *   token 有效性**即可访问；私有仓库匿名会 404，落到下方错误处理。
+ * 策略：始终匿名访问公开仓库。私有仓库不会尝试使用用户 Token；如果需要访问私有
+ * 或受限仓库，应由用户在本地 clone 后通过本地路径进行会话级授权。
  */
 export async function githubRequest(
   pathname: string,
-  config: AgentConfig
+  _config: AgentConfig
 ): Promise<unknown> {
-  const token = config.githubToken;
-  let { response, text } = await rawGithubFetch(pathname, token);
-  let tokenRejected = false;
-  if (response.status === 401 && token) {
-    // token 自身无效：公开仓库匿名仍可访问，重试一次匿名。
-    tokenRejected = true;
-    ({ response, text } = await rawGithubFetch(pathname, undefined));
-  }
+  const { response, text } = await rawGithubFetch(pathname);
   const { data, record } = parseGithubPayload(text);
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error(
-        tokenRejected
-          ? "GitHub Token 无效，或仓库不存在/为私有仓库（私有仓库需配置有权限的 Token）。"
-          : "GitHub 仓库不存在，或为无权访问的私有仓库（私有仓库需配置有权限的 Token）。"
-      );
+      throw new Error("GitHub 仓库不存在，或为私有/无权访问的仓库。");
     }
     if (response.status === 403 || response.status === 429) {
-      throw new Error("GitHub API 访问受限，请稍后重试或配置 GitHub Token。");
+      throw new Error("GitHub 匿名 API 访问受限，请稍后重试。");
     }
     throw new Error(
       typeof record.message === "string"
@@ -590,8 +549,8 @@ export async function ensureGithubCodeSource(
   );
   const metadataRecord = metadata as Record<string, unknown>;
   const isPrivate = metadataRecord.private === true;
-  if (isPrivate && !config.githubToken) {
-    throw new Error("该 GitHub 仓库为私有仓库，需配置有权限的 GitHub Token 才能访问。");
+  if (isPrivate) {
+    throw new Error("该 GitHub 仓库为私有仓库。请先在本地 clone，再通过本地路径授权读取。");
   }
   const defaultBranch =
     typeof metadataRecord.default_branch === "string"
@@ -610,10 +569,7 @@ export async function ensureGithubCodeSource(
   await fs.mkdir(path.dirname(cacheRoot), { recursive: true });
   const publicUrl = `https://github.com/${grant.owner}/${grant.repo}.git`;
   if (!exists) {
-    // 公开仓库匿名 clone；私有仓库（token 必有效——匿名对私有 404）用 x-access-token 内嵌 token。
-    const url = isPrivate
-      ? `https://x-access-token:${encodeURIComponent(config.githubToken!)}@github.com/${grant.owner}/${grant.repo}.git`
-      : publicUrl;
+    const url = publicUrl;
     await runGit(
       [
         "clone",

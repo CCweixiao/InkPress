@@ -23,7 +23,7 @@ export type LlmPreset = {
    * 缺省时用 {baseUrl}/v1/models（Anthropic 风格）。
    */
   modelsBaseUrl?: string;
-  models: { id: string; name: string }[];
+  models: { id: string; name: string; contextWindowTokens?: number }[];
   docsUrl?: string;
 };
 

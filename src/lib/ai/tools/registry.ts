@@ -56,7 +56,7 @@ export type InkPressToolContext = {
   sessionId: string;
   /** github_pull_request / 代码工具取授权 codeSource 用。 */
   codeSource?: CodeSourceReference;
-  /** github_pull_request 取 githubToken 用（buildClaudeAgentOptions 经 getAgentConfig 解析）。 */
+  /** Agent 限制与旧配置兼容项。GitHub 公开仓库探索默认匿名访问。 */
   agentConfig?: AgentConfig;
   /** P2.5 联网搜索配置（tavilyApiKey + autoApprove）。web_search 守门用。 */
   webResearch: WebResearchConfig;

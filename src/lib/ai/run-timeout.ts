@@ -4,7 +4,14 @@ export type RunAbortReason =
   | { code: "request-aborted" }
   | { code: "runtime-timeout"; timeoutMs: number };
 
-export function agentRunTimeoutMs(): number {
+export function agentRunTimeoutMs(configuredSeconds?: number): number {
+  if (
+    typeof configuredSeconds === "number" &&
+    Number.isFinite(configuredSeconds) &&
+    configuredSeconds >= 30
+  ) {
+    return Math.min(Math.floor(configuredSeconds * 1000), 60 * 60 * 1000);
+  }
   const configured = Number(process.env.INKPRESS_AGENT_RUN_TIMEOUT_MS);
   if (Number.isFinite(configured) && configured >= 30_000) {
     return Math.min(Math.floor(configured), 60 * 60 * 1000);

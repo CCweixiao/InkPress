@@ -3,9 +3,14 @@ import { prisma } from "@/lib/db";
 import {
   LLM_CONFIG_KEY,
   decryptLlmConfigValueForExport,
+  parseLlmConfigs,
 } from "@/lib/ai/llm-config";
 import { decryptConfigValueForExport } from "@/lib/config-secrets";
-import { AGENT_CONFIG_KEY } from "@/lib/ai/agent-config";
+import {
+  AGENT_CONFIG_KEY,
+  AGENT_CONFIG_VERSION,
+  parseAgentConfig,
+} from "@/lib/ai/agent-config";
 import { OSS_CONFIG_KEY } from "@/lib/oss-config";
 import { STORAGE_CONFIG_KEY } from "@/lib/storage-config";
 import { WECHAT_CONFIG_KEY } from "@/lib/wechat/config";
@@ -45,12 +50,29 @@ export const GET = withApiLog(
       .filter((r): r is { key: string; value: string } => !!r)
       .map((r) => {
         try {
+          const value =
+            r.key === LLM_CONFIG_KEY
+              ? decryptLlmConfigValueForExport(r.value)
+              : decryptConfigValueForExport(r.key, r.value);
+          if (r.key === LLM_CONFIG_KEY) {
+            return {
+              ...r,
+              value: JSON.stringify(parseLlmConfigs(value), null, 2),
+            };
+          }
+          if (r.key === AGENT_CONFIG_KEY) {
+            return {
+              ...r,
+              value: JSON.stringify(
+                { configVersion: AGENT_CONFIG_VERSION, ...parseAgentConfig(value) },
+                null,
+                2
+              ),
+            };
+          }
           return {
             ...r,
-            value:
-              r.key === LLM_CONFIG_KEY
-                ? decryptLlmConfigValueForExport(r.value)
-                : decryptConfigValueForExport(r.key, r.value),
+            value,
           };
         } catch {
           return r;

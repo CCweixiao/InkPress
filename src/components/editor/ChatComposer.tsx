@@ -32,9 +32,10 @@ import {
   type StructuredChatInputHandle,
   type StructuredMentionQuery,
 } from "./StructuredChatInput";
-import type {
-  ComposerDocument,
-  ComposerSnippetSegment,
+import {
+  normalizeComposerDocument,
+  type ComposerDocument,
+  type ComposerSnippetSegment,
 } from "@/lib/snippets/injection-review";
 import { SubmissionGuard } from "@/lib/ai/submission-guard";
 import {
@@ -61,6 +62,8 @@ interface ChatComposerProps {
   inputHistory: ComposerDocument[];
   restoreDraft?: { key: string; document: ComposerDocument } | null;
   onDraftRestored?: () => void;
+  onDraftChange?: (document: ComposerDocument) => void;
+  onDraftClear?: () => void;
   onSend: (payload: ComposerSendPayload) => void | boolean | Promise<void | boolean>;
   onClearConversation: () => void | Promise<void>;
   onStop: () => void;
@@ -75,6 +78,8 @@ function ChatComposerImpl({
   inputHistory,
   restoreDraft,
   onDraftRestored,
+  onDraftChange,
+  onDraftClear,
   onSend,
   onClearConversation,
   onStop,
@@ -84,6 +89,8 @@ function ChatComposerImpl({
   const [submitting, setSubmitting] = useState(false);
   const submissionGuardRef = useRef(new SubmissionGuard());
   const historyIndex = useRef<number | null>(null);
+  const draftBeforeHistoryRef = useRef<ComposerDocument | null>(null);
+  const suppressDraftChangeRef = useRef(false);
 
   // ── 斜杠命令（自 WritingAssistant L1638-1673 原样搬入）──
   const [skills, setSkills] = useState<SkillCatalogItem[]>([]);
@@ -148,8 +155,17 @@ function ChatComposerImpl({
       setInput(plainText);
       setSlashForcedClosed(false);
       setAtQueryResult(isComposing ? null : mention);
+      if (suppressDraftChangeRef.current) {
+        suppressDraftChangeRef.current = false;
+        return;
+      }
+      if (historyIndex.current !== null) {
+        historyIndex.current = null;
+        draftBeforeHistoryRef.current = null;
+      }
+      onDraftChange?.(_document);
     },
-    [isComposing]
+    [isComposing, onDraftChange]
   );
   // 流式 token/用量更新会重渲染 Composer 底栏；组合输入回调保持稳定，
   // 让 StructuredChatInput 的 memo 边界不触碰 contenteditable DOM。
@@ -162,8 +178,10 @@ function ChatComposerImpl({
 
   useEffect(() => {
     if (!restoreDraft) return;
+    suppressDraftChangeRef.current = true;
     inputRef.current?.setDocument(restoreDraft.document);
     historyIndex.current = null;
+    draftBeforeHistoryRef.current = null;
     const frame = requestAnimationFrame(() => onDraftRestored?.());
     return () => cancelAnimationFrame(frame);
   }, [restoreDraft, onDraftRestored]);
@@ -184,6 +202,8 @@ function ChatComposerImpl({
     setSlashForcedClosed(false);
     if (command.kind === "clear") {
       setInput("");
+      historyIndex.current = null;
+      draftBeforeHistoryRef.current = null;
       inputRef.current?.setDocument([]);
       void onClearConversation();
       return;
@@ -222,6 +242,8 @@ function ChatComposerImpl({
     if (parsed) {
       if (parsed.command.kind === "clear") {
         setInput("");
+        historyIndex.current = null;
+        draftBeforeHistoryRef.current = null;
         inputRef.current?.setDocument([]);
         setSlashForcedClosed(false);
         await onClearConversation();
@@ -248,16 +270,20 @@ function ChatComposerImpl({
       });
       if (sent === false) return;
       historyIndex.current = null;
+      draftBeforeHistoryRef.current = null;
       setInput("");
       inputRef.current?.setDocument([]);
+      onDraftClear?.();
       setSlashForcedClosed(false);
       return;
     }
     const sent = await onSend({ text, composer, snippetRefs });
     if (sent === false) return;
     historyIndex.current = null;
+    draftBeforeHistoryRef.current = null;
     setInput("");
     inputRef.current?.setDocument([]);
+    onDraftClear?.();
     setSlashForcedClosed(false);
     } finally {
       submissionGuardRef.current.release();
@@ -339,11 +365,17 @@ function ChatComposerImpl({
         const atLastLine = full.slice(before.length).indexOf("\n") === -1;
         if (event.key === "ArrowUp" && atFirstLine && inputHistory.length) {
           event.preventDefault();
+          if (historyIndex.current === null) {
+            draftBeforeHistoryRef.current = normalizeComposerDocument(
+              inputRef.current?.getDocument() ?? []
+            );
+          }
           const next =
             historyIndex.current === null
               ? inputHistory.length - 1
               : Math.max(0, historyIndex.current - 1);
           historyIndex.current = next;
+          suppressDraftChangeRef.current = true;
           inputRef.current?.setDocument(inputHistory[next]);
         } else if (
           event.key === "ArrowDown" &&
@@ -353,10 +385,14 @@ function ChatComposerImpl({
           event.preventDefault();
           if (historyIndex.current < inputHistory.length - 1) {
             historyIndex.current += 1;
+            suppressDraftChangeRef.current = true;
             inputRef.current?.setDocument(inputHistory[historyIndex.current]);
           } else {
             historyIndex.current = null;
-            inputRef.current?.setDocument([]);
+            const draft = draftBeforeHistoryRef.current ?? [];
+            draftBeforeHistoryRef.current = null;
+            suppressDraftChangeRef.current = true;
+            inputRef.current?.setDocument(draft);
           }
         }
       }

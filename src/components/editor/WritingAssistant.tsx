@@ -77,9 +77,11 @@ import {
 } from "@/lib/ai/message-order";
 import {
   composerDocumentToRuntimeText,
+  composerDocumentToPlainText,
   buildSnippetReviewTimeline,
   hasAssistantTimelineContent,
   mergeComposerHistory,
+  normalizeComposerDocument,
   type ComposerDocument,
 } from "@/lib/snippets/injection-review";
 import {
@@ -103,6 +105,8 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: "已放弃",
   superseded: "已失效",
 };
+
+const COMPOSER_DRAFT_STORAGE_PREFIX = "inkpress.ai.composerDraft.v1";
 
 function proposalIdFromOutput(value: unknown) {
   if (!value || typeof value !== "object") return "";
@@ -627,15 +631,6 @@ function CodeSourceApprovalCard({
               <Check className="h-3.5 w-3.5" />
             )}
             仅本会话允许
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs"
-            disabled={busy}
-            onClick={() => void decide("approve", "trusted")}
-          >
-            允许并长期信任
           </Button>
           <Button
             size="sm"
@@ -1653,6 +1648,70 @@ export function WritingAssistant({
   >(null);
   const currentMessagesRef = useRef<UIMessage[]>([]);
   const generationRef = useRef(0);
+  const draftStorageKey = useMemo(
+    () =>
+      resolvedTargetId
+        ? `${COMPOSER_DRAFT_STORAGE_PREFIX}:${targetKind}:${resolvedTargetId}`
+        : null,
+    [resolvedTargetId, targetKind]
+  );
+
+  const clearComposerDraft = useCallback(() => {
+    if (!draftStorageKey) return;
+    try {
+      window.localStorage.removeItem(draftStorageKey);
+    } catch {
+      /* localStorage 不可用时静默回退为内存输入。 */
+    }
+  }, [draftStorageKey]);
+
+  const saveComposerDraft = useCallback(
+    (document: ComposerDocument) => {
+      if (!draftStorageKey) return;
+      const normalized = normalizeComposerDocument(document);
+      if (!composerDocumentToPlainText(normalized).trim()) {
+        clearComposerDraft();
+        return;
+      }
+      try {
+        window.localStorage.setItem(
+          draftStorageKey,
+          JSON.stringify({ document: normalized, updatedAt: Date.now() })
+        );
+      } catch {
+        /* localStorage 不可用时静默回退为内存输入。 */
+      }
+    },
+    [clearComposerDraft, draftStorageKey]
+  );
+
+  useEffect(() => {
+    if (!draftStorageKey) return;
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey);
+      if (!raw) {
+        setRestoreDraft({ key: draftStorageKey, document: [] });
+        return;
+      }
+      const parsed = JSON.parse(raw) as { document?: unknown };
+      if (!Array.isArray(parsed.document)) {
+        setRestoreDraft({ key: draftStorageKey, document: [] });
+        return;
+      }
+      const document = normalizeComposerDocument(
+        parsed.document as ComposerDocument
+      );
+      if (!composerDocumentToPlainText(document).trim()) {
+        window.localStorage.removeItem(draftStorageKey);
+        setRestoreDraft({ key: draftStorageKey, document: [] });
+        return;
+      }
+      setRestoreDraft({ key: draftStorageKey, document });
+    } catch {
+      /* 草稿缓存损坏时忽略，不影响写作助手启动。 */
+      setRestoreDraft({ key: draftStorageKey, document: [] });
+    }
+  }, [draftStorageKey]);
 
   // 待代码源授权：锁定 composer，引导用户先完成上方授权卡片操作。
   // composer 锁由两类审批独立贡献（避免互相 reset）：代码源授权 / P3 工具审批。
@@ -1970,6 +2029,7 @@ export function WritingAssistant({
       }
     );
     if (response.ok) {
+      clearComposerDraft();
       setMessages([]);
       setProposals([]);
       setSnippetReviews([]);
@@ -2564,12 +2624,14 @@ export function WritingAssistant({
         approvalBlocked={approvalBlocked}
         placeholder={
           approvalBlocked
-            ? "等待代码源授权…请在上方卡片选择「仅本会话允许」或「允许并长期信任」"
+            ? "等待代码源授权…请在上方卡片选择「仅本会话允许」或「拒绝」"
             : "让 Agent 研究、创作或调整文章…（输入 / 查看命令 · Enter 发送 · Shift+Enter 换行）"
         }
         inputHistory={inputHistory}
         restoreDraft={restoreDraft}
         onDraftRestored={() => setRestoreDraft(null)}
+        onDraftChange={saveComposerDraft}
+        onDraftClear={clearComposerDraft}
         onSend={async ({ text, composer, snippetRefs, forceSkillIds }) => {
           if (snippetRefs.length) {
             return createSnippetReview(composer);

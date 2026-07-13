@@ -12,7 +12,11 @@ import {
   mergeStorageMaskedSecrets,
   parseStorageConfig,
 } from "@/lib/storage-config";
-import { AGENT_CONFIG_KEY, parseAgentConfig } from "@/lib/ai/agent-config";
+import {
+  AGENT_CONFIG_KEY,
+  AGENT_CONFIG_VERSION,
+  parseAgentConfig,
+} from "@/lib/ai/agent-config";
 import {
   WEB_RESEARCH_CONFIG_KEY,
   parseWebResearchConfig,
@@ -53,6 +57,21 @@ function validateConfigValue(key: string, value: string) {
   else if (key === I18N_CONFIG_KEY) parseI18nConfig(value);
   else if (key === EMBEDDING_CONFIG_KEY) parseEmbeddingConfig(value);
   else parseJsonObjectOrArrayConfig(value);
+}
+
+/** 保存/导入时落成当前版本配置形态，避免旧字段继续在导入导出中漂着。 */
+function normalizeConfigValueForStorage(key: string, value: string): string {
+  if (key === LLM_CONFIG_KEY) {
+    return JSON.stringify(parseLlmConfigs(value), null, 2);
+  }
+  if (key === AGENT_CONFIG_KEY) {
+    return JSON.stringify(
+      { configVersion: AGENT_CONFIG_VERSION, ...parseAgentConfig(value) },
+      null,
+      2
+    );
+  }
+  return value;
 }
 
 /**
@@ -148,10 +167,6 @@ function maskConfigs(
                 typeof parsed.tavilyApiKey === "string" && parsed.tavilyApiKey
                   ? "********"
                   : "",
-              githubToken:
-                typeof parsed.githubToken === "string" && parsed.githubToken
-                  ? "********"
-                  : "",
             },
             null,
             2
@@ -231,7 +246,11 @@ export const POST = withApiLog("POST /api/system-config", async (req: Request) =
       { status: 400 }
     );
   }
-  const storedValue = prepareValueForStorage(parsed.data.key, parsed.data.value);
+  const normalizedValue = normalizeConfigValueForStorage(
+    parsed.data.key,
+    parsed.data.value
+  );
+  const storedValue = prepareValueForStorage(parsed.data.key, normalizedValue);
   const item = await prisma.systemConfig.create({
     data: { key: parsed.data.key, value: storedValue },
   });
@@ -271,7 +290,8 @@ export const PUT = withApiLog("PUT /api/system-config", async (req: Request) => 
     );
   }
 
-  const storedValue = prepareValueForStorage(parsed.data.key, value);
+  const normalizedValue = normalizeConfigValueForStorage(parsed.data.key, value);
+  const storedValue = prepareValueForStorage(parsed.data.key, normalizedValue);
   const item = await prisma.systemConfig.upsert({
     where: { key: parsed.data.key },
     update: { value: storedValue },
@@ -327,9 +347,6 @@ function mergeMaskedSecrets(key: string, oldJson: string, newJson: string): stri
     if (key === AGENT_CONFIG_KEY) {
       if (newVal.tavilyApiKey === "********" || newVal.tavilyApiKey === "") {
         newVal.tavilyApiKey = oldVal.tavilyApiKey ?? "";
-      }
-      if (newVal.githubToken === "********" || newVal.githubToken === "") {
-        newVal.githubToken = oldVal.githubToken ?? "";
       }
       return JSON.stringify(newVal, null, 2);
     }

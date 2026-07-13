@@ -159,23 +159,13 @@ const RULES: Array<{
     suggestion: "Claude Code 进程已被用户中断，本次结果未继续生成。",
   },
   {
-    // GitHub Token 无效/过期：代码源 clone 前的 API 探测（githubRequest）返回 Bad credentials。
-    // 必须排在通用 auth 规则之前——后者只匹配 401/unauthorized/forbidden，漏掉 "Bad credentials"。
-    category: "auth",
-    test: /bad credentials|github[^。]*token.{0,6}(无效|过期|错误|invalid|expired)|令牌无权/i,
-    label: "GitHub Token 无效或已过期",
-    suggestion:
-      "请在设置里更新写作 Agent 的 GitHub Token（或清空后对公开仓库匿名访问），再重试。",
-  },
-  {
     // GitHub API 限流（匿名 60 次/小时耗尽，code-source.ts 的 403/429 分支）：
     // 其文案「访问受限」「稍后重试」不匹配通用 rate-limit 规则（要求「访问频率」「稍后再试」），
     // 不补这条会落到 unknown 兜底，误提示「检查模型与网络配置」。
     category: "rate-limit",
     test: /GitHub.*(访问受限|限流)|API rate limit exceeded/i,
     label: "GitHub API 访问受限",
-    suggestion:
-      "匿名访问 GitHub 限流（60 次/小时）。请在设置里为写作 Agent 配置 GitHub Token（提升到 5000 次/小时）后重试。",
+    suggestion: "GitHub 匿名访问受限。请稍后重试，或改用本地已 clone 的仓库路径授权读取。",
   },
   {
     // GitHub 仓库不可访问（404：私有 / 不存在 / 无权，code-source.ts 的 404 分支与私有仓库判断）：
@@ -183,16 +173,14 @@ const RULES: Array<{
     category: "auth",
     test: /GitHub.*(私有仓库|仓库不存在|无权访问)|仓库为私有/i,
     label: "GitHub 仓库不可访问",
-    suggestion:
-      "仓库为私有或不存在。若是私有仓库，请在设置里为写作 Agent 配置有权限的 GitHub Token 后重试。",
+    suggestion: "仓库可能不存在或为私有仓库。私有仓库请先在本地 clone，再通过本地路径授权读取。",
   },
   {
     // 其他 GitHub 请求错误（code-source.ts 兜底「GitHub：{msg}」/「GitHub 请求失败（xxx）」）。
     category: "network",
     test: /GitHub[：:]|GitHub 请求失败/i,
     label: "GitHub 请求失败",
-    suggestion:
-      "访问 GitHub 失败，请检查网络或稍后重试；若反复受限，请在设置里为写作 Agent 配置 GitHub Token。",
+    suggestion: "访问 GitHub 失败，请检查网络或稍后重试；也可以改用本地仓库路径授权读取。",
   },
   {
     category: "quota",

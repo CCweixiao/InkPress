@@ -9,6 +9,10 @@ import {
   decryptConfigValueForExport,
   encryptConfigValueForStorage,
 } from "@/lib/config-secrets";
+import {
+  clampModelContextWindowTokens,
+  defaultContextWindowTokensForModel,
+} from "@/lib/ai/model-context";
 
 const log = moduleLogger("ai.llm-config");
 
@@ -30,6 +34,7 @@ export type LlmModel = {
   name: string;
   enabled: boolean;
   isDefault: boolean;
+  contextWindowTokens: number;
 };
 
 /** 供应商：仅保留连接信息，启用/默认全部下沉到模型级。 */
@@ -90,12 +95,14 @@ function normalizeModel(
       name: id,
       enabled: legacyProviderEnabled,
       isDefault: false,
+      contextWindowTokens: defaultContextWindowTokensForModel(id),
     };
   }
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const model = raw as JsonObject;
     const id = readString(model, ["id", "model", "name"]);
     if (!id) throw new Error(`LLM 模型 ${index + 1} 缺少 id/model/name。`);
+    const rawContext = model.contextWindowTokens ?? model.contextTokens;
     return {
       id,
       name: readString(model, ["name", "label"]) || id,
@@ -103,6 +110,11 @@ function normalizeModel(
       isDefault:
         readBoolean(model, "default", false) ||
         readBoolean(model, "isDefault", false),
+      contextWindowTokens: clampModelContextWindowTokens(
+        typeof rawContext === "number"
+          ? rawContext
+          : defaultContextWindowTokensForModel(id)
+      ),
     };
   }
   throw new Error(`LLM 模型 ${index + 1} 必须是字符串或 JSON 对象。`);
@@ -352,7 +364,13 @@ async function tryClaudeAgentFallback(): Promise<LlmConfig | null> {
     baseUrl: cfg.baseUrl,
     apiKey: cfg.apiKey,
     models: [
-      { id: cfg.model, name: cfg.model, enabled: true, isDefault: true },
+      {
+        id: cfg.model,
+        name: cfg.model,
+        enabled: true,
+        isDefault: true,
+        contextWindowTokens: defaultContextWindowTokensForModel(cfg.model),
+      },
     ],
     temperature: 0.7,
   };
@@ -399,6 +417,7 @@ export async function migrateClaudeAgentConfig(): Promise<void> {
         name: cfg.model,
         enabled: true,
         isDefault: llmWasEmpty,
+        contextWindowTokens: defaultContextWindowTokensForModel(cfg.model),
       },
     ],
     temperature: 0.7,
@@ -426,4 +445,67 @@ export async function migrateClaudeAgentConfig(): Promise<void> {
     create: { key: LLM_CONFIG_KEY, value },
   });
   log.info("claude-agent 配置已迁移到 inkpress.llm");
+}
+
+/** 启动时补齐旧模型配置中的 contextWindowTokens（幂等）。 */
+export async function migrateLlmModelContextWindows(): Promise<void> {
+  const existing = await prisma.systemConfig.findUnique({
+    where: { key: LLM_CONFIG_KEY },
+  });
+  if (!existing) return;
+
+  let configs: LlmConfig[];
+  try {
+    configs = parseLlmConfigs(existing.value);
+  } catch (error) {
+    log.warn({ err: error }, "inkpress.llm 解析失败，跳过模型上下文长度补齐");
+    return;
+  }
+
+  const raw = JSON.parse(existing.value) as unknown;
+  const rawItems = Array.isArray(raw) ? raw : [raw];
+  let changed = false;
+  const next = rawItems.map((item, providerIndex) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const provider = item as Record<string, unknown>;
+    const parsedProvider = configs[providerIndex];
+    if (!parsedProvider) return item;
+    const rawModels = Array.isArray(provider.models)
+      ? provider.models
+      : provider.model
+        ? Array.isArray(provider.model)
+          ? provider.model
+          : [provider.model]
+        : [];
+    return {
+      ...provider,
+      models: rawModels.map((rawModel, modelIndex) => {
+        const parsedModel = parsedProvider.models[modelIndex];
+        if (!parsedModel) return rawModel;
+        const contextWindowTokens = parsedModel.contextWindowTokens;
+        if (rawModel && typeof rawModel === "object" && !Array.isArray(rawModel)) {
+          const obj = rawModel as Record<string, unknown>;
+          if (typeof obj.contextWindowTokens === "number") return rawModel;
+          changed = true;
+          return { ...obj, contextWindowTokens };
+        }
+        changed = true;
+        return {
+          id: parsedModel.id,
+          name: parsedModel.name,
+          enabled: parsedModel.enabled,
+          isDefault: parsedModel.isDefault,
+          contextWindowTokens,
+        };
+      }),
+    };
+  });
+
+  if (!changed) return;
+  const value = JSON.stringify(next, null, 2);
+  await prisma.systemConfig.update({
+    where: { key: LLM_CONFIG_KEY },
+    data: { value },
+  });
+  log.info("LLM 模型上下文长度已补齐");
 }

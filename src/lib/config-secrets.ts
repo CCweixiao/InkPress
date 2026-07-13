@@ -13,7 +13,7 @@ const CONFIG_SECRET_FIELDS: Record<string, string[][]> = {
     ["aliyun-oss", "accessKeySecret"],
     ["oss", "accessKeySecret"],
   ],
-  "inkpress.agent": [["tavilyApiKey"], ["githubToken"]],
+  "inkpress.agent": [["tavilyApiKey"]],
   "inkpress.web-research": [["tavilyApiKey"]],
   "inkpress.wechat": [["secret"]],
   "inkpress.embedding": [["apiKey"]],

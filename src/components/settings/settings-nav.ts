@@ -43,7 +43,7 @@ export const SETTINGS_NAV: NavNode[] = [
     kind: "leaf",
     key: "web",
     label: "联网搜索",
-    description: "配置 Tavily 联网搜索、网页抓取自动放权与域名白名单。",
+    description: "配置 Tavily 联网搜索；网页正文抓取默认自动放行公开网址。",
     icon: Globe2,
   },
   {

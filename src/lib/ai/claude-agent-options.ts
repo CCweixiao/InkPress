@@ -13,7 +13,8 @@ import { listSkills } from "@/lib/ai/skills";
 import type { CodeSourceReference } from "@/lib/ai/code-source";
 import { getAgentConfig } from "@/lib/ai/agent-config";
 import { getWebResearchConfig } from "@/lib/ai/web-research-config";
-import { isDomainAllowed, normalizeDomain } from "@/lib/ai/web-allowlist";
+import { deriveAgentContextBudgetTokens } from "@/lib/ai/model-context";
+import { normalizeDomain } from "@/lib/ai/web-allowlist";
 import { assessWebUrlRisk } from "@/lib/ai/web-url-risk";
 import { prisma } from "@/lib/db";
 import {
@@ -65,7 +66,6 @@ export type BuildClaudeAgentOptionsInput = {
 
 type InkPressClaudeAgentOptions = Options & {
   maxTurns?: number;
-  maxBudgetUsd?: number;
 };
 
 /** sha256(token)，落 approvalTokenHash（mirror CodeSourceGrant 的 hashToken 约定）。 */
@@ -101,8 +101,7 @@ function buildCanUseTool(ctx: {
     if (decision === "deny")
       return { behavior: "deny", message: `工具 ${bareName} 已被禁用。` };
 
-    // P2.5：web_fetch 域名白名单 / 自动放权短路——命中则不弹审批卡，并 emit 提示 step
-    // （前端 AgentStepBlock 免费渲染，让用户知道这次为何没问）。
+    // web_fetch 默认自动放权公开网址；执行层仍有 SSRF/私网安全守卫。
     let webFetchUrl = "";
     let webFetchRisk: ReturnType<typeof assessWebUrlRisk> | null = null;
     if (
@@ -124,19 +123,6 @@ function buildCanUseTool(ctx: {
             detail: domain
               ? `直接读取 ${domain}（已开启自动放权）`
               : "已开启自动放权",
-            status: "completed",
-          },
-        } as never);
-        return { behavior: "allow", updatedInput: input };
-      }
-      if (domain && (await isDomainAllowed(domain))) {
-        ctx.emit({
-          type: "data-agent-step",
-          id: crypto.randomUUID(),
-          data: {
-            kind: "intent",
-            title: "白名单自动放行",
-            detail: `${domain} 在信任域名白名单中`,
             status: "completed",
           },
         } as never);
@@ -316,6 +302,14 @@ export async function buildClaudeAgentOptions(
     CLAUDE_AGENT_SDK_CLIENT_APP: "inkpress/0.3.0",
     // SDK 本地配置/transcript 写到 InkPress 主目录下的隔离目录，不污染用户 ~/.claude。
     CLAUDE_CONFIG_DIR: claudeConfigDir,
+    API_TIMEOUT_MS: String(agentConfig.apiTimeoutSeconds * 1000),
+    CLAUDE_CODE_MAX_RETRIES: String(agentConfig.apiMaxRetries),
+    CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS: String(
+      agentConfig.asyncAgentStallTimeoutSeconds * 1000
+    ),
+    CLAUDE_STREAM_IDLE_TIMEOUT_MS: String(
+      agentConfig.streamIdleTimeoutSeconds * 1000
+    ),
   };
 
   return {
@@ -326,13 +320,15 @@ export async function buildClaudeAgentOptions(
       preferredSkillIds: input.preferredSkillIds,
       codeSource: input.codeSource,
       tavilyApiKey: webResearch.tavilyApiKey,
+      articleBodyCharBudget: Math.floor(
+        deriveAgentContextBudgetTokens(selected.model.contextWindowTokens) * 1.5
+      ),
       snippetsHint: input.lastUserText?.includes("{{snippet:")
         ? SNIPPET_FUSION_HINT
         : undefined,
     }),
     model: selected.model.id,
     maxTurns: agentConfig.maxSteps,
-    maxBudgetUsd: agentConfig.maxBudgetUsd,
     // 固定 cwd，避免 SDK 默认绑定到 InkPress 开发仓库或用户本地 Claude Code 工作目录。
     cwd: claudeWorkspaceDir,
     includePartialMessages: true,
@@ -342,8 +338,7 @@ export async function buildClaudeAgentOptions(
     agents,
     forwardSubagentText: false,
     agentProgressSummaries: true,
-    // allow 工具自动批准；web_fetch 即便全局 autoApprove 也不进 allowedTools，
-    // 统一走 canUseTool 以保留自动放行提示、白名单判断和未来审计入口。
+    // web_fetch 不进 allowedTools，统一走 canUseTool 以保留自动放行提示和安全审计入口。
     allowedTools: [
       ...claudeAllowedTools(enabledToolNames),
       ...(Object.keys(agents).length > 0 ? ["Agent"] : []),

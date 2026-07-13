@@ -34,10 +34,10 @@ describe("parseWebResearchConfig", () => {
     expect(cfg.tavilyApiKey).toBe("tvly-x");
     expect(cfg.autoApprove).toBe(true);
   });
-  it("缺字段走默认（autoApprove 非布尔 → false）", () => {
+  it("缺字段走默认（autoApprove 固定为 true）", () => {
     const cfg = parseWebResearchConfig(JSON.stringify({ tavilyApiKey: "k" }));
     expect(cfg.tavilyApiKey).toBe("k");
-    expect(cfg.autoApprove).toBe(false);
+    expect(cfg.autoApprove).toBe(true);
   });
   it("非对象抛错", () => {
     expect(() => parseWebResearchConfig(JSON.stringify([1, 2]))).toThrow(/对象/);
@@ -68,6 +68,7 @@ describe("getWebResearchConfig", () => {
     getAgent.mockResolvedValue({ tavilyApiKey: "tvly-old" });
     const cfg = await getWebResearchConfig();
     expect(cfg.tavilyApiKey).toBe("tvly-old");
+    expect(cfg.autoApprove).toBe(true);
   });
 
   it("本配置不存在（null）+ agent 有 → 回落 agent", async () => {

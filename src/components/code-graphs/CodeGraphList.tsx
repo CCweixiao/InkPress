@@ -106,7 +106,7 @@ export function CodeGraphList({ initialGraphs }: { initialGraphs: CodeGraphListI
         <div className="grid gap-3 md:grid-cols-[1.4fr_1fr_1fr_auto]">
           <Select value={projectId} onValueChange={setProjectId}>
             <SelectTrigger>
-              <SelectValue placeholder="选择长期信任项目" />
+              <SelectValue placeholder="暂无可选项目" />
             </SelectTrigger>
             <SelectContent>
               {projects.map((project) => (
@@ -142,7 +142,7 @@ export function CodeGraphList({ initialGraphs }: { initialGraphs: CodeGraphListI
         </div>
         {!projects.length && (
           <p className="mt-3 text-xs text-amber-700">
-            请先在设置页添加长期信任项目，才能构建代码图谱。
+            长期信任项目配置已取消。需要探索代码时，请在写作助手中输入本地绝对路径并按会话授权。
           </p>
         )}
         {provider === "graphify" && (

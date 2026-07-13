@@ -7,7 +7,7 @@ import { decryptConfigValueForUse } from "@/lib/config-secrets";
  *
  * 包含：
  * - tavilyApiKey：Tavily 搜索 key（web_search 用）。
- * - autoApprove：web_fetch 全局自动放权开关（开 → 所有 web_fetch 免审批卡；白名单之上的最强放权）。
+ * - autoApprove：web_fetch 全局自动放权。新版本固定为 true，公开 URL 不再逐条审批。
  *
  * **兼容回落**：本配置的 tavilyApiKey 为空时，回落读旧 `inkpress.agent.tavilyApiKey`（迁移期老用户的
  * key 还在那），保证现有用户不断网。
@@ -22,7 +22,7 @@ export type WebResearchConfig = {
 
 export const DEFAULT_WEB_RESEARCH_CONFIG: WebResearchConfig = {
   tavilyApiKey: "",
-  autoApprove: false,
+  autoApprove: true,
 };
 
 export function parseWebResearchConfig(
@@ -37,7 +37,7 @@ export function parseWebResearchConfig(
   return {
     tavilyApiKey:
       typeof cfg.tavilyApiKey === "string" ? cfg.tavilyApiKey.trim() : "",
-    autoApprove: typeof cfg.autoApprove === "boolean" ? cfg.autoApprove : false,
+    autoApprove: true,
   };
 }
 

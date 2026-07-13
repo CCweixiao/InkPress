@@ -34,18 +34,14 @@ describe("config-secrets", () => {
   it("encrypts and decrypts root-level config secrets", () => {
     const plain = JSON.stringify({
       tavilyApiKey: "tvly-secret",
-      githubToken: "ghp-secret",
       maxSteps: 12,
-      projects: [],
     });
     const stored = encryptConfigValueForStorage("inkpress.agent", plain);
     expect(stored).not.toContain("tvly-secret");
-    expect(stored).not.toContain("ghp-secret");
 
     const runtime = decryptConfigValueForUse("inkpress.agent", stored);
     expect(JSON.parse(runtime ?? "{}")).toMatchObject({
       tavilyApiKey: "tvly-secret",
-      githubToken: "ghp-secret",
     });
   });
 

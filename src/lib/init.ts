@@ -141,7 +141,7 @@ export async function ensureDataHome(): Promise<void> {
     log.error({ err: e }, "seed 默认空间失败");
   });
 
-  // 5. 迁移旧 claude-agent 配置到 inkpress.llm（幂等）
+  // 5. 迁移旧 claude-agent 配置到 inkpress.llm，并补齐模型上下文长度（幂等）
   await runClaudeAgentMigration().catch((e) => {
     log.error({ err: e }, "迁移 claude-agent 配置失败");
   });
@@ -154,8 +154,9 @@ async function migrateWechatAccounts() {
 
 /** 动态加载并执行 claude-agent → inkpress.llm 迁移（幂等）。 */
 async function runClaudeAgentMigration() {
-  const { migrateClaudeAgentConfig } = await import("@/lib/ai/llm-config");
+  const { migrateClaudeAgentConfig, migrateLlmModelContextWindows } = await import("@/lib/ai/llm-config");
   await migrateClaudeAgentConfig();
+  await migrateLlmModelContextWindows();
 }
 
 /**

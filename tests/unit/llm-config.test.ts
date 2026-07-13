@@ -46,6 +46,35 @@ describe("parseLlmConfigs", () => {
     expect(defaults).toHaveLength(1);
     expect(defaults[0]?.id).toBe("glm-4.6");
   });
+
+  it("为旧模型配置补齐默认上下文长度", () => {
+    const configs = parseLlmConfigs(llmValue);
+
+    expect(configs[0]?.models[0]?.contextWindowTokens).toBe(200000);
+    expect(configs[1]?.models[0]?.contextWindowTokens).toBe(200000);
+  });
+
+  it("保留用户自定义模型上下文长度", () => {
+    const configs = parseLlmConfigs(
+      JSON.stringify({
+        id: "custom",
+        name: "Custom",
+        apiProvider: "anthropic",
+        baseUrl: "https://example.com",
+        apiKey: "sk",
+        models: [
+          {
+            id: "custom-model",
+            name: "Custom Model",
+            enabled: true,
+            contextWindowTokens: 64000,
+          },
+        ],
+      })
+    );
+
+    expect(configs[0]?.models[0]?.contextWindowTokens).toBe(64000);
+  });
 });
 
 describe("chooseLlmConfig", () => {
