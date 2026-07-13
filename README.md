@@ -170,7 +170,7 @@ pnpm release               # 交互确认后更新版本 + commit + 打 tag
 pnpm release --minor --push  # 强制 minor 增量并自动推送 commit + tag
 ```
 
-tag 推送后会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)：在 macOS arm64 / x64 双 runner 上分别构建 DMG，自动创建 GitHub Release 并附带双架构安装包。如需签名分发，在仓库 Settings → Secrets 配置 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`。
+tag 推送后会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)、macOS Intel 和 Windows 发布流水线：各平台只上传安装包到 GitHub Release。Release 公开后，流水线调用 `inkpress-service` 的 `/api/releases/sync-version`，由服务端拉取 GitHub Release 安装包、上传 OSS 并写入 release note，避免 OSS AccessKey 暴露在 GitHub Actions 中。如需签名分发，在仓库 Settings → Secrets 配置 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`。
 
 ## 许可
 

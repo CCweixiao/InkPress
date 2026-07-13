@@ -181,22 +181,6 @@ jobs:
             || { echo "✗ $TAG 已公开，拒绝覆盖资产"; exit 1; }
           gh release upload "$TAG" dist/*-x64.dmg --clobber
 
-      - name: Publish to OSS + Register to inkpress-service
-        if: github.event_name != 'pull_request'
-        shell: bash
-        env:
-          OSS_PUBLISH_REGION: ${{ secrets.OSS_PUBLISH_REGION }}
-          OSS_PUBLISH_BUCKET: ${{ secrets.OSS_PUBLISH_BUCKET }}
-          OSS_PUBLISH_ACCESS_KEY_ID: ${{ secrets.OSS_PUBLISH_ACCESS_KEY_ID }}
-          OSS_PUBLISH_ACCESS_KEY_SECRET: ${{ secrets.OSS_PUBLISH_ACCESS_KEY_SECRET }}
-          RELEASE_REGISTER_TOKEN: ${{ secrets.RELEASE_REGISTER_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          case "$TAG" in v*) ;; *) TAG="v$TAG" ;; esac
-          NOTES="$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo '')"
-          RELEASE_NOTES="$NOTES" node scripts/ci-publish-release.mjs
-
   release:
     name: Append macOS Intel assets to GitHub Release
     needs: build
@@ -252,7 +236,8 @@ jobs:
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "✓ 三个平台资产齐全，Release 已公开"
           else
-            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "✓ Release 已公开，继续同步服务端资产"
           fi
 
       - name: Sync version to inkpress-service
@@ -273,4 +258,4 @@ jobs:
           curl -fsS -X POST "$SYNC_URL" \
             -H "X-Release-Token: $RELEASE_REGISTER_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"packageName\":\"inkpress\",\"version\":\"${VERSION#v}\",\"channel\":\"stable\",\"changelogMarkdown\":$BODY_JSON}"
+            -d "{\"packageName\":\"inkpress\",\"version\":\"${VERSION#v}\",\"channel\":\"stable\",\"changelogMarkdown\":$BODY_JSON,\"githubRepo\":\"${GITHUB_REPOSITORY}\",\"githubTag\":\"${VERSION}\"}"

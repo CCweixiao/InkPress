@@ -21,6 +21,8 @@ import { Prisma } from "@/generated/prisma/client";
 
 const log = moduleLogger("release");
 
+const DEFAULT_RELEASE_GITHUB_REPO = "CCweixiao/InkPress";
+
 /** 平台展示标签（前端 UI + API 返回都用） */
 export const PLATFORM_LABELS: Record<string, string> = {
   "darwin-arm64": "macOS · Apple Silicon",
@@ -59,16 +61,179 @@ function assetOssKey(packageName: string, version: string, os: string, arch: str
   return `releases/${packageName}/${version}/${os}-${arch}/${fileName}`;
 }
 
+type GithubReleaseAsset = {
+  name: string;
+  size: number;
+  state?: string;
+  content_type?: string | null;
+  browser_download_url: string;
+  url?: string;
+};
+
+type GithubRelease = {
+  tag_name: string;
+  body?: string | null;
+  published_at?: string | null;
+  assets?: GithubReleaseAsset[];
+};
+
+function resolveGithubRepo(inputRepo?: string): string {
+  return (
+    inputRepo?.trim() ||
+    process.env.RELEASE_GITHUB_REPO?.trim() ||
+    process.env.GITHUB_REPOSITORY?.trim() ||
+    DEFAULT_RELEASE_GITHUB_REPO
+  );
+}
+
+function normalizeGithubTag(version: string, inputTag?: string): string {
+  const tag = inputTag?.trim() || version.trim();
+  return tag.startsWith("v") ? tag : `v${tag}`;
+}
+
+function githubHeaders(accept = "application/vnd.github+json"): HeadersInit {
+  const headers: Record<string, string> = {
+    Accept: accept,
+    "User-Agent": "inkpress-service-release-importer",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  const token = process.env.GITHUB_RELEASE_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+async function fetchGithubRelease(repo: string, tag: string): Promise<GithubRelease> {
+  const url = `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
+  const res = await fetch(url, { headers: githubHeaders() });
+  if (res.status === 404) {
+    throw new AppError(ErrorCode.NOT_FOUND, `GitHub Release 不存在：${repo}@${tag}`);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new AppError(
+      ErrorCode.INTERNAL_ERROR,
+      `读取 GitHub Release 失败：${res.status} ${res.statusText}${text ? ` - ${text.slice(0, 300)}` : ""}`
+    );
+  }
+  return (await res.json()) as GithubRelease;
+}
+
+async function downloadGithubReleaseAsset(asset: GithubReleaseAsset): Promise<Buffer> {
+  const url = asset.url || asset.browser_download_url;
+  const accept = asset.url ? "application/octet-stream" : "application/octet-stream,application/vnd.github+json";
+  const res = await fetch(url, { headers: githubHeaders(accept), redirect: "follow" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new AppError(
+      ErrorCode.INTERNAL_ERROR,
+      `下载 GitHub Release 资产失败：${asset.name} (${res.status} ${res.statusText})${text ? ` - ${text.slice(0, 300)}` : ""}`
+    );
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+function inferInstallerPlatform(fileName: string): { os: ReleaseOs; arch: ReleaseArch } | null {
+  const lower = fileName.toLowerCase();
+  const arch: ReleaseArch | null =
+    lower.includes("arm64") || lower.includes("aarch64")
+      ? "arm64"
+      : lower.includes("x64") || lower.includes("x86_64") || lower.includes("amd64")
+        ? "x64"
+        : null;
+
+  if (lower.endsWith(".dmg")) return arch ? { os: "darwin", arch } : null;
+  if (lower.endsWith(".exe") || lower.endsWith(".msi")) return { os: "win32", arch: arch ?? "x64" };
+  if (lower.endsWith(".deb") || lower.endsWith(".appimage") || lower.endsWith(".rpm")) {
+    return arch ? { os: "linux", arch } : null;
+  }
+  return null;
+}
+
+async function importGithubReleaseAssets(params: {
+  versionId: string;
+  packageName: string;
+  version: string;
+  repo?: string;
+  tag?: string;
+}): Promise<{ imported: number; skipped: string[]; repo: string; tag: string }> {
+  const repo = resolveGithubRepo(params.repo);
+  const tag = normalizeGithubTag(params.version, params.tag);
+  const release = await fetchGithubRelease(repo, tag);
+  const assets = (release.assets ?? []).filter((asset) => asset.state !== "deleted");
+  const skipped: string[] = [];
+  let imported = 0;
+
+  for (const ghAsset of assets) {
+    const platform = inferInstallerPlatform(ghAsset.name);
+    if (!platform) {
+      skipped.push(ghAsset.name);
+      continue;
+    }
+
+    const existingAsset = await prisma.releaseAsset.findUnique({
+      where: { versionId_os_arch: { versionId: params.versionId, os: platform.os, arch: platform.arch } },
+      select: { storageKey: true },
+    });
+    const buffer = await downloadGithubReleaseAsset(ghAsset);
+    const storageKey = assetOssKey(params.packageName, params.version, platform.os, platform.arch, ghAsset.name);
+    const fileSizeBytes = buffer.byteLength;
+    const fileHashSha256 = sha256Hex(buffer);
+
+    if (existingAsset && existingAsset.storageKey !== storageKey) {
+      await deleteObject(existingAsset.storageKey);
+    }
+
+    await uploadBufferToOssKey(storageKey, buffer, ghAsset.content_type || "application/octet-stream");
+    const downloadUrl = publicUrl(storageKey);
+
+    const asset = await prisma.releaseAsset.upsert({
+      where: { versionId_os_arch: { versionId: params.versionId, os: platform.os, arch: platform.arch } },
+      create: {
+        versionId: params.versionId,
+        os: platform.os,
+        arch: platform.arch,
+        fileName: ghAsset.name,
+        fileSizeBytes,
+        fileHashSha256,
+        downloadUrl,
+        storageKey,
+        source: "ci",
+      },
+      update: {
+        fileName: ghAsset.name,
+        fileSizeBytes,
+        fileHashSha256,
+        downloadUrl,
+        storageKey,
+        source: "ci",
+      },
+      select: { id: true },
+    });
+
+    imported += 1;
+    log.info(
+      { assetId: asset.id, package: params.packageName, version: params.version, platform: composePlatform(platform.os, platform.arch), fileName: ghAsset.name },
+      "GitHub Release 资产已导入 OSS"
+    );
+  }
+
+  if (imported === 0) {
+    throw new AppError(ErrorCode.VALIDATION_ERROR, `GitHub Release 未找到可导入的安装包资产：${repo}@${tag}`);
+  }
+
+  return { imported, skipped, repo, tag };
+}
+
 // ─── syncVersion (CI tag 同步) ──────────────────────────────────────────────
 
 /**
  * CI / GH Action 同步版本元信息：upsert on (packageName, version)。
- * 同版本重新打 tag → 覆盖元信息，不动 status，不动 assets。
+ * 同版本重新打 tag → 覆盖元信息，不动 status；默认从 GitHub Release 拉取资产并覆盖登记。
  */
 export async function syncVersion(
   input: SyncVersionInput,
   meta: { ip: string | null; ua: string | null }
-): Promise<{ id: string; action: "created" | "updated" }> {
+): Promise<{ id: string; action: "created" | "updated"; importedAssets?: number; skippedAssets?: string[] }> {
   const highlightsJson = JSON.stringify(input.highlights ?? []);
   const releasedAt = input.releasedAt ? new Date(input.releasedAt) : new Date();
 
@@ -107,18 +272,36 @@ export async function syncVersion(
 
   log.info({ id: result.id, action, package: input.packageName, version: input.version }, "版本已同步");
 
+  let importedAssets: number | undefined;
+  let skippedAssets: string[] | undefined;
+  if (input.importGithubAssets) {
+    const imported = await importGithubReleaseAssets({
+      versionId: result.id,
+      packageName: input.packageName,
+      version: input.version,
+      repo: input.githubRepo,
+      tag: input.githubTag,
+    });
+    importedAssets = imported.imported;
+    skippedAssets = imported.skipped;
+    log.info(
+      { id: result.id, package: input.packageName, version: input.version, repo: imported.repo, tag: imported.tag, importedAssets, skippedAssets },
+      "GitHub Release 资产同步完成"
+    );
+  }
+
   await writeAudit({
     actorUserId: null,
     actorRole: "SYSTEM",
     action: action === "created" ? "release.sync.create" : "release.sync.update",
     targetType: "ReleaseVersion",
     targetId: result.id,
-    after: { package: input.packageName, version: input.version },
+    after: { package: input.packageName, version: input.version, importedAssets, skippedAssets },
     ip: meta.ip,
     userAgent: meta.ua,
   }).catch((err) => log.warn({ err }, "审计日志写入失败（已忽略）"));
 
-  return { id: result.id, action };
+  return { id: result.id, action, importedAssets, skippedAssets };
 }
 
 // ─── createVersion (管理员手动新建) ─────────────────────────────────────────

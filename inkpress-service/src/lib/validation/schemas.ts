@@ -409,7 +409,7 @@ export type RegisterReleaseInput = z.infer<typeof registerReleaseSchema>;
 
 /**
  * CI / GH Action 同步版本元信息请求体。
- * 不含文件信息——包由管理员后续上传。
+ * 服务端会按 tag 从 GitHub Release 拉取安装包，上传到 OSS，并登记资产。
  */
 export const syncVersionSchema = z.object({
   packageName: z.string().trim().min(1).max(64),
@@ -419,6 +419,13 @@ export const syncVersionSchema = z.object({
   highlights: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
   displayName: z.string().trim().min(1).max(120).optional(),
   releasedAt: z.string().datetime().optional(),
+  githubRepo: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "GitHub 仓库格式应为 owner/repo")
+    .optional(),
+  githubTag: z.string().trim().min(1).max(128).optional(),
+  importGithubAssets: z.boolean().default(true),
 });
 export type SyncVersionInput = z.infer<typeof syncVersionSchema>;
 
@@ -446,5 +453,4 @@ export const updateVersionSchema = z.object({
   channel: ReleaseChannelSchema.optional(),
 });
 export type UpdateVersionInput = z.infer<typeof updateVersionSchema>;
-
 
